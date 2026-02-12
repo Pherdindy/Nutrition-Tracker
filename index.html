@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Calorie and Activity Tracker</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="app">
+    <header>
+      <h1>Calorie &amp; Activity Tracker</h1>
+      <nav class="tabs">
+        <button class="tab active" data-tab="food-eaten">Food Eaten</button>
+        <button class="tab" data-tab="calorie-tracker">Calorie Tracker</button>
+        <button class="tab" data-tab="calorie-target">Calorie Target</button>
+        <button class="tab" data-tab="diet-assessment">Diet Assessment</button>
+      </nav>
+    </header>
+
+    <!-- FOOD EATEN TAB -->
+    <section id="food-eaten" class="tab-content active">
+      <div class="toolbar">
+        <button id="add-food-btn" class="btn btn-primary">+ Add Food</button>
+        <div class="filter-group">
+          <label for="food-date-filter">Filter by date:</label>
+          <input type="date" id="food-date-filter">
+          <button id="clear-food-filter" class="btn btn-secondary">Clear</button>
+        </div>
+      </div>
+      <div class="table-wrapper">
+        <table id="food-eaten-table">
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Time</th>
+              <th>Food</th>
+              <th>Quantity</th>
+              <th>Unit of measure</th>
+              <th>Calories (lower)</th>
+              <th>Calories (upper)</th>
+              <th>Protein (lower)</th>
+              <th>Protein (higher)</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- CALORIE TRACKER TAB -->
+    <section id="calorie-tracker" class="tab-content">
+      <div class="toolbar">
+        <button id="add-day-btn" class="btn btn-primary">+ Add Day</button>
+      </div>
+      <div class="table-wrapper">
+        <table id="calorie-tracker-table">
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Age</th>
+              <th>Weight (lbs)</th>
+              <th>BMR</th>
+              <th>Activity Type</th>
+              <th>TDEE</th>
+              <th>Deficit/day</th>
+              <th>Calorie Target</th>
+              <th>Cal Eaten (low)</th>
+              <th>Cal Eaten (high)</th>
+              <th>Cal +/- (low)</th>
+              <th>Cal +/- (high)</th>
+              <th>Protein (low)</th>
+              <th>Protein (high)</th>
+              <th>Protein Target (low)</th>
+              <th>Protein Target (high)</th>
+              <th>Protein +/- (low)</th>
+              <th>Protein +/- (high)</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- CALORIE TARGET TAB -->
+    <section id="calorie-target" class="tab-content">
+      <div class="settings-grid">
+        <div class="settings-card">
+          <h2>Activity Multipliers</h2>
+          <table id="activity-table">
+            <thead>
+              <tr>
+                <th>Activity Type</th>
+                <th>Multiplier</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+        <div class="settings-card">
+          <h2>Weight Loss Goals</h2>
+          <table id="goals-table">
+            <thead>
+              <tr>
+                <th>Weight Loss Goal</th>
+                <th>Daily Deficit</th>
+                <th>Weekly Deficit</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+        <div class="settings-card">
+          <h2>Your Profile</h2>
+          <form id="profile-form">
+            <div class="form-row">
+              <label for="profile-height">Height (cm)</label>
+              <input type="number" id="profile-height" step="0.1" value="170.1">
+            </div>
+            <div class="form-row">
+              <label for="profile-protein-low">Protein Target (lower, g)</label>
+              <input type="number" id="profile-protein-low" value="135">
+            </div>
+            <div class="form-row">
+              <label for="profile-protein-high">Protein Target (higher, g)</label>
+              <input type="number" id="profile-protein-high" value="150">
+            </div>
+            <button type="submit" class="btn btn-primary">Save Profile</button>
+          </form>
+        </div>
+        <div id="provider-settings"></div>
+        <div id="validation-settings"></div>
+      </div>
+    </section>
+
+    <!-- DIET ASSESSMENT TAB -->
+    <section id="diet-assessment" class="tab-content">
+      <div class="toolbar">
+        <div class="assessment-period-group">
+          <label for="assessment-period">Analyze period:</label>
+          <select id="assessment-period">
+            <option value="today">Yesterday</option>
+            <option value="week" selected>Last 7 days</option>
+            <option value="month">Last 30 days</option>
+            <option value="quarter">Last 90 days</option>
+            <option value="semi">Last 6 months</option>
+            <option value="year">Last 12 months</option>
+            <option value="yoy">Year over Year</option>
+            <option value="custom">Custom range...</option>
+          </select>
+          <div id="custom-date-range" class="custom-date-range hidden">
+            <input type="date" id="assessment-date-from">
+            <span>to</span>
+            <input type="date" id="assessment-date-to">
+          </div>
+        </div>
+        <button id="run-assessment-btn" class="btn btn-primary">Run Diet Assessment</button>
+        <span id="assessment-status" class="estimate-status"></span>
+      </div>
+      <div id="assessment-data-summary"></div>
+      <div id="assessment-results"></div>
+      <div id="assessment-history"></div>
+    </section>
+
+    <!-- FOOD MODAL -->
+    <div id="food-modal" class="modal hidden">
+      <div class="modal-overlay"></div>
+      <div class="modal-content">
+        <h2 id="food-modal-title">Add Food Entry</h2>
+        <form id="food-form">
+          <input type="hidden" id="food-id">
+          <div class="form-row">
+            <label for="food-date">Date</label>
+            <input type="date" id="food-date" required>
+          </div>
+          <div class="form-row">
+            <label for="food-time">Time</label>
+            <input type="time" id="food-time" required>
+          </div>
+          <div class="form-row">
+            <label for="food-name">Food</label>
+            <input type="text" id="food-name" required autocomplete="off" list="food-suggestions">
+            <datalist id="food-suggestions"></datalist>
+          </div>
+          <div class="form-row">
+            <label for="food-qty">Quantity</label>
+            <input type="number" id="food-qty" step="any" required>
+          </div>
+          <div class="form-row">
+            <label for="food-unit">Unit of measure</label>
+            <input type="text" id="food-unit" required autocomplete="off" list="unit-suggestions">
+            <datalist id="unit-suggestions"></datalist>
+          </div>
+          <div class="form-row">
+            <button type="button" id="estimate-btn" class="btn btn-estimate">Estimate Calories &amp; Protein</button>
+            <span id="estimate-status" class="estimate-status"></span>
+          </div>
+          <div id="validation-results"></div>
+          <div class="form-row-pair">
+            <div class="form-row">
+              <label for="food-cal-low">Calories (lower)</label>
+              <input type="number" id="food-cal-low" step="any" required>
+            </div>
+            <div class="form-row">
+              <label for="food-cal-high">Calories (upper)</label>
+              <input type="number" id="food-cal-high" step="any" required>
+            </div>
+          </div>
+          <div class="form-row-pair">
+            <div class="form-row">
+              <label for="food-protein-low">Protein (lower)</label>
+              <input type="number" id="food-protein-low" step="any" required>
+            </div>
+            <div class="form-row">
+              <label for="food-protein-high">Protein (higher)</label>
+              <input type="number" id="food-protein-high" step="any" required>
+            </div>
+          </div>
+          <div class="modal-actions">
+            <button type="button" class="btn btn-secondary" id="food-cancel">Cancel</button>
+            <button type="submit" class="btn btn-primary">Save</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <!-- DAY MODAL -->
+    <div id="day-modal" class="modal hidden">
+      <div class="modal-overlay"></div>
+      <div class="modal-content">
+        <h2 id="day-modal-title">Add Day</h2>
+        <form id="day-form">
+          <input type="hidden" id="day-id">
+          <div class="form-row">
+            <label for="day-date">Date</label>
+            <input type="date" id="day-date" required>
+          </div>
+          <div class="form-row">
+            <label for="day-age">Age</label>
+            <input type="number" id="day-age" required>
+          </div>
+          <div class="form-row">
+            <label for="day-weight">Weight (lbs)</label>
+            <input type="number" id="day-weight" step="any" required>
+          </div>
+          <div class="form-row">
+            <label for="day-activity">Activity Type</label>
+            <select id="day-activity" required></select>
+          </div>
+          <div class="form-row">
+            <label for="day-deficit">Calorie Deficit/day</label>
+            <input type="number" id="day-deficit" step="any" required value="550">
+          </div>
+          <div class="form-row-pair">
+            <div class="form-row">
+              <label for="day-protein-target-low">Protein Target (low)</label>
+              <input type="number" id="day-protein-target-low" step="any" required>
+            </div>
+            <div class="form-row">
+              <label for="day-protein-target-high">Protein Target (high)</label>
+              <input type="number" id="day-protein-target-high" step="any" required>
+            </div>
+          </div>
+          <div class="modal-actions">
+            <button type="button" class="btn btn-secondary" id="day-cancel">Cancel</button>
+            <button type="submit" class="btn btn-primary">Save</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+  <script src="app.js"></script>
+</body>
+</html>

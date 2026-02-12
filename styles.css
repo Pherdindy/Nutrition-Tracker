@@ -1,0 +1,1283 @@
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+:root {
+  --bg: #0f1117;
+  --surface: #1a1d27;
+  --surface2: #242836;
+  --border: #2e3345;
+  --text: #e4e6ed;
+  --text-dim: #8b8fa3;
+  --primary: #4f8cff;
+  --primary-hover: #3a7af0;
+  --green: #34d399;
+  --red: #f87171;
+  --yellow: #fbbf24;
+  --orange: #fb923c;
+  --radius: 8px;
+  --font: 'Segoe UI', system-ui, -apple-system, sans-serif;
+}
+
+body {
+  font-family: var(--font);
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.5;
+  min-height: 100vh;
+}
+
+.app {
+  max-width: 1600px;
+  margin: 0 auto;
+  padding: 16px 24px;
+}
+
+/* Header */
+header {
+  margin-bottom: 20px;
+}
+
+header h1 {
+  font-size: 1.5rem;
+  font-weight: 600;
+  margin-bottom: 12px;
+  color: var(--text);
+}
+
+.tabs {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 0;
+}
+
+.tab {
+  padding: 10px 20px;
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  font-size: 0.9rem;
+  font-weight: 500;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  transition: all 0.15s;
+  font-family: var(--font);
+}
+
+.tab:hover {
+  color: var(--text);
+}
+
+.tab.active {
+  color: var(--primary);
+  border-bottom-color: var(--primary);
+}
+
+/* Tab content */
+.tab-content {
+  display: none;
+}
+
+.tab-content.active {
+  display: block;
+}
+
+/* Toolbar */
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+
+.filter-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.filter-group label {
+  font-size: 0.85rem;
+  color: var(--text-dim);
+}
+
+/* Buttons */
+.btn {
+  padding: 8px 16px;
+  border: none;
+  border-radius: var(--radius);
+  font-size: 0.85rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s;
+  font-family: var(--font);
+}
+
+.btn-primary {
+  background: var(--primary);
+  color: #fff;
+}
+
+.btn-primary:hover {
+  background: var(--primary-hover);
+}
+
+.btn-secondary {
+  background: var(--surface2);
+  color: var(--text);
+  border: 1px solid var(--border);
+}
+
+.btn-secondary:hover {
+  background: var(--border);
+}
+
+.btn-icon {
+  padding: 4px 8px;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 0.8rem;
+  transition: all 0.15s;
+}
+
+.btn-icon:hover {
+  background: var(--surface2);
+  color: var(--text);
+}
+
+.btn-icon.delete:hover {
+  background: rgba(248, 113, 113, 0.15);
+  color: var(--red);
+  border-color: var(--red);
+}
+
+/* Tables */
+.table-wrapper {
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+  white-space: nowrap;
+}
+
+thead th {
+  background: var(--surface2);
+  padding: 10px 12px;
+  text-align: left;
+  font-weight: 600;
+  font-size: 0.8rem;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+tbody td {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text);
+}
+
+tbody tr:hover {
+  background: rgba(79, 140, 255, 0.04);
+}
+
+tbody tr:last-child td {
+  border-bottom: none;
+}
+
+/* Date grouping row */
+.date-group-row td {
+  background: var(--surface);
+  font-weight: 600;
+  color: var(--primary);
+  padding: 6px 12px;
+  font-size: 0.82rem;
+}
+
+/* Numeric cells */
+.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Surplus/deficit coloring */
+.positive {
+  color: var(--red);
+}
+
+.negative {
+  color: var(--green);
+}
+
+.neutral {
+  color: var(--text-dim);
+}
+
+/* Actions cell */
+.actions {
+  display: flex;
+  gap: 4px;
+}
+
+/* Inputs */
+input[type="date"],
+input[type="time"],
+input[type="text"],
+input[type="number"],
+select {
+  padding: 8px 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-size: 0.85rem;
+  font-family: var(--font);
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+input:focus,
+select:focus {
+  border-color: var(--primary);
+}
+
+select {
+  cursor: pointer;
+}
+
+/* Modal */
+.modal {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.modal.hidden {
+  display: none;
+}
+
+.modal-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(4px);
+}
+
+.modal-content {
+  position: relative;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 28px;
+  width: 480px;
+  max-width: 95vw;
+  max-height: 90vh;
+  overflow-y: auto;
+  box-shadow: 0 24px 48px rgba(0, 0, 0, 0.4);
+}
+
+.modal-content h2 {
+  font-size: 1.15rem;
+  margin-bottom: 20px;
+}
+
+.form-row {
+  margin-bottom: 14px;
+}
+
+.form-row label {
+  display: block;
+  font-size: 0.82rem;
+  color: var(--text-dim);
+  margin-bottom: 4px;
+  font-weight: 500;
+}
+
+.form-row input,
+.form-row select {
+  width: 100%;
+}
+
+.form-row-pair {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.modal-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 20px;
+}
+
+/* Settings grid */
+.settings-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+}
+
+.settings-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 20px;
+}
+
+.settings-card h2 {
+  font-size: 1rem;
+  margin-bottom: 14px;
+  color: var(--text);
+}
+
+.settings-card table {
+  font-size: 0.85rem;
+}
+
+.settings-card thead th {
+  background: var(--surface2);
+}
+
+#profile-form .form-row {
+  margin-bottom: 12px;
+}
+
+#profile-form input {
+  width: 100%;
+}
+
+/* Calorie tracker specific */
+#calorie-tracker-table .day-summary td {
+  font-weight: 500;
+}
+
+/* Responsive */
+@media (max-width: 900px) {
+  .settings-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .app {
+    padding: 12px;
+  }
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--bg);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-dim);
+}
+
+/* Estimate button */
+.btn-estimate {
+  width: 100%;
+  background: linear-gradient(135deg, #10b981, #059669);
+  color: #fff;
+  font-weight: 600;
+}
+
+.btn-estimate:hover {
+  background: linear-gradient(135deg, #059669, #047857);
+}
+
+.btn-estimate:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.estimate-status {
+  font-size: 0.8rem;
+  color: var(--text-dim);
+  margin-left: 8px;
+}
+
+.estimate-status.error {
+  color: var(--red);
+}
+
+/* API key input */
+input[type="password"] {
+  padding: 8px 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-size: 0.85rem;
+  font-family: var(--font);
+  outline: none;
+  transition: border-color 0.15s;
+  width: 100%;
+}
+
+input[type="password"]:focus {
+  border-color: var(--primary);
+}
+
+/* Daily summary row in food table */
+.daily-total td {
+  background: var(--surface2);
+  font-weight: 600;
+  border-top: 2px solid var(--border);
+  color: var(--primary);
+  font-size: 0.82rem;
+}
+
+/* Provider settings */
+.provider-section {
+  margin-bottom: 20px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.provider-section:last-child {
+  margin-bottom: 0;
+  padding-bottom: 0;
+  border-bottom: none;
+}
+
+.provider-name {
+  font-size: 0.92rem;
+  font-weight: 600;
+  color: var(--primary);
+  margin-bottom: 10px;
+}
+
+.key-row {
+  display: flex;
+  gap: 8px;
+}
+
+.key-row input[type="password"] {
+  flex: 1;
+}
+
+.btn-sm {
+  padding: 6px 14px;
+  font-size: 0.8rem;
+}
+
+/* Validation panel */
+.validation-panel {
+  margin-top: 12px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px;
+}
+
+.validation-header {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  margin-bottom: 10px;
+}
+
+.validation-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.82rem;
+  margin-bottom: 8px;
+}
+
+.validation-table thead th {
+  background: var(--surface);
+  padding: 6px 10px;
+  text-align: left;
+  font-weight: 600;
+  font-size: 0.75rem;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  border-bottom: 1px solid var(--border);
+}
+
+.validation-table tbody td {
+  padding: 5px 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.validation-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.verdict {
+  font-size: 0.82rem;
+  padding: 6px 0;
+  font-weight: 500;
+}
+
+.verdict-consensus {
+  color: var(--green);
+}
+
+.verdict-warning {
+  color: var(--yellow);
+}
+
+.verdict-escalated {
+  color: var(--orange);
+  margin-bottom: 6px;
+}
+
+.verdict-detail {
+  font-size: 0.78rem;
+  color: var(--text-dim);
+  padding: 2px 0 8px 0;
+  line-height: 1.4;
+}
+
+.round-label {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  margin-bottom: 6px;
+  margin-top: 4px;
+}
+
+.round-label-r2 {
+  margin-top: 10px;
+  color: var(--primary);
+}
+
+/* Delta indicators */
+.delta {
+  font-size: 0.72rem;
+  font-weight: 600;
+  padding: 1px 3px;
+  border-radius: 3px;
+}
+
+.delta-up {
+  color: var(--orange);
+}
+
+.delta-down {
+  color: var(--primary);
+}
+
+.delta-same {
+  color: var(--text-dim);
+}
+
+/* Spread summary */
+.spread-summary {
+  font-size: 0.82rem;
+  padding: 6px 0;
+  color: var(--text);
+}
+
+.spread-r1 {
+  color: var(--red);
+  font-weight: 600;
+}
+
+.spread-r2 {
+  color: var(--green);
+  font-weight: 600;
+}
+
+.spread-improved {
+  color: var(--green);
+  font-size: 0.78rem;
+}
+
+/* Final values row */
+.final-values-row {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+  font-size: 0.82rem;
+  font-weight: 500;
+  color: var(--text);
+}
+
+.final-label {
+  color: var(--green);
+  font-weight: 700;
+}
+
+/* Thought process button in table */
+.thought-btn {
+  font-size: 0.85rem !important;
+}
+
+.thought-btn:hover {
+  background: rgba(79, 140, 255, 0.15) !important;
+  color: var(--primary) !important;
+  border-color: var(--primary) !important;
+}
+
+/* AI Reasoning blocks */
+.reasoning-block {
+  margin: 6px 0;
+}
+
+.reasoning-toggle {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--primary);
+  cursor: pointer;
+  padding: 4px 0;
+  user-select: none;
+  list-style: none;
+}
+
+.reasoning-toggle::-webkit-details-marker {
+  display: none;
+}
+
+.reasoning-toggle::before {
+  content: "\25B6 ";
+  font-size: 0.65rem;
+  display: inline-block;
+  transition: transform 0.15s;
+  margin-right: 4px;
+}
+
+details[open] > .reasoning-toggle::before {
+  transform: rotate(90deg);
+}
+
+.reasoning-text {
+  font-size: 0.78rem;
+  color: var(--text-dim);
+  line-height: 1.5;
+  padding: 8px 12px;
+  margin-top: 4px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+/* ============================================================
+   DIET ASSESSMENT
+   ============================================================ */
+
+/* Period selector */
+.assessment-period-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.assessment-period-group label {
+  font-size: 0.85rem;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.custom-date-range {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.custom-date-range span {
+  font-size: 0.82rem;
+  color: var(--text-dim);
+}
+
+.custom-date-range.hidden {
+  display: none;
+}
+
+/* Data summary / meta pills */
+.assessment-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.meta-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 12px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  font-size: 0.8rem;
+  color: var(--text-dim);
+}
+
+.meta-pill strong {
+  color: var(--text);
+}
+
+/* Data summary table */
+.assessment-summary-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.82rem;
+  margin-bottom: 14px;
+}
+
+.assessment-summary-table th {
+  background: var(--surface2);
+  padding: 6px 12px;
+  text-align: left;
+  font-weight: 600;
+  font-size: 0.75rem;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  border-bottom: 1px solid var(--border);
+}
+
+.assessment-summary-table td {
+  padding: 5px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+/* Status badges */
+.badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.badge-green {
+  background: rgba(52, 211, 153, 0.15);
+  color: var(--green);
+}
+
+.badge-red {
+  background: rgba(248, 113, 113, 0.15);
+  color: var(--red);
+}
+
+.badge-yellow {
+  background: rgba(251, 191, 36, 0.15);
+  color: var(--yellow);
+}
+
+.badge-blue {
+  background: rgba(79, 140, 255, 0.15);
+  color: var(--primary);
+}
+
+.badge-dim {
+  background: var(--surface2);
+  color: var(--text-dim);
+}
+
+/* Assessment comparison grid (side-by-side) */
+.assessment-comparison {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+@media (max-width: 900px) {
+  .assessment-comparison {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Assessment card */
+.assessment-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
+  overflow: hidden;
+}
+
+.assessment-card.full-width {
+  grid-column: 1 / -1;
+}
+
+.assessment-provider-header {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--primary);
+  margin-bottom: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+/* Score bar */
+.score-bar-container {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.score-bar-label {
+  font-size: 0.82rem;
+  color: var(--text-dim);
+  min-width: 90px;
+}
+
+.score-bar-track {
+  flex: 1;
+  height: 10px;
+  background: var(--surface2);
+  border-radius: 5px;
+  overflow: hidden;
+}
+
+.score-bar {
+  height: 100%;
+  border-radius: 5px;
+  transition: width 0.4s ease;
+}
+
+.score-bar.score-good { background: var(--green); }
+.score-bar.score-ok { background: var(--yellow); }
+.score-bar.score-bad { background: var(--red); }
+
+.score-value {
+  font-size: 0.85rem;
+  font-weight: 700;
+  min-width: 28px;
+  text-align: right;
+}
+
+.score-value.score-good { color: var(--green); }
+.score-value.score-ok { color: var(--yellow); }
+.score-value.score-bad { color: var(--red); }
+
+/* Score badge (inline, for tables) */
+.score-badge {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+
+.score-badge.score-good {
+  background: rgba(52, 211, 153, 0.15);
+  color: var(--green);
+}
+
+.score-badge.score-ok {
+  background: rgba(251, 191, 36, 0.15);
+  color: var(--yellow);
+}
+
+.score-badge.score-bad {
+  background: rgba(248, 113, 113, 0.15);
+  color: var(--red);
+}
+
+/* Assessment status badges */
+.assessment-status-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: capitalize;
+}
+
+.status-excellent, .status-good, .status-adequate, .status-on_target, .status-on-target {
+  background: rgba(52, 211, 153, 0.15);
+  color: var(--green);
+}
+
+.status-low, .status-deficit, .status-deficient {
+  background: rgba(251, 191, 36, 0.15);
+  color: var(--yellow);
+}
+
+.status-critically_low, .status-critically-low {
+  background: rgba(251, 146, 60, 0.15);
+  color: var(--orange);
+}
+
+.status-missing, .status-surplus {
+  background: rgba(248, 113, 113, 0.15);
+  color: var(--red);
+}
+
+/* Assessment sections */
+.assessment-section {
+  margin-bottom: 14px;
+}
+
+.assessment-section-title {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  margin-bottom: 8px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--border);
+}
+
+/* Food group table */
+.food-group-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8rem;
+  margin-bottom: 8px;
+}
+
+.food-group-table th {
+  background: var(--surface2);
+  padding: 5px 8px;
+  text-align: left;
+  font-weight: 600;
+  font-size: 0.72rem;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  border-bottom: 1px solid var(--border);
+}
+
+.food-group-table td {
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.food-group-table tr:last-child td {
+  border-bottom: none;
+}
+
+/* Assessment lists (concerns, suggestions, positives) */
+.assessment-list {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 8px 0;
+}
+
+.assessment-list li {
+  padding: 4px 0 4px 18px;
+  position: relative;
+  font-size: 0.82rem;
+  line-height: 1.5;
+}
+
+.assessment-list li::before {
+  position: absolute;
+  left: 0;
+  font-weight: 700;
+}
+
+.concerns-list li::before {
+  content: "\25CF";
+  color: var(--red);
+}
+
+.suggestions-list li::before {
+  content: "\25CF";
+  color: var(--yellow);
+}
+
+.positive-list li::before {
+  content: "\25CF";
+  color: var(--green);
+}
+
+.suggestion-when {
+  font-size: 0.72rem;
+  color: var(--text-dim);
+  margin-left: 4px;
+}
+
+/* Agreement panel */
+.agreement-panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px;
+  margin-bottom: 16px;
+}
+
+.agreement-panel-title {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  margin-bottom: 10px;
+}
+
+.agreement-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8rem;
+}
+
+.agreement-table th {
+  background: var(--surface2);
+  padding: 5px 8px;
+  text-align: left;
+  font-weight: 600;
+  font-size: 0.72rem;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  border-bottom: 1px solid var(--border);
+}
+
+.agreement-table td {
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.agreement-table tr:last-child td {
+  border-bottom: none;
+}
+
+.agree-icon {
+  color: var(--green);
+  font-weight: 700;
+}
+
+.disagree-icon {
+  color: var(--red);
+  font-weight: 700;
+}
+
+.disagreement-row td {
+  background: rgba(248, 113, 113, 0.05);
+}
+
+.agreement-count {
+  font-size: 0.82rem;
+  font-weight: 500;
+  margin-top: 8px;
+  color: var(--text);
+}
+
+/* Collapsible food log */
+.food-log-details {
+  margin-bottom: 14px;
+}
+
+.food-log-toggle {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--primary);
+  cursor: pointer;
+  padding: 6px 0;
+  user-select: none;
+  list-style: none;
+}
+
+.food-log-toggle::-webkit-details-marker {
+  display: none;
+}
+
+.food-log-toggle::before {
+  content: "\25B6 ";
+  font-size: 0.65rem;
+  display: inline-block;
+  transition: transform 0.15s;
+  margin-right: 4px;
+}
+
+details[open] > .food-log-toggle::before {
+  transform: rotate(90deg);
+}
+
+.food-log-content {
+  padding: 8px 0;
+}
+
+.food-log-date {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--primary);
+  margin-top: 6px;
+  margin-bottom: 2px;
+}
+
+.food-log-items {
+  font-size: 0.78rem;
+  color: var(--text-dim);
+  line-height: 1.5;
+  padding-left: 12px;
+}
+
+/* Assessment history */
+.assessment-history-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.82rem;
+}
+
+.assessment-history-table th {
+  background: var(--surface2);
+  padding: 6px 10px;
+  text-align: left;
+  font-weight: 600;
+  font-size: 0.75rem;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  border-bottom: 1px solid var(--border);
+}
+
+.assessment-history-table td {
+  padding: 5px 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.assessment-history-table tr:last-child td {
+  border-bottom: none;
+}
+
+/* Round labels in assessment */
+.assessment-round-label {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  margin-bottom: 8px;
+  margin-top: 12px;
+}
+
+.assessment-round-label.r2 {
+  color: var(--primary);
+}
+
+/* No data message */
+.assessment-no-data {
+  text-align: center;
+  padding: 40px 20px;
+  color: var(--text-dim);
+  font-size: 0.9rem;
+}
+
+/* Action Plan */
+.action-plan {
+  background: var(--surface);
+  border: 2px solid var(--primary);
+  border-radius: 10px;
+  padding: 20px;
+  margin-top: 18px;
+}
+
+.action-plan-title {
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: var(--primary);
+  margin-bottom: 16px;
+  letter-spacing: 0.01em;
+}
+
+.action-plan-section {
+  margin-bottom: 16px;
+}
+
+.action-plan-section:last-child {
+  margin-bottom: 0;
+}
+
+.action-plan-subtitle {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 8px;
+}
+
+.action-plan-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.82rem;
+}
+
+.action-plan-table th {
+  background: var(--surface2);
+  padding: 6px 10px;
+  text-align: left;
+  font-weight: 600;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--text-dim);
+}
+
+.action-plan-table td {
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.action-plan-table td.gap-cell {
+  color: var(--orange);
+  font-weight: 600;
+}
+
+.grocery-list, .meal-ideas-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  font-size: 0.85rem;
+}
+
+.grocery-list li, .meal-ideas-list li {
+  padding: 4px 0;
+  padding-left: 20px;
+  position: relative;
+}
+
+.grocery-list li::before {
+  content: "\25A2";
+  position: absolute;
+  left: 2px;
+  color: var(--primary);
+  font-size: 1rem;
+}
+
+.meal-ideas-list li::before {
+  content: "\25CF";
+  position: absolute;
+  left: 2px;
+  color: var(--green);
+  font-size: 0.65rem;
+  top: 8px;
+}
