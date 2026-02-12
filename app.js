@@ -1352,19 +1352,133 @@ You MUST respond with ONLY a JSON object (no markdown fences, no extra text) in 
   "positive_observations": ["<what is going well 1>", "<what is going well 2>"],
   "action_plan": {
     "daily_targets": [
-      { "group": "<food group name>", "current": <current daily servings number>, "target": <recommended daily servings number>, "add": "<what to add, e.g. '2 cups leafy greens, 1 cup mixed veg'>" }
+      { "group": "<food group name>", "current": <current daily servings number>, "target": <recommended daily servings number>, "add": "<what to add>" }
     ],
-    "grocery_list": ["<item (quantity for 1 week)>", "<item (quantity for 1 week)>"],
-    "meal_ideas": ["<simple meal or snack idea to fill gaps>", "<another idea>"]
+    "grocery_add": [
+      {
+        "category": "<category name, e.g. Leafy Greens>",
+        "weekly_target": "<total weekly target, e.g. 14 cups cooked (2-3 bundles)>",
+        "pick": "<how many to pick, e.g. Pick 2-3 varieties>",
+        "options": [
+          { "item": "<specific food>", "portion": "<serving size + weekly qty>", "note": "<brief benefit or tip>" }
+        ]
+      }
+    ],
+    "grocery_keep": [
+      {
+        "category": "<category name, e.g. Protein>",
+        "options": [
+          { "item": "<food (optimal version)>", "portion": "<weekly quantity>", "note": "<upgrade tip if any>" }
+        ]
+      }
+    ],
+    "stop_and_replace": [
+      { "stop": "<food to reduce or stop>", "why": "<health reason>", "replace_with": "<better alternative>" }
+    ],
+    "sourcing_guide": [
+      { "food": "<food item>", "risk": "<contamination or quality risk>", "what_to_look_for": "<PH buying tips>" }
+    ],
+    "meal_ideas": ["<simple meal or snack idea>"]
   }
 }
 
 IMPORTANT for action_plan:
 - daily_targets: Include ALL food groups that can be improved — missing, critically_low, low, AND adequate groups that could reach optimal. Only skip groups already at "good" with no room to improve. "current" is estimated daily average servings from the food log. "target" is the optimal recommended daily servings.
-- grocery_list: Practical items with weekly quantities the user should buy to reach optimal intake. Keep to 5-10 items max.
-- meal_ideas: 3-5 simple, practical ideas (e.g. "Add a banana and handful of almonds as morning snack") that address both gaps and areas that can be optimized.`;
+- grocery_add: Foods to ADD, organized by CATEGORY. Each category should have a weekly_target (total amount needed), a "pick" hint (e.g. "Pick 2-3 varieties to mix and match"), and 3-6 specific options the user can choose from. Categories should cover: Leafy Greens, Cruciferous Vegetables, Other Vegetables, Fruits, Whole Grains/Legumes, Dairy/Calcium, Healthy Fats, Nuts/Seeds, Brain Foods, etc. — only include categories relevant to the user's gaps. Each option needs a specific portion size and weekly quantity. Give EXHAUSTIVE options so the user has variety. Aim for 5-8 categories.
+- grocery_keep: Foods to KEEP BUYING, organized by category. Each option should suggest the most health-optimal version with upgrade tips. 2-4 categories.
+- stop_and_replace: Foods the user is currently eating that should be REDUCED or REPLACED. Look for: processed foods, seed/vegetable oils, excess refined carbs, sugary drinks, processed meats (hotdog, spam, tocino, longganisa), instant noodles, white bread, margarine. Be specific about WHY it's harmful and WHAT to replace it with. 2-5 items. Only include items actually found in the food log.
+- sourcing_guide: For EACH recommended food in the grocery lists, note contamination risks and Philippines-specific buying guidance. 5-8 items covering the most important foods.
+- meal_ideas: 3-5 simple, practical ideas that address both gaps and areas that can be optimized.
 
-const SYSTEM_PROMPT_DIET_RECONCILE = `You are a registered dietitian performing a reconciliation review. Two AI models analyzed the same food diary but disagreed on key assessments. Review both analyses alongside the original food data, resolve disagreements, and produce one unified assessment.
+EVIDENCE-BASED OPTIMAL FOOD REFERENCE — Use this to make grocery recommendations precise and top-tier:
+
+BRAIN HEALTH & COGNITIVE FUNCTION (prioritize these):
+- Wild-caught salmon or sardines: richest source of DHA/EPA omega-3 (2-3 servings/week). DHA is 40% of brain polyunsaturated fat. Sardines also provide vitamin D + calcium.
+- Blueberries: highest antioxidant fruit, anthocyanins cross blood-brain barrier, improve memory consolidation (BDNF). 1 cup/day ideal.
+- Walnuts: only nut with significant ALA omega-3 + polyphenols. 1 oz (7 halves)/day linked to slower cognitive decline.
+- Dark leafy greens (spinach, kale, Swiss chard): folate + lutein + vitamin K1. 2+ cups/day. Lutein accumulates in brain tissue and is linked to neural efficiency.
+- Eggs (whole, pasture-raised): choline (1 egg = 147mg, need 550mg/day). Choline is precursor to acetylcholine (memory neurotransmitter). Also lutein + zeaxanthin.
+- Extra virgin olive oil (cold-pressed): oleocanthal has ibuprofen-like anti-neuroinflammatory effect. 2-4 tbsp/day. Central to Mediterranean diet brain benefits.
+- Dark chocolate (85%+ cacao): flavanols increase cerebral blood flow. 1-2 squares/day.
+- Turmeric (with black pepper): curcumin crosses blood-brain barrier, boosts BDNF, clears amyloid. 1 tsp/day with piperine for 2000% absorption increase.
+- Green tea: L-theanine + EGCG. L-theanine promotes alpha brain waves (calm focus). 2-3 cups/day.
+- Avocado: monounsaturated fat improves blood flow to brain. Also potassium + folate.
+
+LONGEVITY & ANTI-INFLAMMATORY:
+- Cruciferous vegetables (broccoli, cauliflower, Brussels sprouts): sulforaphane activates Nrf2 pathway, most potent natural Phase 2 enzyme inducer. Broccoli sprouts have 50x more sulforaphane than mature broccoli.
+- Legumes (lentils, chickpeas, black beans): fiber + plant protein + resistant starch. Blue Zone staple. 1 cup cooked/day.
+- Berries (blueberries, strawberries, blackberries, raspberries): polyphenols reduce inflammatory markers (CRP, IL-6). 1-2 cups/day.
+- Fermented foods (plain Greek yogurt, kefir, kimchi, sauerkraut): diverse probiotics for gut-brain axis. Gut produces 95% of serotonin. 1-2 servings/day.
+- Garlic (fresh, crushed, wait 10 min before cooking): allicin is antimicrobial + cardioprotective. 2-3 cloves/day.
+- Sweet potato: beta-carotene (converted to vitamin A) + complex carbs + fiber. Better than white potato.
+- Tomatoes (cooked): lycopene bioavailability increases 5x when cooked with olive oil. Neuroprotective.
+
+OPTIMAL PROTEIN SOURCES (ranked by bioavailability + nutrient density):
+1. Wild-caught salmon (omega-3 + astaxanthin + protein)
+2. Pasture-raised eggs (complete amino acids + choline + D3)
+3. Grass-fed beef (CLA + creatine + B12 + heme iron) — 2-3x/week max
+4. Sardines/mackerel (omega-3 + calcium from bones + low mercury)
+5. Free-range chicken breast/thigh (lean complete protein)
+6. Plain Greek yogurt (probiotics + casein + whey)
+7. Lentils/chickpeas (fiber + iron + folate)
+
+HEART & METABOLIC HEALTH:
+- Oats (steel-cut or rolled): beta-glucan fiber lowers LDL cholesterol. 1/2 cup dry/day.
+- Almonds: vitamin E + magnesium + monounsaturated fat. 1 oz (23 almonds)/day.
+- Flaxseed (ground): ALA omega-3 + lignans. 2 tbsp/day. Must be ground for absorption.
+- Beets: dietary nitrates convert to nitric oxide, improve blood flow + exercise performance.
+
+MICRONUTRIENT GAPS TO WATCH:
+- Magnesium (most people deficient): pumpkin seeds, dark chocolate, spinach, almonds
+- Vitamin D: fatty fish, egg yolks, mushrooms (UV-exposed), or supplement
+- Vitamin K2 (different from K1): natto, grass-fed butter, egg yolks — directs calcium to bones not arteries
+- Zinc: oysters (highest food source), pumpkin seeds, beef, lentils
+- B12: animal products only — critical for methylation + nerve function
+
+UPGRADE RULES for grocery_keep items:
+- White rice → brown rice or quinoa (fiber + complete protein for quinoa)
+- Regular chicken → free-range/pasture-raised (better omega-6:3 ratio)
+- Regular eggs → pasture-raised (2x omega-3, 3x vitamin D, 6x vitamin E)
+- Conventional olive oil → cold-pressed extra virgin (retains polyphenols)
+- Regular yogurt → plain Greek yogurt (2x protein, live cultures)
+- White bread → sourdough whole grain (lower glycemic, better mineral absorption from fermentation)
+- Regular butter → grass-fed butter (vitamin K2 + CLA)
+- Canola/vegetable oil → extra virgin olive oil or avocado oil (no seed oil oxidation)
+
+FOODS TO FLAG FOR stop_and_replace (only if found in food log):
+- Hotdog/processed meats (nitrites + sodium nitrate → nitrosamines, WHO Group 1 carcinogen)
+- Instant noodles (TBHQ preservative + high sodium + trans fats + zero nutrition)
+- Margarine/vegetable shortening (trans fats, inflammatory omega-6)
+- Seed/vegetable oils (soybean, canola, corn oil — oxidize at high heat, inflammatory)
+- White bread/pandesal (refined flour, high glycemic, stripped of fiber/nutrients)
+- Sugary drinks/juice (fructose overload → fatty liver, insulin resistance)
+- Processed cheese (fillers, emulsifiers, minimal real dairy)
+- Fried street food (reused oil = oxidized lipids + acrylamide)
+- Tocino/longganisa/spam (nitrites + excess sugar + sodium + preservatives)
+
+CONTAMINATION RISKS & PHILIPPINES SOURCING GUIDE (use for sourcing_guide field):
+- Turmeric powder: HIGH RISK of lead contamination (lead chromate added for color in South/Southeast Asia). Look for: whole turmeric root from local palengke (safest), or branded organic powder with third-party testing. Avoid loose/unbranded powder. Grate fresh root yourself.
+- Salmon: Farm-raised has PCBs, dioxins, antibiotics, artificial color (astaxanthin added). In PH: frozen wild-caught Alaskan salmon from S&R, Landers, or specialty stores. Check label says "wild-caught" not "Atlantic" (Atlantic = farmed). Alternative: local sardinas (galunggong family) are wild, cheap, low mercury, high omega-3.
+- Chicken/poultry: PH commercial poultry uses antibiotics as growth promoters. Look for: "antibiotic-free" or "free-range" labels — brands like Bounty Fresh Free Range, or buy from known free-range farms at weekend markets (Salcedo, Legazpi, etc.). Backyard/native chicken (manok bisaya/native) from palengke is often antibiotic-free but verify.
+- Eggs: Commercial PH eggs from battery cages, hens fed antibiotics + soy feed. Look for: "free-range" or "pasture-raised" — Sunnyside Farms, Happy Egg, or local farm eggs from weekend markets. Native/itlog ng pugo are less contaminated.
+- Fish (general): Mercury risk in large predatory fish (tuna, swordfish, shark). PH-safe choices: galunggong (round scad), bangus (milkfish — farmed but relatively clean), sardines, tilapia (local pond-raised). Avoid: imported tuna steaks, large yellowfin.
+- Vegetables: Pesticide residues common in PH conventional produce. Prioritize: local organic from Good Food Community, The Green Grocer, or farmers markets. Wash all produce in vinegar-water solution (1:3 ratio, soak 15 min). Leafy greens (kangkong, pechay, malunggay) from backyard gardens are ideal.
+- Rice: PH rice may have arsenic (absorbed from soil/water). Rinse thoroughly (3-4 washes), cook with excess water and drain (reduces arsenic 40-60%). Brown rice has more arsenic than white due to bran — still worth it for fiber but wash well.
+- Olive oil: Widespread fraud/adulteration globally. In PH: buy from reputable stores (S&R, Landers). Look for: dark glass bottle, harvest date (not just expiry), specific origin (e.g. "Product of Spain/Italy/Greece" not just "packed in"). Brands: Colavita, California Olive Ranch, Cobram Estate. Avoid: suspiciously cheap EVOO, clear plastic bottles.
+- Dark chocolate: Cadmium + lead contamination in cacao. Look for: European-sourced (stricter limits). Brands available in PH: Lindt 85%, Endangered Species, Hu Kitchen. Avoid: cheap unbranded tablea unless verified source.
+- Peanut butter: Aflatoxin risk from mold in peanuts (PH climate = high risk). Buy: sealed branded jars (no-stir natural PB), not loose palengke ground peanuts. Brands: organic/natural PB from Healthy Options, or almond butter as alternative.
+- Honey: Widely adulterated with corn syrup in PH. Buy from verified local beekeepers or brands with traceability (e.g. Bohol Bee Farm, Milea).
+- Supplements (if recommended): Buy from reputable pharmacies (Mercury Drug, Watsons) or Healthy Options. Check for FDA-PH registration. Avoid: Shopee/Lazada unverified sellers.`;
+
+const SYSTEM_PROMPT_DIET_RECONCILE = `You are a senior registered dietitian acting as a NEUTRAL JUDGE. Two independent analyses of the same food diary disagreed. Your job is to determine which analysis is more accurate by checking claims against the raw food data.
+
+CRITICAL DEBIASING RULES:
+- Do NOT compromise or average between the two analyses. Splitting the difference is WRONG.
+- For EACH disagreement, re-examine the raw food data yourself and determine which analysis is correct.
+- If Analysis A says "low" and Analysis B says "critically_low", check the actual food log: count real servings, then decide which label is accurate. Pick one.
+- If both analyses are wrong on a point, give your own independent assessment.
+- The analyses are labeled A and B — you do not know which AI produced which. Treat them equally.
+- Your reasoning MUST cite specific foods from the log to justify each decision (e.g. "pechay appeared twice in 7 days = ~0.3 servings/day, which is critically_low not low").
 
 Food group status definitions:
 - "missing" = literally zero foods from this group in the entire period
@@ -1373,7 +1487,7 @@ Food group status definitions:
 - "adequate" = meeting or near recommended servings
 - "good" = meeting or exceeding recommended servings consistently
 
-IMPORTANT: Keep your response concise to stay within token limits. The reasoning field should be brief (3-5 sentences max). Keep summaries to 1-2 sentences. Limit concerns, suggestions, and positive_observations to 3-4 items each.
+Keep your response concise. Reasoning: 4-6 sentences citing specific foods. Summaries: 1-2 sentences. Limit concerns, suggestions, positive_observations to 3-4 items each.
 
 You MUST respond with ONLY a JSON object (no markdown fences, no extra text) in the same format as the original assessment:
 {
@@ -1395,12 +1509,15 @@ You MUST respond with ONLY a JSON object (no markdown fences, no extra text) in 
   "positive_observations": ["<observation>"],
   "action_plan": {
     "daily_targets": [{ "group": "<food group>", "current": <number>, "target": <number>, "add": "<what to add>" }],
-    "grocery_list": ["<item (weekly quantity)>"],
-    "meal_ideas": ["<practical meal/snack idea>"]
+    "grocery_add": [{ "category": "<name>", "weekly_target": "<total>", "pick": "<hint>", "options": [{ "item": "<food>", "portion": "<qty>", "note": "<tip>" }] }],
+    "grocery_keep": [{ "category": "<name>", "options": [{ "item": "<food>", "portion": "<qty>", "note": "<tip>" }] }],
+    "stop_and_replace": [{ "stop": "<food>", "why": "<reason>", "replace_with": "<alternative>" }],
+    "sourcing_guide": [{ "food": "<food>", "risk": "<risk>", "what_to_look_for": "<PH tips>" }],
+    "meal_ideas": ["<idea>"]
   }
 }
 
-For action_plan: Include ALL food groups that can be improved (missing, critically_low, low, and adequate that could reach optimal) in daily_targets. Only skip groups already at "good" with no room to improve. Grocery list should have 5-10 items with weekly quantities. Meal ideas should be 3-5 practical suggestions that address gaps and optimize intake.`;
+For action_plan: grocery_add = categorized with 3-6 options per category for variety/mix-and-match. grocery_keep = categorized with optimal upgrade tips. stop_and_replace = foods from the log to cut. sourcing_guide = PH-specific contamination/buying tips. Be exhaustive with options.`;
 
 // --- Data Aggregation ---
 
@@ -1598,13 +1715,14 @@ function buildAssessmentPrompt(data) {
 
 function buildAssessmentReconciliationPrompt(data, round1Results) {
   let prompt = buildAssessmentPrompt(data);
-  prompt += `\n\n--- Previous Analyses ---\n`;
-  for (const r of round1Results) {
-    prompt += `\n${r.providerName}'s analysis:\n`;
-    prompt += JSON.stringify(r.data, null, 2);
-    prompt += `\n`;
-  }
-  prompt += `\nReview both analyses against the food data. Resolve any disagreements and provide one unified final assessment.`;
+  prompt += `\n\n--- Two Independent Analyses (anonymized) ---\n`;
+  // Anonymize: shuffle order randomly so judge can't infer which is which
+  const shuffled = [...round1Results].sort(() => Math.random() - 0.5);
+  prompt += `\nAnalysis A:\n`;
+  prompt += JSON.stringify(shuffled[0].data, null, 2);
+  prompt += `\n\nAnalysis B:\n`;
+  prompt += JSON.stringify(shuffled[1].data, null, 2);
+  prompt += `\n\nFor each category where A and B disagree, re-examine the raw food data above and determine which is correct. Do NOT average or compromise — pick the answer supported by the data, or give your own if both are wrong. Cite specific foods from the log in your reasoning.`;
   return prompt;
 }
 
@@ -1627,7 +1745,7 @@ async function callProviderForAssessment(provider, prompt, model, systemPrompt) 
           { role: "system", content: systemPrompt },
           { role: "user", content: prompt },
         ],
-        ...openaiModelParams(model, 4096),
+        ...openaiModelParams(model, 8000),
       }),
     });
     if (!res.ok) {
@@ -1650,7 +1768,7 @@ async function callProviderForAssessment(provider, prompt, model, systemPrompt) 
       },
       body: JSON.stringify({
         model,
-        max_tokens: 4096,
+        max_tokens: 8000,
         messages: [
           { role: "user", content: prompt },
         ],
@@ -1892,8 +2010,8 @@ async function runDietAssessment() {
       return;
     }
 
-    // --- Round 2: Escalate to secondary models ---
-    setAssessmentStatus(`Providers disagreed on ${agreement.disagreements}/${agreement.total} categories — reconciling...`);
+    // --- Round 2: Both providers re-evaluate with debiased prompt ---
+    setAssessmentStatus(`Providers disagreed on ${agreement.disagreements}/${agreement.total} categories — both re-evaluating...`);
 
     const reconPrompt = buildAssessmentReconciliationPrompt(data, successful);
 
@@ -1911,9 +2029,10 @@ async function runDietAssessment() {
 
     const round2Results = await Promise.all(round2Promises);
     const r2Successful = round2Results.filter(r => r.data !== null);
+    const r2Failed = round2Results.filter(r => r.error !== null);
 
     if (r2Successful.length === 0) {
-      // Fall back to Round 1 average
+      // Both R2 failed — fall back to R1 average
       const merged = averageAssessmentScores(successful.map(r => r.data));
       const resultObj = {
         timestamp: new Date().toISOString(),
@@ -1926,11 +2045,10 @@ async function runDietAssessment() {
         final: merged,
         verdict: "r2_failed",
       };
-
       renderAssessmentResults(resultObj);
       saveAssessment(resultObj);
       renderAssessmentHistory();
-      setAssessmentStatus("Reconciliation failed — using Round 1 average.", true);
+      setAssessmentStatus("Round 2 failed — using Round 1 average.", true);
       btn.disabled = false;
       return;
     }
@@ -1946,6 +2064,7 @@ async function runDietAssessment() {
       round1: successful,
       round2: r2Successful,
       failed,
+      r2Failed,
       agreement,
       r2Agreement,
       final: r2Merged,
@@ -2200,14 +2319,17 @@ function renderActionPlan(assessmentData) {
   const ap = assessmentData?.action_plan;
   if (!ap) return '';
 
-  let html = '<div class="action-plan">';
+  let html = '<div class="action-plan" id="action-plan-printable">';
+  html += '<div class="action-plan-header">';
   html += '<div class="action-plan-title">Weekly Action Plan</div>';
+  html += '<button class="btn btn-secondary btn-print" onclick="printActionPlan()">Print / Save PDF</button>';
+  html += '</div>';
 
-  // Daily targets table (only groups needing improvement)
+  // Daily targets table
   if (ap.daily_targets && ap.daily_targets.length > 0) {
     html += '<div class="action-plan-section">';
     html += '<div class="action-plan-subtitle">Daily Serving Gaps</div>';
-    html += '<table class="action-plan-table"><thead><tr><th>Food Group</th><th>Current</th><th>Target</th><th>Gap</th><th>What to Add</th></tr></thead><tbody>';
+    html += '<table class="action-plan-table daily-targets-table"><thead><tr><th>Food Group</th><th>Current</th><th>Target</th><th>Gap</th><th>What to Add</th></tr></thead><tbody>';
     for (const t of ap.daily_targets) {
       const gap = Math.max(0, (t.target || 0) - (t.current || 0));
       html += `<tr>
@@ -2221,15 +2343,90 @@ function renderActionPlan(assessmentData) {
     html += '</tbody></table></div>';
   }
 
-  // Grocery list
-  if (ap.grocery_list && ap.grocery_list.length > 0) {
+  // Grocery checklist — What to Add (categorized with checkboxes)
+  if (ap.grocery_add && ap.grocery_add.length > 0) {
     html += '<div class="action-plan-section">';
-    html += '<div class="action-plan-subtitle">Grocery List (1 Week)</div>';
-    html += '<ul class="grocery-list">';
-    for (const item of ap.grocery_list) {
-      html += `<li>${escapeHtml(item)}</li>`;
+    html += '<div class="action-plan-subtitle">Grocery Checklist — What to Add</div>';
+    html += '<p class="grocery-hint">Pick items from each category to meet your weekly targets. Mix and match for variety!</p>';
+    html += '<div class="grocery-grid">';
+    for (const cat of ap.grocery_add) {
+      html += '<div class="grocery-category grocery-category-add">';
+      html += `<div class="grocery-category-header">`;
+      html += `<div class="grocery-category-name">${escapeHtml(cat.category || "")}</div>`;
+      if (cat.weekly_target) html += `<div class="grocery-category-target">${escapeHtml(cat.weekly_target)}</div>`;
+      if (cat.pick) html += `<div class="grocery-category-pick">${escapeHtml(cat.pick)}</div>`;
+      html += '</div>';
+      html += '<div class="grocery-options">';
+      for (const opt of (cat.options || [])) {
+        const id = 'gc_' + Math.random().toString(36).slice(2, 8);
+        html += `<label class="grocery-item" for="${id}">`;
+        html += `<input type="checkbox" id="${id}" class="grocery-checkbox">`;
+        html += `<span class="grocery-item-name">${escapeHtml(opt.item || "")}</span>`;
+        if (opt.portion) html += `<span class="grocery-item-portion">${escapeHtml(opt.portion)}</span>`;
+        if (opt.note) html += `<span class="grocery-item-note">${escapeHtml(opt.note)}</span>`;
+        html += '</label>';
+      }
+      html += '</div></div>';
     }
-    html += '</ul></div>';
+    html += '</div></div>';
+  }
+
+  // Grocery checklist — Keep Buying (categorized with checkboxes)
+  if (ap.grocery_keep && ap.grocery_keep.length > 0) {
+    html += '<div class="action-plan-section">';
+    html += '<div class="action-plan-subtitle">Grocery Checklist — Keep Buying</div>';
+    html += '<p class="grocery-hint">Foods you\'re already eating — keep it up! Upgrade tips included.</p>';
+    html += '<div class="grocery-grid">';
+    for (const cat of ap.grocery_keep) {
+      html += '<div class="grocery-category grocery-category-keep">';
+      html += `<div class="grocery-category-header">`;
+      html += `<div class="grocery-category-name">${escapeHtml(cat.category || "")}</div>`;
+      html += '</div>';
+      html += '<div class="grocery-options">';
+      for (const opt of (cat.options || [])) {
+        const id = 'gk_' + Math.random().toString(36).slice(2, 8);
+        html += `<label class="grocery-item" for="${id}">`;
+        html += `<input type="checkbox" id="${id}" class="grocery-checkbox">`;
+        html += `<span class="grocery-item-name">${escapeHtml(opt.item || "")}</span>`;
+        if (opt.portion) html += `<span class="grocery-item-portion">${escapeHtml(opt.portion)}</span>`;
+        if (opt.note) html += `<span class="grocery-item-note">${escapeHtml(opt.note)}</span>`;
+        html += '</label>';
+      }
+      html += '</div></div>';
+    }
+    html += '</div></div>';
+  }
+
+  // Stop and replace
+  if (ap.stop_and_replace && ap.stop_and_replace.length > 0) {
+    html += '<div class="action-plan-section">';
+    html += '<div class="action-plan-subtitle">Stop / Replace</div>';
+    html += '<p class="grocery-hint">Foods to reduce or cut out, and what to eat instead:</p>';
+    html += '<table class="action-plan-table stop-replace-table"><thead><tr><th>Stop / Reduce</th><th>Why</th><th>Replace With</th></tr></thead><tbody>';
+    for (const s of ap.stop_and_replace) {
+      html += `<tr>
+        <td class="stop-cell">${escapeHtml(s.stop || "")}</td>
+        <td>${escapeHtml(s.why || "")}</td>
+        <td class="replace-cell">${escapeHtml(s.replace_with || "")}</td>
+      </tr>`;
+    }
+    html += '</tbody></table></div>';
+  }
+
+  // Sourcing guide
+  if (ap.sourcing_guide && ap.sourcing_guide.length > 0) {
+    html += '<div class="action-plan-section">';
+    html += '<div class="action-plan-subtitle">Sourcing Guide (Philippines)</div>';
+    html += '<p class="grocery-hint">Contamination risks and what to look for when buying:</p>';
+    html += '<table class="action-plan-table sourcing-table"><thead><tr><th>Food</th><th>Risk</th><th>What to Look For</th></tr></thead><tbody>';
+    for (const s of ap.sourcing_guide) {
+      html += `<tr>
+        <td><strong>${escapeHtml(s.food || "")}</strong></td>
+        <td class="risk-cell">${escapeHtml(s.risk || "")}</td>
+        <td>${escapeHtml(s.what_to_look_for || "")}</td>
+      </tr>`;
+    }
+    html += '</tbody></table></div>';
   }
 
   // Meal ideas
@@ -2245,6 +2442,53 @@ function renderActionPlan(assessmentData) {
 
   html += '</div>';
   return html;
+}
+
+function printActionPlan() {
+  const el = document.getElementById("action-plan-printable");
+  if (!el) return;
+  const win = window.open("", "_blank");
+  win.document.write(`<!DOCTYPE html><html><head><title>Weekly Action Plan</title><style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; padding: 20px; color: #1a1a2e; font-size: 11px; }
+    .action-plan { max-width: 100%; }
+    .action-plan-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
+    .action-plan-title { font-size: 18px; font-weight: 700; color: #6c63ff; }
+    .btn-print { display: none; }
+    .action-plan-section { margin-bottom: 14px; }
+    .action-plan-subtitle { font-size: 13px; font-weight: 700; margin-bottom: 6px; border-bottom: 2px solid #6c63ff; padding-bottom: 3px; }
+    .grocery-hint { font-size: 10px; color: #666; margin-bottom: 6px; font-style: italic; }
+    table { width: 100%; border-collapse: collapse; font-size: 10px; margin-bottom: 8px; }
+    th { background: #f0f0f5; padding: 4px 6px; text-align: left; font-size: 9px; text-transform: uppercase; }
+    td { padding: 4px 6px; border-bottom: 1px solid #ddd; vertical-align: top; }
+    .daily-targets-table th:nth-child(1){width:18%} .daily-targets-table th:nth-child(5){width:50%}
+    .stop-replace-table th:nth-child(1){width:22%} .stop-replace-table th:nth-child(2){width:40%}
+    .sourcing-table th:nth-child(1){width:15%} .sourcing-table th:nth-child(2){width:25%} .sourcing-table th:nth-child(3){width:60%}
+    .gap-cell { color: #e67e22; font-weight: 600; }
+    .stop-cell { color: #e74c3c; text-decoration: line-through; font-weight: 600; }
+    .replace-cell { color: #27ae60; font-weight: 600; }
+    .risk-cell { color: #e67e22; }
+    .grocery-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px; }
+    .grocery-category { border: 1px solid #ddd; border-radius: 6px; padding: 8px; break-inside: avoid; }
+    .grocery-category-add { border-left: 3px solid #e67e22; }
+    .grocery-category-keep { border-left: 3px solid #27ae60; }
+    .grocery-category-name { font-weight: 700; font-size: 12px; margin-bottom: 2px; }
+    .grocery-category-target { font-size: 9px; color: #666; }
+    .grocery-category-pick { font-size: 9px; color: #6c63ff; font-style: italic; }
+    .grocery-item { display: flex; align-items: flex-start; gap: 5px; padding: 3px 0; border-bottom: 1px solid #f0f0f5; font-size: 10px; }
+    .grocery-item:last-child { border-bottom: none; }
+    .grocery-checkbox { width: 13px; height: 13px; margin-top: 1px; flex-shrink: 0; }
+    .grocery-item-name { font-weight: 600; }
+    .grocery-item-portion { color: #666; font-size: 9px; }
+    .grocery-item-note { color: #888; font-size: 9px; font-style: italic; }
+    .meal-ideas-list { list-style: disc; padding-left: 20px; }
+    .meal-ideas-list li { padding: 2px 0; }
+    .num { text-align: right; }
+    @page { margin: 15mm; }
+  </style></head><body>${el.outerHTML}</body></html>`);
+  win.document.close();
+  win.focus();
+  setTimeout(() => { win.print(); }, 300);
 }
 
 function renderAgreementSummary(agreement, providerA, providerB) {
@@ -2288,7 +2532,7 @@ function renderAssessmentResults(result) {
   } else if (result.verdict === "consensus") {
     html += `<div class="verdict verdict-consensus" style="margin-bottom:12px">&#10003; Both providers agreed (${result.agreement.total - result.agreement.disagreements}/${result.agreement.total} categories match)</div>`;
   } else if (result.verdict === "reconciled") {
-    html += `<div class="verdict verdict-escalated" style="margin-bottom:12px">&#9888; Round 1: ${result.agreement.disagreements}/${result.agreement.total} categories disagreed — reconciled in Round 2</div>`;
+    html += `<div class="verdict verdict-escalated" style="margin-bottom:12px">&#9888; Round 1: ${result.agreement.disagreements}/${result.agreement.total} categories disagreed — debiased re-evaluation in Round 2</div>`;
   } else if (result.verdict === "r2_failed") {
     html += `<div class="verdict verdict-warning" style="margin-bottom:12px">&#9888; Reconciliation failed — using Round 1 average</div>`;
   }
@@ -2298,9 +2542,10 @@ function renderAssessmentResults(result) {
     html += renderAgreementSummary(result.agreement, result.round1[0].providerName, result.round1[1].providerName);
   }
 
-  // Round 2 reconciled results (show prominently if present)
+  // Round 2 — Both providers re-evaluated with debiased prompt
   if (result.verdict === "reconciled" && result.round2) {
-    html += '<div class="assessment-round-label r2">Round 2 — Reconciled Assessment</div>';
+    html += '<div class="assessment-round-label r2">Round 2 — Debiased Re-evaluation</div>';
+    html += `<p class="grocery-hint" style="margin-bottom:8px">Both models re-evaluated the data with anonymized Round 1 analyses (A/B). Instructed to not compromise — cite specific foods to justify each decision.</p>`;
 
     if (result.round2.length === 1) {
       html += '<div class="assessment-comparison"><div class="assessment-card full-width">';
@@ -2363,10 +2608,17 @@ function renderAssessmentResults(result) {
     html += renderActionPlan(bestAssessment);
   }
 
-  // Failed providers
+  // Failed providers (Round 1)
   if (result.failed && result.failed.length > 0) {
     for (const f of result.failed) {
-      html += `<div class="verdict verdict-warning">&#9888; ${escapeHtml(f.providerName)} failed: ${escapeHtml(f.error)}</div>`;
+      html += `<div class="verdict verdict-warning">&#9888; ${escapeHtml(f.providerName)} failed (R1): ${escapeHtml(f.error)}</div>`;
+    }
+  }
+
+  // Failed providers (Round 2)
+  if (result.r2Failed && result.r2Failed.length > 0) {
+    for (const f of result.r2Failed) {
+      html += `<div class="verdict verdict-warning">&#9888; ${escapeHtml(f.providerName)} failed (R2): ${escapeHtml(f.error)}</div>`;
     }
   }
 

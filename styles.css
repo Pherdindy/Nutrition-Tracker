@@ -1200,6 +1200,7 @@ details[open] > .food-log-toggle::before {
   border-radius: 10px;
   padding: 20px;
   margin-top: 18px;
+  overflow-x: auto;
 }
 
 .action-plan-title {
@@ -1245,6 +1246,12 @@ details[open] > .food-log-toggle::before {
 .action-plan-table td {
   padding: 6px 10px;
   border-bottom: 1px solid var(--border);
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+}
+
+.action-plan-table {
+  table-layout: fixed;
 }
 
 .action-plan-table td.gap-cell {
@@ -1252,25 +1259,24 @@ details[open] > .food-log-toggle::before {
   font-weight: 600;
 }
 
-.grocery-list, .meal-ideas-list {
+.grocery-hint {
+  font-size: 0.78rem;
+  color: var(--text-dim);
+  margin: 0 0 8px 0;
+  font-style: italic;
+}
+
+.meal-ideas-list {
   list-style: none;
   padding: 0;
   margin: 0;
   font-size: 0.85rem;
 }
 
-.grocery-list li, .meal-ideas-list li {
+.meal-ideas-list li {
   padding: 4px 0;
   padding-left: 20px;
   position: relative;
-}
-
-.grocery-list li::before {
-  content: "\25A2";
-  position: absolute;
-  left: 2px;
-  color: var(--primary);
-  font-size: 1rem;
 }
 
 .meal-ideas-list li::before {
@@ -1280,4 +1286,194 @@ details[open] > .food-log-toggle::before {
   color: var(--green);
   font-size: 0.65rem;
   top: 8px;
+}
+
+/* Action plan header with print button */
+.action-plan-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+}
+
+.btn-print {
+  font-size: 0.78rem;
+  padding: 5px 14px;
+  cursor: pointer;
+}
+
+/* Grocery grid layout */
+.grocery-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 12px;
+}
+
+.grocery-category {
+  background: var(--surface2);
+  border-radius: 8px;
+  padding: 12px;
+  border: 1px solid var(--border);
+}
+
+.grocery-category-add {
+  border-left: 3px solid var(--orange);
+}
+
+.grocery-category-keep {
+  border-left: 3px solid var(--green);
+}
+
+.grocery-category-header {
+  margin-bottom: 8px;
+}
+
+.grocery-category-name {
+  font-weight: 700;
+  font-size: 0.88rem;
+  color: var(--text);
+}
+
+.grocery-category-target {
+  font-size: 0.75rem;
+  color: var(--text-dim);
+  margin-top: 2px;
+}
+
+.grocery-category-pick {
+  font-size: 0.73rem;
+  color: var(--primary);
+  font-style: italic;
+  margin-top: 1px;
+}
+
+.grocery-options {
+  display: flex;
+  flex-direction: column;
+}
+
+.grocery-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 5px 0;
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+  font-size: 0.82rem;
+  line-height: 1.35;
+}
+
+.grocery-item:last-child {
+  border-bottom: none;
+}
+
+.grocery-item:hover {
+  background: rgba(108, 99, 255, 0.05);
+  border-radius: 4px;
+}
+
+.grocery-checkbox {
+  width: 16px;
+  height: 16px;
+  margin-top: 1px;
+  flex-shrink: 0;
+  cursor: pointer;
+  accent-color: var(--primary);
+}
+
+.grocery-item-name {
+  font-weight: 600;
+  color: var(--text);
+  min-width: 0;
+}
+
+.grocery-item-portion {
+  font-size: 0.75rem;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.grocery-item-note {
+  font-size: 0.73rem;
+  color: var(--text-dim);
+  font-style: italic;
+  opacity: 0.8;
+}
+
+/* Checked item styling */
+.grocery-item:has(.grocery-checkbox:checked) .grocery-item-name {
+  text-decoration: line-through;
+  opacity: 0.6;
+}
+
+@media (max-width: 900px) {
+  .grocery-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 600px) {
+  .action-plan-header {
+    flex-direction: column;
+    gap: 8px;
+    align-items: flex-start;
+  }
+}
+
+/* Daily targets column widths */
+.action-plan-table.daily-targets-table th:nth-child(1) { width: 18%; }
+.action-plan-table.daily-targets-table th:nth-child(2) { width: 10%; }
+.action-plan-table.daily-targets-table th:nth-child(3) { width: 10%; }
+.action-plan-table.daily-targets-table th:nth-child(4) { width: 10%; }
+.action-plan-table.daily-targets-table th:nth-child(5) { width: 52%; }
+
+/* Stop & Replace column widths */
+.stop-replace-table th:nth-child(1) { width: 22%; }
+.stop-replace-table th:nth-child(2) { width: 40%; }
+.stop-replace-table th:nth-child(3) { width: 38%; }
+
+/* Sourcing guide column widths */
+.sourcing-table th:nth-child(1) { width: 15%; }
+.sourcing-table th:nth-child(2) { width: 25%; }
+.sourcing-table th:nth-child(3) { width: 60%; }
+
+/* Stop & Replace table */
+.stop-replace-table td.stop-cell {
+  color: var(--red);
+  font-weight: 600;
+  text-decoration: line-through;
+  text-decoration-color: rgba(239, 68, 68, 0.4);
+}
+
+.stop-replace-table td.replace-cell {
+  color: var(--green);
+  font-weight: 600;
+}
+
+/* Sourcing guide table */
+.sourcing-table td.risk-cell {
+  color: var(--orange);
+  font-size: 0.8rem;
+}
+
+.sourcing-table td {
+  vertical-align: top;
+  line-height: 1.4;
+}
+
+.action-plan-table td,
+.action-plan-table th {
+  font-size: 0.82rem;
+}
+
+@media (max-width: 700px) {
+  .stop-replace-table,
+  .sourcing-table {
+    font-size: 0.75rem;
+  }
+
+  .sourcing-table td,
+  .sourcing-table th {
+    padding: 5px 6px;
+  }
 }
