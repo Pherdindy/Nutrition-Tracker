@@ -1,6 +1,43 @@
 // ============================================================
-// DATA LAYER
+// DATA LAYER — Supabase with in-memory cache
 // ============================================================
+
+const SUPABASE_URL = 'https://wcbpvvyhswaricoadqbb.supabase.co';
+const SUPABASE_ANON_KEY = 'sb_publishable_I_XmlCcMCBDOkbU8PWN42A_SID54xxi';
+const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+const _cache = { food: null, days: null, profile: null, assessments: null, settings: {}, ready: false };
+
+// ---- Mappers: snake_case DB ↔ camelCase JS ----
+
+function foodRowToJs(r) {
+  return { id: r.id, date: r.date, time: r.time, food: r.food, qty: Number(r.qty), unit: r.unit, calLow: Number(r.cal_low), calHigh: Number(r.cal_high), proLow: Number(r.pro_low), proHigh: Number(r.pro_high), aiThoughtProcess: r.ai_thought_process || null };
+}
+function foodJsToRow(e) {
+  return { id: e.id, date: e.date, time: e.time, food: e.food, qty: e.qty, unit: e.unit, cal_low: e.calLow, cal_high: e.calHigh, pro_low: e.proLow, pro_high: e.proHigh, ai_thought_process: e.aiThoughtProcess || null };
+}
+
+function dayRowToJs(r) {
+  return { id: r.id, date: r.date, age: r.age, weight: Number(r.weight), activity: r.activity, deficit: Number(r.deficit), proteinTargetLow: Number(r.protein_target_low), proteinTargetHigh: Number(r.protein_target_high) };
+}
+function dayJsToRow(e) {
+  return { id: e.id, date: e.date, age: e.age, weight: e.weight, activity: e.activity, deficit: e.deficit, protein_target_low: e.proteinTargetLow, protein_target_high: e.proteinTargetHigh };
+}
+
+function profileRowToJs(r) {
+  return { height: Number(r.height), proteinLow: Number(r.protein_low), proteinHigh: Number(r.protein_high) };
+}
+function profileJsToRow(p) {
+  return { id: 1, height: p.height, protein_low: p.proteinLow, protein_high: p.proteinHigh };
+}
+
+// ---- bgWrite: fire-and-forget async write to Supabase ----
+
+function bgWrite(fn) {
+  Promise.resolve().then(fn).catch(err => console.error('[Supabase bgWrite]', err));
+}
+
+// ---- Constants ----
 
 const ACTIVITY_TYPES = [
   { label: "\u{1FA91} Sat all day (no exercise)", multiplier: 1.2 },
@@ -19,31 +56,62 @@ const WEIGHT_LOSS_GOALS = [
 
 const DEFAULT_PROFILE = { height: 170.1, proteinLow: 135, proteinHigh: 150 };
 
+// ---- Data functions (synchronous reads from cache, write-through to Supabase) ----
+
 function loadProfile() {
+  if (_cache.ready && _cache.profile) return { ..._cache.profile };
   const saved = localStorage.getItem("nt_profile");
   return saved ? JSON.parse(saved) : { ...DEFAULT_PROFILE };
 }
 
 function saveProfile(profile) {
+  _cache.profile = { ...profile };
   localStorage.setItem("nt_profile", JSON.stringify(profile));
+  bgWrite(async () => {
+    const { error } = await sb.from('profile').upsert(profileJsToRow(profile));
+    if (error) throw error;
+  });
 }
 
 function loadFoodEntries() {
+  if (_cache.ready && _cache.food) return [..._cache.food];
   const saved = localStorage.getItem("nt_food");
   return saved ? JSON.parse(saved) : [];
 }
 
 function saveFoodEntries(entries) {
+  _cache.food = [...entries];
   localStorage.setItem("nt_food", JSON.stringify(entries));
+  bgWrite(async () => {
+    // Delete all then re-insert (simple approach for full-array saves)
+    const { error: delErr } = await sb.from('food_entries').delete().gte('id', 0);
+    if (delErr) throw delErr;
+    if (entries.length > 0) {
+      const rows = entries.map(foodJsToRow);
+      const { error } = await sb.from('food_entries').upsert(rows);
+      if (error) throw error;
+    }
+  });
 }
 
 function loadDayEntries() {
+  if (_cache.ready && _cache.days) return [..._cache.days];
   const saved = localStorage.getItem("nt_days");
   return saved ? JSON.parse(saved) : [];
 }
 
 function saveDayEntries(entries) {
+  _cache.days = [...entries];
   localStorage.setItem("nt_days", JSON.stringify(entries));
+  bgWrite(async () => {
+    const { error: delErr } = await sb.from('days').delete().gte('id', 0);
+    if (delErr) throw delErr;
+    if (entries.length > 0) {
+      const rows = entries.map(dayJsToRow);
+      const { error } = await sb.from('days').upsert(rows);
+      if (error) throw error;
+    }
+  });
 }
 
 // ============================================================
@@ -159,22 +227,178 @@ const SEED_DAYS = [
 ];
 
 // ============================================================
-// INITIALIZE DATA
+// INITIALIZE DATA — Supabase with localStorage fallback
 // ============================================================
 
 const DATA_VERSION = 2; // Bump this when seed data changes
 
-function initData() {
+async function initFromSupabase() {
+  const [foodRes, daysRes, profileRes, assessRes, settingsRes] = await Promise.all([
+    sb.from('food_entries').select('*').order('date', { ascending: false }),
+    sb.from('days').select('*').order('date', { ascending: false }),
+    sb.from('profile').select('*').eq('id', 1).maybeSingle(),
+    sb.from('assessments').select('*').order('timestamp', { ascending: false }),
+    sb.from('settings').select('*'),
+  ]);
+
+  // Check for errors on critical tables
+  if (foodRes.error) throw foodRes.error;
+  if (daysRes.error) throw daysRes.error;
+
+  const hasFoodData = foodRes.data && foodRes.data.length > 0;
+  const hasDaysData = daysRes.data && daysRes.data.length > 0;
+  const hasProfileData = profileRes.data != null;
+
+  // If Supabase is empty, check if we should migrate from localStorage or seed
+  if (!hasFoodData && !hasDaysData && !hasProfileData) {
+    const localFood = localStorage.getItem("nt_food");
+    const localDays = localStorage.getItem("nt_days");
+    if (localFood || localDays) {
+      // Migrate existing localStorage data to Supabase
+      await migrateLocalStorageToSupabase();
+    } else {
+      // Fresh install — seed data
+      await seedSupabase();
+    }
+    // Re-fetch after migration/seeding
+    return initFromSupabase();
+  }
+
+  // Populate cache from Supabase data
+  _cache.food = foodRes.data.map(foodRowToJs);
+  _cache.days = daysRes.data.map(dayRowToJs);
+  _cache.profile = hasProfileData ? profileRowToJs(profileRes.data) : { ...DEFAULT_PROFILE };
+  _cache.assessments = (assessRes.data || []).map(r => r.data);
+
+  // Settings (key-value pairs)
+  _cache.settings = {};
+  if (settingsRes.data) {
+    for (const row of settingsRes.data) {
+      _cache.settings[row.key] = row.value;
+    }
+  }
+
+  // Sync back to localStorage as offline fallback
+  localStorage.setItem("nt_food", JSON.stringify(_cache.food));
+  localStorage.setItem("nt_days", JSON.stringify(_cache.days));
+  localStorage.setItem("nt_profile", JSON.stringify(_cache.profile));
+  localStorage.setItem("nt_assessments", JSON.stringify(_cache.assessments));
+
+  _cache.ready = true;
+  console.log('[Supabase] Loaded from cloud:', _cache.food.length, 'food entries,', _cache.days.length, 'days');
+}
+
+function initFromLocalStorage() {
+  // Fallback: populate cache from localStorage (same as old behavior)
   const currentVersion = parseInt(localStorage.getItem("nt_version") || "0");
   if (currentVersion < DATA_VERSION) {
-    // Seed data updated — reload from seed
     const foodEntries = SEED_FOOD.map((f, i) => ({ id: i + 1, ...f }));
-    saveFoodEntries(foodEntries);
+    localStorage.setItem("nt_food", JSON.stringify(foodEntries));
     const dayEntries = SEED_DAYS.map((d, i) => ({ id: i + 1, ...d }));
-    saveDayEntries(dayEntries);
-    saveProfile(DEFAULT_PROFILE);
+    localStorage.setItem("nt_days", JSON.stringify(dayEntries));
+    localStorage.setItem("nt_profile", JSON.stringify(DEFAULT_PROFILE));
     localStorage.setItem("nt_version", String(DATA_VERSION));
   }
+
+  const savedFood = localStorage.getItem("nt_food");
+  _cache.food = savedFood ? JSON.parse(savedFood) : [];
+  const savedDays = localStorage.getItem("nt_days");
+  _cache.days = savedDays ? JSON.parse(savedDays) : [];
+  const savedProfile = localStorage.getItem("nt_profile");
+  _cache.profile = savedProfile ? JSON.parse(savedProfile) : { ...DEFAULT_PROFILE };
+  const savedAssessments = localStorage.getItem("nt_assessments");
+  _cache.assessments = savedAssessments ? JSON.parse(savedAssessments) : [];
+
+  _cache.ready = true;
+  console.log('[localStorage] Loaded from local storage (offline fallback)');
+}
+
+async function migrateLocalStorageToSupabase() {
+  console.log('[Supabase] Migrating localStorage data to Supabase...');
+
+  const foodRaw = localStorage.getItem("nt_food");
+  const daysRaw = localStorage.getItem("nt_days");
+  const profileRaw = localStorage.getItem("nt_profile");
+  const assessmentsRaw = localStorage.getItem("nt_assessments");
+
+  // Migrate food entries
+  if (foodRaw) {
+    const food = JSON.parse(foodRaw);
+    if (food.length > 0) {
+      const rows = food.map(foodJsToRow);
+      const { error } = await sb.from('food_entries').upsert(rows);
+      if (error) console.error('[Supabase] Food migration error:', error);
+    }
+  }
+
+  // Migrate day entries
+  if (daysRaw) {
+    const days = JSON.parse(daysRaw);
+    if (days.length > 0) {
+      const rows = days.map(dayJsToRow);
+      const { error } = await sb.from('days').upsert(rows);
+      if (error) console.error('[Supabase] Days migration error:', error);
+    }
+  }
+
+  // Migrate profile
+  if (profileRaw) {
+    const profile = JSON.parse(profileRaw);
+    const { error } = await sb.from('profile').upsert(profileJsToRow(profile));
+    if (error) console.error('[Supabase] Profile migration error:', error);
+  }
+
+  // Migrate assessments
+  if (assessmentsRaw) {
+    const assessments = JSON.parse(assessmentsRaw);
+    if (assessments.length > 0) {
+      const rows = assessments.map(a => ({
+        timestamp: a.timestamp,
+        period: a.period || 'unknown',
+        data: a,
+      }));
+      const { error } = await sb.from('assessments').insert(rows);
+      if (error) console.error('[Supabase] Assessments migration error:', error);
+    }
+  }
+
+  // Migrate settings (provider modes, models, spread threshold — NOT API keys)
+  const settingsToMigrate = [];
+  for (const provider of ['openai', 'anthropic']) {
+    const mode = localStorage.getItem(`nt_${provider}_mode`);
+    if (mode) settingsToMigrate.push({ key: `${provider}_mode`, value: mode });
+    const primary = localStorage.getItem(`nt_${provider}_primary`);
+    if (primary) settingsToMigrate.push({ key: `${provider}_primary`, value: primary });
+    const secondary = localStorage.getItem(`nt_${provider}_secondary`);
+    if (secondary) settingsToMigrate.push({ key: `${provider}_secondary`, value: secondary });
+  }
+  const threshold = localStorage.getItem("nt_spread_threshold");
+  if (threshold) settingsToMigrate.push({ key: 'spread_threshold', value: threshold });
+
+  if (settingsToMigrate.length > 0) {
+    const { error } = await sb.from('settings').upsert(settingsToMigrate);
+    if (error) console.error('[Supabase] Settings migration error:', error);
+  }
+
+  console.log('[Supabase] Migration complete');
+}
+
+async function seedSupabase() {
+  console.log('[Supabase] Seeding initial data...');
+  const foodEntries = SEED_FOOD.map((f, i) => ({ id: i + 1, ...f }));
+  const dayEntries = SEED_DAYS.map((d, i) => ({ id: i + 1, ...d }));
+
+  const foodRows = foodEntries.map(foodJsToRow);
+  const dayRows = dayEntries.map(dayJsToRow);
+
+  await Promise.all([
+    sb.from('food_entries').upsert(foodRows),
+    sb.from('days').upsert(dayRows),
+    sb.from('profile').upsert(profileJsToRow(DEFAULT_PROFILE)),
+  ]);
+
+  localStorage.setItem("nt_version", String(DATA_VERSION));
+  console.log('[Supabase] Seeding complete');
 }
 
 // ============================================================
@@ -447,6 +671,31 @@ function closeFoodModal() {
   document.getElementById("food-modal").classList.add("hidden");
 }
 
+function ensureDayExists(date) {
+  const days = loadDayEntries();
+  if (days.some((d) => d.date === date)) return;
+
+  // Copy defaults from most recent existing day, or use fallback defaults
+  const sorted = [...days].sort((a, b) => (a.date < b.date ? 1 : -1));
+  const prev = sorted[0];
+  const profile = loadProfile();
+
+  const maxId = days.length ? Math.max(...days.map((d) => d.id)) : 0;
+  const newDay = {
+    id: maxId + 1,
+    date,
+    age: prev ? prev.age : 32,
+    weight: prev ? prev.weight : 168,
+    activity: prev ? prev.activity : ACTIVITY_TYPES[0].label,
+    deficit: prev ? prev.deficit : 550,
+    proteinTargetLow: prev ? prev.proteinTargetLow : profile.proteinLow,
+    proteinTargetHigh: prev ? prev.proteinTargetHigh : profile.proteinHigh,
+  };
+
+  days.push(newDay);
+  saveDayEntries(days);
+}
+
 function saveFood(e) {
   e.preventDefault();
   const entries = loadFoodEntries();
@@ -492,6 +741,7 @@ function saveFood(e) {
   }
 
   saveFoodEntries(entries);
+  ensureDayExists(entry.date);
   closeFoodModal();
   renderFoodTable();
   renderCalorieTracker();
@@ -674,12 +924,24 @@ You MUST respond with ONLY a JSON object (no markdown fences, no extra text) in 
   "protein_upper": <number>
 }`;
 
-// GPT-5+ models use max_completion_tokens and don't support temperature
+// GPT-5+ and reasoning models use max_completion_tokens (includes thinking tokens) and don't support temperature
 function openaiModelParams(model, tokens) {
   if (model.startsWith("gpt-5") || model.startsWith("o1") || model.startsWith("o3") || model.startsWith("o4")) {
-    return { max_completion_tokens: tokens };
+    // Reasoning models need much higher limits — thinking/reasoning tokens count against the budget
+    return { max_completion_tokens: Math.max(tokens * 8, 8000) };
   }
   return { max_tokens: tokens, temperature: 0 };
+}
+
+function extractOpenAIContent(data) {
+  const choice = data.choices && data.choices[0];
+  if (!choice) throw new Error("No response from OpenAI");
+  if (choice.finish_reason === "length") {
+    throw new Error("Response truncated (token limit reached) — try a simpler query or fewer items");
+  }
+  const content = choice.message && choice.message.content;
+  if (!content) throw new Error("Empty response from OpenAI");
+  return content;
 }
 
 const PROVIDERS = [
@@ -717,7 +979,7 @@ const PROVIDERS = [
         throw new Error(err.error?.message || `OpenAI API error ${res.status}`);
       }
       const data = await res.json();
-      return parseAIResponse(data.choices[0].message.content);
+      return parseAIResponse(extractOpenAIContent(data));
     },
     callReconciliation: async (food, qty, unit, apiKey, model, round1Results) => {
       const prompt = buildReconciliationPrompt(food, qty, unit, round1Results);
@@ -741,7 +1003,7 @@ const PROVIDERS = [
         throw new Error(err.error?.message || `OpenAI API error ${res.status}`);
       }
       const data = await res.json();
-      return parseAIResponse(data.choices[0].message.content);
+      return parseAIResponse(extractOpenAIContent(data));
     },
   },
   {
@@ -853,7 +1115,12 @@ Instructions:
 
 function parseAIResponse(content) {
   const cleaned = content.trim().replace(/```json?\s*/g, "").replace(/```/g, "").trim();
-  const parsed = JSON.parse(cleaned);
+  let parsed;
+  try {
+    parsed = JSON.parse(cleaned);
+  } catch (e) {
+    throw new Error(`Invalid JSON from AI (response may have been truncated): ${e.message}`);
+  }
   return {
     calories_lower: parsed.calories_lower,
     calories_upper: parsed.calories_upper,
@@ -870,26 +1137,50 @@ function getProviderSettings(providerId) {
   if (!provider) return {};
   return {
     apiKey: localStorage.getItem(provider.keyName) || "",
-    primaryModel: localStorage.getItem(`nt_${providerId}_primary`) || provider.defaultPrimary,
-    secondaryModel: localStorage.getItem(`nt_${providerId}_secondary`) || provider.defaultSecondary,
+    primaryModel: _cache.settings[`${providerId}_primary`] || localStorage.getItem(`nt_${providerId}_primary`) || provider.defaultPrimary,
+    secondaryModel: _cache.settings[`${providerId}_secondary`] || localStorage.getItem(`nt_${providerId}_secondary`) || provider.defaultSecondary,
+    mode: _cache.settings[`${providerId}_mode`] || localStorage.getItem(`nt_${providerId}_mode`) || "api",
   };
+}
+
+function saveProviderMode(providerId, mode) {
+  const key = `${providerId}_mode`;
+  _cache.settings[key] = mode;
+  localStorage.setItem(`nt_${providerId}_mode`, mode);
+  bgWrite(async () => {
+    const { error } = await sb.from('settings').upsert({ key, value: mode });
+    if (error) throw error;
+  });
 }
 
 function saveProviderKey(providerId, key) {
   const provider = PROVIDERS.find((p) => p.id === providerId);
   if (provider) localStorage.setItem(provider.keyName, key);
+  // API keys stay in localStorage only — never sent to Supabase
 }
 
 function saveProviderModel(providerId, role, modelId) {
+  const key = `${providerId}_${role}`;
+  _cache.settings[key] = modelId;
   localStorage.setItem(`nt_${providerId}_${role}`, modelId);
+  bgWrite(async () => {
+    const { error } = await sb.from('settings').upsert({ key, value: modelId });
+    if (error) throw error;
+  });
 }
 
 function getSpreadThreshold() {
+  if (_cache.settings['spread_threshold']) return parseFloat(_cache.settings['spread_threshold']);
   return parseFloat(localStorage.getItem("nt_spread_threshold") || "15");
 }
 
 function saveSpreadThreshold(val) {
+  _cache.settings['spread_threshold'] = String(val);
   localStorage.setItem("nt_spread_threshold", String(val));
+  bgWrite(async () => {
+    const { error } = await sb.from('settings').upsert({ key: 'spread_threshold', value: String(val) });
+    if (error) throw error;
+  });
 }
 
 // --- Spread Calculation ---
@@ -1022,59 +1313,94 @@ async function estimateNutrition() {
       return;
     }
 
-    // --- Round 2: Reconciliation with secondary models ---
-    setEstimateStatus("Providers disagreed — reconciling with secondary models...");
+    // --- Reconciliation loop: keep going until spread is within threshold (max 5 rounds) ---
+    const MAX_ROUNDS = 5;
+    const reconRounds = [];
+    let prevResults = successful;
+    let converged = false;
 
-    const round2Promises = activeProviders
-      .filter((p) => successful.some((s) => s.providerId === p.id))
-      .map(async (provider) => {
-        const settings = getProviderSettings(provider.id);
-        try {
-          const data = await provider.callReconciliation(food, qty, unit, settings.apiKey, settings.secondaryModel, successful);
-          return { providerId: provider.id, providerName: provider.name, model: settings.secondaryModel, data, error: null };
-        } catch (err) {
-          return { providerId: provider.id, providerName: provider.name, model: settings.secondaryModel, data: null, error: err.message };
-        }
-      });
+    for (let roundNum = 2; roundNum <= MAX_ROUNDS; roundNum++) {
+      setEstimateStatus(`Providers disagreed — reconciling (round ${roundNum})...`);
 
-    const round2Results = await Promise.all(round2Promises);
-    const r2Successful = round2Results.filter((r) => r.data !== null);
+      const reconPromises = activeProviders
+        .filter((p) => prevResults.some((s) => s.providerId === p.id))
+        .map(async (provider) => {
+          const settings = getProviderSettings(provider.id);
+          try {
+            const data = await provider.callReconciliation(food, qty, unit, settings.apiKey, settings.secondaryModel, prevResults);
+            return { providerId: provider.id, providerName: provider.name, model: settings.secondaryModel, data, error: null };
+          } catch (err) {
+            return { providerId: provider.id, providerName: provider.name, model: settings.secondaryModel, data: null, error: err.message };
+          }
+        });
 
-    if (r2Successful.length === 0) {
-      // Round 2 all failed — fall back to Round 1 average
-      const avg = averageResults(successful.map((r) => r.data));
+      const reconResults = await Promise.all(reconPromises);
+      const reconSuccessful = reconResults.filter((r) => r.data !== null);
+
+      if (reconSuccessful.length === 0) {
+        // This round failed — fall back to previous best
+        const prevAvg = averageResults(prevResults.map((r) => r.data));
+        fillNutritionFields(prevAvg);
+        _lastValidationData = {
+          round: roundNum - 1,
+          round1: successful,
+          reconRounds,
+          failed,
+          final: prevAvg,
+          spread,
+          threshold,
+          verdict: "recon_failed",
+        };
+        renderValidationResults(_lastValidationData);
+        setEstimateStatus(`Round ${roundNum} failed — using round ${roundNum - 1} average.`, true);
+        btn.disabled = false;
+        return;
+      }
+
+      const reconSpread = calcSpread(reconSuccessful.map((r) => r.data));
+      reconRounds.push({ roundNum, results: reconSuccessful, spread: reconSpread });
+
+      if (reconSpread <= threshold) {
+        converged = true;
+        const avg = averageResults(reconSuccessful.map((r) => r.data));
+        fillNutritionFields(avg);
+        _lastValidationData = {
+          round: roundNum,
+          round1: successful,
+          reconRounds,
+          failed,
+          final: avg,
+          spread,
+          threshold,
+          verdict: "reconciled",
+        };
+        renderValidationResults(_lastValidationData);
+        setEstimateStatus("Done!");
+        break;
+      }
+
+      // Spread still too high — feed this round's results as input to next round
+      prevResults = reconSuccessful;
+    }
+
+    if (!converged) {
+      // Hit max rounds — use the last round's average
+      const lastRound = reconRounds[reconRounds.length - 1];
+      const avg = averageResults(lastRound.results.map((r) => r.data));
       fillNutritionFields(avg);
       _lastValidationData = {
-        round: 1,
+        round: MAX_ROUNDS,
         round1: successful,
+        reconRounds,
         failed,
         final: avg,
         spread,
         threshold,
-        verdict: "r2_failed",
+        verdict: "max_rounds",
       };
       renderValidationResults(_lastValidationData);
-      setEstimateStatus("Reconciliation failed — using Round 1 average.", true);
-      btn.disabled = false;
-      return;
+      setEstimateStatus(`Spread still ${lastRound.spread.toFixed(1)}% after ${MAX_ROUNDS} rounds — using last average.`, true);
     }
-
-    const r2Avg = averageResults(r2Successful.map((r) => r.data));
-    const r2Spread = calcSpread(r2Successful.map((r) => r.data));
-    fillNutritionFields(r2Avg);
-    _lastValidationData = {
-      round: 2,
-      round1: successful,
-      round2: r2Successful,
-      failed,
-      final: r2Avg,
-      spread,
-      r2Spread,
-      threshold,
-      verdict: "reconciled",
-    };
-    renderValidationResults(_lastValidationData);
-    setEstimateStatus("Done!");
   } catch (err) {
     setEstimateStatus(err.message, true);
   } finally {
@@ -1150,51 +1476,59 @@ function renderValidationResults(data) {
   } else if (data.verdict === "consensus") {
     html += `<div class="verdict verdict-consensus">&#10003; Consensus reached (${data.spread.toFixed(1)}% spread, within ${data.threshold}% threshold)</div>`;
     html += '<div class="verdict-detail">Models agreed &mdash; final values are the average of Round 1.</div>';
-  } else if (data.verdict === "reconciled" && data.round2) {
+  } else if ((data.verdict === "reconciled" || data.verdict === "max_rounds") && data.reconRounds) {
     html += `<div class="verdict verdict-escalated">&#9888; Round 1 spread: ${data.spread.toFixed(1)}% (exceeds ${data.threshold}% threshold)</div>`;
-    html += '<div class="verdict-detail">Escalated to smarter secondary models. Each saw all Round 1 estimates and re-evaluated.</div>';
+    html += '<div class="verdict-detail">Escalated to smarter secondary models for reconciliation.</div>';
 
-    // --- Round 2 section with change tracking ---
-    html += '<div class="round-label round-label-r2">Round 2 &mdash; Reconciliation (secondary models)</div>';
-    html += '<table class="validation-table"><thead><tr>';
-    html += '<th>Provider</th><th>Cal &#8595;</th><th></th><th>Cal &#8593;</th><th></th><th>Pro &#8595;</th><th></th><th>Pro &#8593;</th><th></th>';
-    html += '</tr></thead><tbody>';
+    // --- Render each reconciliation round ---
+    let prevRoundResults = data.round1;
+    for (const rnd of data.reconRounds) {
+      html += `<div class="round-label round-label-r2">Round ${rnd.roundNum} &mdash; Reconciliation (secondary models)</div>`;
+      html += '<table class="validation-table"><thead><tr>';
+      html += '<th>Provider</th><th>Cal &#8595;</th><th></th><th>Cal &#8593;</th><th></th><th>Pro &#8595;</th><th></th><th>Pro &#8593;</th><th></th>';
+      html += '</tr></thead><tbody>';
 
-    for (const r2 of data.round2) {
-      const r1 = data.round1.find((r) => r.providerId === r2.providerId);
-      const r1d = r1 ? r1.data : r2.data;
-      html += `<tr>
-        <td>${escapeHtml(r2.providerName)}</td>
-        <td class="num">${renderNum(r2.data.calories_lower, 1)}</td>
-        <td class="num">${formatDelta(r1d.calories_lower, r2.data.calories_lower)}</td>
-        <td class="num">${renderNum(r2.data.calories_upper, 1)}</td>
-        <td class="num">${formatDelta(r1d.calories_upper, r2.data.calories_upper)}</td>
-        <td class="num">${renderNum(r2.data.protein_lower, 1)}</td>
-        <td class="num">${formatDelta(r1d.protein_lower, r2.data.protein_lower)}</td>
-        <td class="num">${renderNum(r2.data.protein_upper, 1)}</td>
-        <td class="num">${formatDelta(r1d.protein_upper, r2.data.protein_upper)}</td>
-      </tr>`;
+      for (const r of rnd.results) {
+        const prev = prevRoundResults.find((p) => p.providerId === r.providerId);
+        const prevD = prev ? prev.data : r.data;
+        html += `<tr>
+          <td>${escapeHtml(r.providerName)}</td>
+          <td class="num">${renderNum(r.data.calories_lower, 1)}</td>
+          <td class="num">${formatDelta(prevD.calories_lower, r.data.calories_lower)}</td>
+          <td class="num">${renderNum(r.data.calories_upper, 1)}</td>
+          <td class="num">${formatDelta(prevD.calories_upper, r.data.calories_upper)}</td>
+          <td class="num">${renderNum(r.data.protein_lower, 1)}</td>
+          <td class="num">${formatDelta(prevD.protein_lower, r.data.protein_lower)}</td>
+          <td class="num">${renderNum(r.data.protein_upper, 1)}</td>
+          <td class="num">${formatDelta(prevD.protein_upper, r.data.protein_upper)}</td>
+        </tr>`;
+      }
+      html += '</tbody></table>';
+
+      for (const r of rnd.results) {
+        html += renderReasoning(`${r.providerName} (R${rnd.roundNum})`, r.data.reasoning);
+      }
+
+      // Spread summary for this round
+      const prevSpread = rnd.roundNum === 2 ? data.spread : data.reconRounds[data.reconRounds.indexOf(rnd) - 1].spread;
+      html += `<div class="spread-summary">`;
+      html += `Spread: <span class="spread-r1">${prevSpread.toFixed(1)}%</span> &#8594; <span class="spread-r2">${rnd.spread.toFixed(1)}%</span>`;
+      if (rnd.spread < prevSpread) {
+        html += ` <span class="spread-improved">(&#8595;${(prevSpread - rnd.spread).toFixed(1)}% reduction)</span>`;
+      }
+      html += '</div>';
+
+      prevRoundResults = rnd.results;
     }
-    html += '</tbody></table>';
 
-    // Round 2 reasoning
-    for (const r2 of data.round2) {
-      html += renderReasoning(r2.providerName + " (R2)", r2.data.reasoning);
+    if (data.verdict === "reconciled") {
+      html += `<div class="verdict verdict-consensus">&#10003; Final values: average of Round ${data.round} reconciled estimates</div>`;
+    } else {
+      html += `<div class="verdict verdict-warning">&#9888; Spread still above threshold after ${data.round} rounds — using last round average</div>`;
     }
-
-    // Spread reduction summary
-    const r2SpreadVal = data.r2Spread !== undefined ? data.r2Spread : calcSpread(data.round2.map((r) => r.data));
-    html += `<div class="spread-summary">`;
-    html += `Spread: <span class="spread-r1">${data.spread.toFixed(1)}%</span> &#8594; <span class="spread-r2">${r2SpreadVal.toFixed(1)}%</span>`;
-    if (r2SpreadVal < data.spread) {
-      html += ` <span class="spread-improved">(&#8595;${(data.spread - r2SpreadVal).toFixed(1)}% reduction)</span>`;
-    }
-    html += '</div>';
-
-    html += '<div class="verdict verdict-consensus">&#10003; Final values: average of Round 2 reconciled estimates</div>';
-  } else if (data.verdict === "r2_failed") {
+  } else if (data.verdict === "recon_failed") {
     html += `<div class="verdict verdict-warning">&#9888; Round 1 spread: ${data.spread.toFixed(1)}% (exceeds ${data.threshold}% threshold)</div>`;
-    html += '<div class="verdict-detail">Reconciliation with secondary models failed. Falling back to Round 1 average.</div>';
+    html += '<div class="verdict-detail">Reconciliation with secondary models failed. Falling back to previous round average.</div>';
   }
 
   // Failed providers
@@ -1222,14 +1556,14 @@ function renderProviderSettings() {
   if (!container) return;
 
   let html = '<div class="settings-card"><h2>AI Providers</h2>';
-  html += '<p style="font-size:0.78rem;color:var(--text-dim);margin-bottom:16px;">API keys are stored locally in your browser. Used to auto-estimate calories &amp; protein when adding food.</p>';
+  html += '<p style="font-size:0.78rem;color:var(--text-dim);margin-bottom:16px;">API keys are stored locally in your browser. Food estimation always uses the API. Diet Assessment can use API or Manual mode (free — paste into your subscription).</p>';
 
   for (const provider of PROVIDERS) {
     const settings = getProviderSettings(provider.id);
     html += `<div class="provider-section">`;
     html += `<h3 class="provider-name">${escapeHtml(provider.name)}</h3>`;
 
-    // API key
+    // API key (always shown — needed for food estimation)
     html += `<div class="form-row">
       <label for="key-${provider.id}">API Key</label>
       <div class="key-row">
@@ -1255,6 +1589,16 @@ function renderProviderSettings() {
       html += `<option value="${m.id}" ${settings.secondaryModel === m.id ? 'selected' : ''}>${escapeHtml(m.label)}</option>`;
     }
     html += `</select></div>`;
+
+    // Diet Assessment mode toggle
+    html += `<div class="form-row">
+      <label for="mode-${provider.id}">Diet Assessment mode</label>
+      <select id="mode-${provider.id}" onchange="saveProviderModeUI('${provider.id}',this.value)">
+        <option value="api" ${settings.mode === 'api' ? 'selected' : ''}>API (automatic)</option>
+        <option value="manual" ${settings.mode === 'manual' ? 'selected' : ''}>Manual (free — use your subscription)</option>
+      </select>
+    </div>`;
+
     html += `</div>`;
   }
 
@@ -1295,6 +1639,11 @@ window.saveProviderModelUI = function (providerId, role, modelId) {
 
 window.saveSpreadThresholdUI = function (val) {
   saveSpreadThreshold(parseFloat(val));
+};
+
+window.saveProviderModeUI = function (providerId, mode) {
+  saveProviderMode(providerId, mode);
+  renderProviderSettings();
 };
 
 // ============================================================
@@ -1753,10 +2102,7 @@ async function callProviderForAssessment(provider, prompt, model, systemPrompt) 
       throw new Error(err.error?.message || `OpenAI API error ${res.status}`);
     }
     const data = await res.json();
-    if (data.choices[0].finish_reason === "length") {
-      throw new Error("Response truncated (token limit reached)");
-    }
-    return parseAssessmentResponse(data.choices[0].message.content);
+    return parseAssessmentResponse(extractOpenAIContent(data));
   } else if (provider.id === "anthropic") {
     const res = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
@@ -1918,11 +2264,11 @@ async function runDietAssessment() {
 
   const activeProviders = PROVIDERS.filter(p => {
     const settings = getProviderSettings(p.id);
-    return settings.apiKey.length > 0;
+    return settings.mode === "manual" || settings.apiKey.length > 0;
   });
 
   if (activeProviders.length === 0) {
-    setAssessmentStatus("Configure at least one AI provider API key in the Calorie Target tab.", true);
+    setAssessmentStatus("Configure at least one AI provider (API key or manual mode) in the Calorie Target tab.", true);
     return;
   }
 
@@ -1936,8 +2282,27 @@ async function runDietAssessment() {
   const prompt = buildAssessmentPrompt(data);
 
   try {
-    // --- Round 1: Both providers with primary models ---
-    const round1Promises = activeProviders.map(async provider => {
+    // --- Round 1: Manual providers first (need user interaction), then API in parallel ---
+    const apiProviders = activeProviders.filter(p => getProviderSettings(p.id).mode === "api");
+    const manualProviders = activeProviders.filter(p => getProviderSettings(p.id).mode === "manual");
+
+    const fullPrompt = SYSTEM_PROMPT_DIET_ASSESSMENT + "\n\n" + prompt;
+
+    // Run manual providers first so user isn't blocked by API calls
+    const manualResults = [];
+    for (const provider of manualProviders) {
+      setAssessmentStatus(`Waiting for manual input (${provider.name})...`);
+      try {
+        const result = await promptManualResponse(`Round 1 — ${provider.name}`, fullPrompt);
+        manualResults.push({ providerId: provider.id, providerName: provider.name + " (manual)", model: "your AI", data: result, error: null });
+      } catch (err) {
+        manualResults.push({ providerId: provider.id, providerName: provider.name + " (manual)", model: "your AI", data: null, error: err.message });
+      }
+    }
+
+    // Then run API providers in parallel
+    if (apiProviders.length > 0) setAssessmentStatus("Analyzing your diet...");
+    const apiPromises = apiProviders.map(async provider => {
       const settings = getProviderSettings(provider.id);
       try {
         const result = await callProviderForAssessment(provider, prompt, settings.primaryModel, SYSTEM_PROMPT_DIET_ASSESSMENT);
@@ -1947,7 +2312,9 @@ async function runDietAssessment() {
       }
     });
 
-    const round1Results = await Promise.all(round1Promises);
+    const apiResults = await Promise.all(apiPromises);
+
+    const round1Results = [...manualResults, ...apiResults];
     const successful = round1Results.filter(r => r.data !== null);
     const failed = round1Results.filter(r => r.error !== null);
 
@@ -2014,20 +2381,39 @@ async function runDietAssessment() {
     setAssessmentStatus(`Providers disagreed on ${agreement.disagreements}/${agreement.total} categories — both re-evaluating...`);
 
     const reconPrompt = buildAssessmentReconciliationPrompt(data, successful);
+    const fullReconPrompt = SYSTEM_PROMPT_DIET_RECONCILE + "\n\n" + reconPrompt;
 
-    const round2Promises = activeProviders
-      .filter(p => successful.some(s => s.providerId === p.id))
-      .map(async provider => {
-        const settings = getProviderSettings(provider.id);
-        try {
-          const result = await callProviderForAssessment(provider, reconPrompt, settings.secondaryModel, SYSTEM_PROMPT_DIET_RECONCILE);
-          return { providerId: provider.id, providerName: provider.name, model: settings.secondaryModel, data: result, error: null };
-        } catch (err) {
-          return { providerId: provider.id, providerName: provider.name, model: settings.secondaryModel, data: null, error: err.message };
-        }
-      });
+    const r2ActiveProviders = activeProviders.filter(p => successful.some(s => s.providerId === p.id));
+    const r2ApiProviders = r2ActiveProviders.filter(p => getProviderSettings(p.id).mode === "api");
+    const r2ManualProviders = r2ActiveProviders.filter(p => getProviderSettings(p.id).mode === "manual");
 
-    const round2Results = await Promise.all(round2Promises);
+    // Run manual R2 first so user isn't blocked by API calls
+    const r2ManualResults = [];
+    for (const provider of r2ManualProviders) {
+      setAssessmentStatus(`Waiting for manual Round 2 input (${provider.name})...`);
+      try {
+        const result = await promptManualResponse(`Round 2 — ${provider.name} (Debiased Re-evaluation)`, fullReconPrompt);
+        r2ManualResults.push({ providerId: provider.id, providerName: provider.name + " (manual)", model: "your AI", data: result, error: null });
+      } catch (err) {
+        r2ManualResults.push({ providerId: provider.id, providerName: provider.name + " (manual)", model: "your AI", data: null, error: err.message });
+      }
+    }
+
+    // Then run API R2 in parallel
+    if (r2ApiProviders.length > 0) setAssessmentStatus(`Providers disagreed on ${agreement.disagreements}/${agreement.total} categories — both re-evaluating...`);
+    const r2ApiPromises = r2ApiProviders.map(async provider => {
+      const settings = getProviderSettings(provider.id);
+      try {
+        const result = await callProviderForAssessment(provider, reconPrompt, settings.secondaryModel, SYSTEM_PROMPT_DIET_RECONCILE);
+        return { providerId: provider.id, providerName: provider.name, model: settings.secondaryModel, data: result, error: null };
+      } catch (err) {
+        return { providerId: provider.id, providerName: provider.name, model: settings.secondaryModel, data: null, error: err.message };
+      }
+    });
+
+    const r2ApiResults = await Promise.all(r2ApiPromises);
+
+    const round2Results = [...r2ManualResults, ...r2ApiResults];
     const r2Successful = round2Results.filter(r => r.data !== null);
     const r2Failed = round2Results.filter(r => r.error !== null);
 
@@ -2087,6 +2473,85 @@ function setAssessmentStatus(msg, isError = false) {
   if (!el) return;
   el.textContent = msg;
   el.className = "estimate-status" + (isError ? " error" : "");
+}
+
+// --- Manual Mode ---
+
+function promptManualResponse(title, fullPrompt) {
+  return new Promise((resolve, reject) => {
+    const modal = document.getElementById("manual-modal");
+    const titleEl = document.getElementById("manual-modal-title");
+    const body = document.getElementById("manual-modal-body");
+
+    titleEl.textContent = title;
+
+    let html = '<div class="manual-step">';
+    html += '<div class="manual-step-label">Step 1: Copy the prompt and paste into your AI</div>';
+    html += '<div class="manual-prompt-actions">';
+    html += '<button class="btn btn-primary btn-sm" id="manual-copy-btn">Copy Prompt to Clipboard</button>';
+    html += '<button class="btn btn-secondary btn-sm" id="manual-open-claude">Open claude.ai</button>';
+    html += '<button class="btn btn-secondary btn-sm" id="manual-open-chatgpt">Open chatgpt.com</button>';
+    html += '</div>';
+    html += '<details class="food-log-details" style="margin-top:8px"><summary class="food-log-toggle">View full prompt</summary>';
+    html += `<pre class="manual-prompt-preview">${escapeHtml(fullPrompt)}</pre>`;
+    html += '</details>';
+    html += '</div>';
+
+    html += '<div class="manual-step">';
+    html += '<div class="manual-step-label">Step 2: Paste the JSON response below</div>';
+    html += '<textarea id="manual-response-input" class="manual-textarea" placeholder="Paste the full JSON response here..."></textarea>';
+    html += '<div id="manual-parse-error" class="manual-error hidden"></div>';
+    html += '</div>';
+
+    html += '<div class="modal-actions">';
+    html += '<button class="btn btn-secondary" id="manual-cancel">Cancel</button>';
+    html += '<button class="btn btn-primary" id="manual-submit">Submit Response</button>';
+    html += '</div>';
+
+    body.innerHTML = html;
+    modal.classList.remove("hidden");
+
+    document.getElementById("manual-copy-btn").addEventListener("click", () => {
+      navigator.clipboard.writeText(fullPrompt).then(() => {
+        const btn = document.getElementById("manual-copy-btn");
+        btn.textContent = "Copied!";
+        setTimeout(() => btn.textContent = "Copy Prompt to Clipboard", 2000);
+      });
+    });
+
+    document.getElementById("manual-open-claude").addEventListener("click", () => {
+      navigator.clipboard.writeText(fullPrompt).then(() => {
+        window.open("https://claude.ai/new", "_blank");
+      });
+    });
+
+    document.getElementById("manual-open-chatgpt").addEventListener("click", () => {
+      navigator.clipboard.writeText(fullPrompt).then(() => {
+        window.open("https://chatgpt.com", "_blank");
+      });
+    });
+
+    document.getElementById("manual-cancel").addEventListener("click", () => {
+      modal.classList.add("hidden");
+      reject(new Error("Cancelled by user"));
+    });
+
+    document.getElementById("manual-submit").addEventListener("click", () => {
+      const input = document.getElementById("manual-response-input").value.trim();
+      const errorEl = document.getElementById("manual-parse-error");
+      errorEl.classList.add("hidden");
+
+      try {
+        const cleaned = input.replace(/```json?\s*/g, "").replace(/```/g, "").trim();
+        const parsed = JSON.parse(cleaned);
+        modal.classList.add("hidden");
+        resolve(parsed);
+      } catch (e) {
+        errorEl.textContent = "Failed to parse JSON: " + e.message;
+        errorEl.classList.remove("hidden");
+      }
+    });
+  });
 }
 
 // --- Rendering ---
@@ -2468,19 +2933,21 @@ function printActionPlan() {
     .stop-cell { color: #e74c3c; text-decoration: line-through; font-weight: 600; }
     .replace-cell { color: #27ae60; font-weight: 600; }
     .risk-cell { color: #e67e22; }
-    .grocery-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px; }
+    .grocery-grid { display: grid; grid-template-columns: 1fr; gap: 10px; }
     .grocery-category { border: 1px solid #ddd; border-radius: 6px; padding: 8px; break-inside: avoid; }
     .grocery-category-add { border-left: 3px solid #e67e22; }
     .grocery-category-keep { border-left: 3px solid #27ae60; }
     .grocery-category-name { font-weight: 700; font-size: 12px; margin-bottom: 2px; }
-    .grocery-category-target { font-size: 9px; color: #666; }
+    .grocery-category-target { font-size: 9px; color: #333; }
     .grocery-category-pick { font-size: 9px; color: #6c63ff; font-style: italic; }
-    .grocery-item { display: flex; align-items: flex-start; gap: 5px; padding: 3px 0; border-bottom: 1px solid #f0f0f5; font-size: 10px; }
-    .grocery-item:last-child { border-bottom: none; }
-    .grocery-checkbox { width: 13px; height: 13px; margin-top: 1px; flex-shrink: 0; }
-    .grocery-item-name { font-weight: 600; }
-    .grocery-item-portion { color: #666; font-size: 9px; }
-    .grocery-item-note { color: #888; font-size: 9px; font-style: italic; }
+    .grocery-options { display: grid; grid-template-columns: 15px auto auto 1fr; gap: 0; align-items: start; }
+    .grocery-item { display: contents; font-size: 10px; }
+    .grocery-item > * { padding: 3px 5px 3px 0; border-bottom: 1px solid #f0f0f5; }
+    .grocery-item:last-child > * { border-bottom: none; }
+    .grocery-checkbox { width: 13px; height: 13px; margin-top: 1px; }
+    .grocery-item-name { font-weight: 600; color: #000; }
+    .grocery-item-portion { color: #000; font-size: 9px; }
+    .grocery-item-note { color: #333; font-size: 9px; font-style: italic; }
     .meal-ideas-list { list-style: disc; padding-left: 20px; }
     .meal-ideas-list li { padding: 2px 0; }
     .num { text-align: right; }
@@ -2628,6 +3095,7 @@ function renderAssessmentResults(result) {
 // --- localStorage Persistence ---
 
 function loadAssessments() {
+  if (_cache.ready && _cache.assessments) return [..._cache.assessments];
   const saved = localStorage.getItem("nt_assessments");
   return saved ? JSON.parse(saved) : [];
 }
@@ -2635,15 +3103,31 @@ function loadAssessments() {
 function saveAssessment(result) {
   const assessments = loadAssessments();
   assessments.unshift(result);
-  // Cap at 20
   while (assessments.length > 20) assessments.pop();
+  _cache.assessments = [...assessments];
   localStorage.setItem("nt_assessments", JSON.stringify(assessments));
+  bgWrite(async () => {
+    const { error } = await sb.from('assessments').insert({
+      timestamp: result.timestamp,
+      period: result.period,
+      data: result,
+    });
+    if (error) throw error;
+  });
 }
 
 function deleteAssessment(index) {
   const assessments = loadAssessments();
-  assessments.splice(index, 1);
+  const removed = assessments.splice(index, 1)[0];
+  _cache.assessments = [...assessments];
   localStorage.setItem("nt_assessments", JSON.stringify(assessments));
+  if (removed) {
+    bgWrite(async () => {
+      // Delete by matching timestamp
+      const { error } = await sb.from('assessments').delete().eq('timestamp', removed.timestamp);
+      if (error) throw error;
+    });
+  }
   renderAssessmentHistory();
 }
 
@@ -2707,11 +3191,663 @@ function renderAssessmentHistory() {
 }
 
 // ============================================================
+// BATCH ADD FEATURE
+// ============================================================
+
+const SYSTEM_PROMPT_BATCH_ESTIMATE = `You are a precise nutrition database assistant. You base estimates on USDA FoodData Central, nutrition labels, and established food composition databases. Be consistent and deterministic — the same food and quantity must always produce the same numbers.
+
+You will receive a numbered list of food items. For EACH item, identify the food, reference the database/source, calculate per-unit values, then scale to the given quantity.
+
+You MUST respond with ONLY a JSON object (no markdown fences, no extra text) in this exact format:
+{
+  "reasoning": "<step-by-step for each item: identify food, cite source, per-unit values, scale to quantity>",
+  "items": [
+    { "food": "<echo back food name>", "calories_lower": <number>, "calories_upper": <number>, "protein_lower": <number>, "protein_upper": <number> },
+    ...
+  ]
+}
+Items MUST be in the same order as the input list. The items array length MUST match the number of input items.`;
+
+const SYSTEM_PROMPT_BATCH_RECONCILE = `You are a precise nutrition database assistant performing a reconciliation review. Two AI models estimated nutrition for multiple food items but disagreed. You must analyze both sets of estimates, identify which is more accurate based on USDA FoodData Central and established databases, explain your reasoning, and provide corrected values for ALL items.
+
+You MUST respond with ONLY a JSON object (no markdown fences, no extra text) in this exact format:
+{
+  "reasoning": "<analyze each prior estimate set, identify which is closer to database values and why, explain any corrections>",
+  "items": [
+    { "food": "<echo back food name>", "calories_lower": <number>, "calories_upper": <number>, "protein_lower": <number>, "protein_upper": <number> },
+    ...
+  ]
+}
+Items MUST be in the same order as the input list. The items array length MUST match the number of input items.`;
+
+function buildBatchEstimatePrompt(items) {
+  let numbered = items.map((item, i) =>
+    `${i + 1}. Food: ${item.food} | Quantity: ${item.qty} ${item.unit}`
+  ).join("\n");
+
+  return `Estimate the nutritional content of each food item below:
+
+${numbered}
+
+For each item, identify the food, reference USDA/nutrition databases, calculate per-unit values, then scale to the given quantity.`;
+}
+
+function buildBatchReconciliationPrompt(items, round1Results) {
+  let numbered = items.map((item, i) =>
+    `${i + 1}. Food: ${item.food} | Quantity: ${item.qty} ${item.unit}`
+  ).join("\n");
+
+  let estimateLines = round1Results.map((r) => {
+    let lines = `${r.providerName} estimated:\n`;
+    lines += r.data.items.map((item, i) =>
+      `  ${i + 1}. ${item.food}: calories ${item.calories_lower}-${item.calories_upper} kcal, protein ${item.protein_lower}-${item.protein_upper} g`
+    ).join("\n");
+    if (r.data.reasoning) lines += `\n  Reasoning: ${r.data.reasoning}`;
+    return lines;
+  }).join("\n\n");
+
+  return `Two AI models estimated the nutrition for these food items but disagreed. Review both estimates and their reasoning, then provide corrected final answers for ALL items.
+
+Food items:
+${numbered}
+
+--- Previous estimates ---
+${estimateLines}
+
+Instructions:
+1. Compare both estimates against USDA FoodData Central or known nutrition data
+2. Identify which estimate is more accurate for each item and explain why
+3. If a model made an error (wrong serving size, wrong food variant, etc.), call it out
+4. Provide your corrected final values for ALL items with reasoning`;
+}
+
+function parseBatchAIResponse(content, expectedCount) {
+  const cleaned = content.trim().replace(/```json?\s*/g, "").replace(/```/g, "").trim();
+  let parsed;
+  try {
+    parsed = JSON.parse(cleaned);
+  } catch (e) {
+    throw new Error(`Invalid JSON from AI (response may have been truncated): ${e.message}`);
+  }
+
+  if (!parsed.items || !Array.isArray(parsed.items)) {
+    throw new Error("Response missing 'items' array");
+  }
+  if (parsed.items.length !== expectedCount) {
+    throw new Error(`Expected ${expectedCount} items but got ${parsed.items.length}`);
+  }
+
+  for (let i = 0; i < parsed.items.length; i++) {
+    const item = parsed.items[i];
+    if (item.calories_lower == null || item.calories_upper == null ||
+        item.protein_lower == null || item.protein_upper == null) {
+      throw new Error(`Item ${i + 1} missing required nutrition fields`);
+    }
+  }
+
+  return {
+    reasoning: parsed.reasoning || null,
+    items: parsed.items.map(item => ({
+      food: item.food || "",
+      calories_lower: item.calories_lower,
+      calories_upper: item.calories_upper,
+      protein_lower: item.protein_lower,
+      protein_upper: item.protein_upper,
+    })),
+  };
+}
+
+function setBatchEstimateStatus(msg, isError = false) {
+  const el = document.getElementById("batch-estimate-status");
+  el.textContent = msg;
+  el.className = "estimate-status" + (isError ? " error" : "");
+}
+
+let _batchValidationData = null;
+
+async function estimateBatchNutrition() {
+  _batchValidationData = null;
+
+  // Collect items from rows
+  const rows = document.querySelectorAll("#batch-items .batch-item-row");
+  const items = [];
+  for (const row of rows) {
+    const food = row.querySelector(".batch-food").value.trim();
+    const qty = row.querySelector(".batch-qty").value;
+    const unit = row.querySelector(".batch-unit").value.trim();
+    if (food && qty && unit) {
+      items.push({ food, qty: parseFloat(qty), unit });
+    }
+  }
+
+  if (items.length === 0) {
+    setBatchEstimateStatus("Enter at least one food item with quantity and unit.", true);
+    return;
+  }
+
+  // Check all rows are filled
+  for (const row of rows) {
+    const food = row.querySelector(".batch-food").value.trim();
+    const qty = row.querySelector(".batch-qty").value;
+    const unit = row.querySelector(".batch-unit").value.trim();
+    if ((food || qty || unit) && !(food && qty && unit)) {
+      setBatchEstimateStatus("Fill in all fields for each row, or clear empty rows.", true);
+      return;
+    }
+  }
+
+  // Get active providers with API keys (food estimation always uses API)
+  const activeProviders = PROVIDERS.filter((p) => {
+    const settings = getProviderSettings(p.id);
+    return settings.apiKey.length > 0;
+  });
+
+  if (activeProviders.length === 0) {
+    setBatchEstimateStatus("Configure at least one AI provider API key in the Calorie Target tab.", true);
+    return;
+  }
+
+  const btn = document.getElementById("batch-estimate-btn");
+  btn.disabled = true;
+  setBatchEstimateStatus("Estimating all items...");
+  document.getElementById("batch-results").innerHTML = "";
+  document.getElementById("batch-save").disabled = true;
+
+  const maxTokens = Math.max(1500, items.length * 300);
+
+  try {
+    // --- Round 1: All providers in parallel with primary models ---
+    const batchPrompt = buildBatchEstimatePrompt(items);
+
+    const round1Promises = activeProviders.map(async (provider) => {
+      const settings = getProviderSettings(provider.id);
+      try {
+        const data = await callProviderBatch(provider, settings.apiKey, settings.primaryModel, SYSTEM_PROMPT_BATCH_ESTIMATE, batchPrompt, maxTokens, items.length);
+        return { providerId: provider.id, providerName: provider.name, data, error: null };
+      } catch (err) {
+        return { providerId: provider.id, providerName: provider.name, data: null, error: err.message };
+      }
+    });
+
+    const round1Results = await Promise.all(round1Promises);
+    const successful = round1Results.filter((r) => r.data !== null);
+    const failed = round1Results.filter((r) => r.error !== null);
+
+    if (successful.length === 0) {
+      const errMsgs = failed.map((f) => `${f.providerName}: ${f.error}`).join("; ");
+      setBatchEstimateStatus(`All providers failed: ${errMsgs}`, true);
+      btn.disabled = false;
+      return;
+    }
+
+    // Single provider — use directly
+    if (successful.length === 1) {
+      const finalItems = successful[0].data.items;
+      _batchValidationData = {
+        round: 1,
+        round1: successful,
+        failed,
+        finalItems,
+        spread: 0,
+        verdict: "single",
+        warning: failed.length > 0
+          ? `${failed[0].providerName} failed. Using ${successful[0].providerName} only.`
+          : `Only ${successful[0].providerName} configured. No cross-validation.`,
+      };
+      renderBatchResults(items, finalItems, _batchValidationData);
+      setBatchEstimateStatus("Done!");
+      btn.disabled = false;
+      return;
+    }
+
+    // Multiple providers — check per-item spread, take worst
+    let worstSpread = 0;
+    for (let i = 0; i < items.length; i++) {
+      const perItemResults = successful.map((r) => r.data.items[i]);
+      const spread = calcSpread(perItemResults);
+      if (spread > worstSpread) worstSpread = spread;
+    }
+
+    const threshold = getSpreadThreshold();
+
+    if (worstSpread <= threshold) {
+      // Consensus — average per-item
+      const finalItems = items.map((_, i) => {
+        const perItem = successful.map((r) => r.data.items[i]);
+        return averageResults(perItem);
+      });
+      _batchValidationData = {
+        round: 1,
+        round1: successful,
+        failed,
+        finalItems,
+        spread: worstSpread,
+        threshold,
+        verdict: "consensus",
+      };
+      renderBatchResults(items, finalItems, _batchValidationData);
+      setBatchEstimateStatus("Done!");
+      btn.disabled = false;
+      return;
+    }
+
+    // --- Reconciliation loop: keep going until spread is within threshold (max 5 rounds) ---
+    const MAX_BATCH_ROUNDS = 5;
+    const batchReconRounds = [];
+    let prevBatchResults = successful;
+    let batchConverged = false;
+
+    for (let roundNum = 2; roundNum <= MAX_BATCH_ROUNDS; roundNum++) {
+      setBatchEstimateStatus(`Providers disagreed — reconciling (round ${roundNum})...`);
+
+      const reconPrompt = buildBatchReconciliationPrompt(items, prevBatchResults);
+      const reconPromises = activeProviders
+        .filter((p) => prevBatchResults.some((s) => s.providerId === p.id))
+        .map(async (provider) => {
+          const settings = getProviderSettings(provider.id);
+          try {
+            const data = await callProviderBatch(provider, settings.apiKey, settings.secondaryModel, SYSTEM_PROMPT_BATCH_RECONCILE, reconPrompt, maxTokens + 300, items.length);
+            return { providerId: provider.id, providerName: provider.name, model: settings.secondaryModel, data, error: null };
+          } catch (err) {
+            return { providerId: provider.id, providerName: provider.name, model: settings.secondaryModel, data: null, error: err.message };
+          }
+        });
+
+      const reconResults = await Promise.all(reconPromises);
+      const reconSuccessful = reconResults.filter((r) => r.data !== null);
+
+      if (reconSuccessful.length === 0) {
+        // This round failed — fall back to previous best
+        const finalItems = items.map((_, i) => {
+          const perItem = prevBatchResults.map((r) => r.data.items[i]);
+          return averageResults(perItem);
+        });
+        _batchValidationData = {
+          round: roundNum - 1,
+          round1: successful,
+          reconRounds: batchReconRounds,
+          failed,
+          finalItems,
+          spread: worstSpread,
+          threshold,
+          verdict: "recon_failed",
+        };
+        renderBatchResults(items, finalItems, _batchValidationData);
+        setBatchEstimateStatus(`Round ${roundNum} failed — using round ${roundNum - 1} average.`, true);
+        btn.disabled = false;
+        return;
+      }
+
+      let reconWorstSpread = 0;
+      for (let i = 0; i < items.length; i++) {
+        const perItem = reconSuccessful.map((r) => r.data.items[i]);
+        const s = calcSpread(perItem);
+        if (s > reconWorstSpread) reconWorstSpread = s;
+      }
+      batchReconRounds.push({ roundNum, results: reconSuccessful, spread: reconWorstSpread });
+
+      if (reconWorstSpread <= threshold) {
+        batchConverged = true;
+        const finalItems = items.map((_, i) => {
+          const perItem = reconSuccessful.map((r) => r.data.items[i]);
+          return averageResults(perItem);
+        });
+        _batchValidationData = {
+          round: roundNum,
+          round1: successful,
+          reconRounds: batchReconRounds,
+          failed,
+          finalItems,
+          spread: worstSpread,
+          threshold,
+          verdict: "reconciled",
+        };
+        renderBatchResults(items, finalItems, _batchValidationData);
+        setBatchEstimateStatus("Done!");
+        break;
+      }
+
+      prevBatchResults = reconSuccessful;
+    }
+
+    if (!batchConverged) {
+      const lastRound = batchReconRounds[batchReconRounds.length - 1];
+      const finalItems = items.map((_, i) => {
+        const perItem = lastRound.results.map((r) => r.data.items[i]);
+        return averageResults(perItem);
+      });
+      _batchValidationData = {
+        round: MAX_BATCH_ROUNDS,
+        round1: successful,
+        reconRounds: batchReconRounds,
+        failed,
+        finalItems,
+        spread: worstSpread,
+        threshold,
+        verdict: "max_rounds",
+      };
+      renderBatchResults(items, finalItems, _batchValidationData);
+      setBatchEstimateStatus(`Spread still ${lastRound.spread.toFixed(1)}% after ${MAX_BATCH_ROUNDS} rounds — using last average.`, true);
+    }
+  } catch (err) {
+    setBatchEstimateStatus(err.message, true);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function callProviderBatch(provider, apiKey, model, systemPrompt, userPrompt, maxTokens, expectedCount) {
+  if (provider.id === "openai") {
+    const res = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model,
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userPrompt },
+        ],
+        ...openaiModelParams(model, maxTokens),
+      }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error?.message || `OpenAI API error ${res.status}`);
+    }
+    const data = await res.json();
+    return parseBatchAIResponse(extractOpenAIContent(data), expectedCount);
+  } else if (provider.id === "anthropic") {
+    const res = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": apiKey,
+        "anthropic-version": "2023-06-01",
+        "anthropic-dangerous-direct-browser-access": "true",
+      },
+      body: JSON.stringify({
+        model,
+        max_tokens: maxTokens,
+        messages: [
+          { role: "user", content: userPrompt },
+        ],
+        system: systemPrompt,
+        temperature: 0,
+      }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error?.message || `Claude API error ${res.status}`);
+    }
+    const data = await res.json();
+    return parseBatchAIResponse(data.content[0].text, expectedCount);
+  }
+  throw new Error(`Unknown provider: ${provider.id}`);
+}
+
+// --- Batch Modal Functions ---
+
+function openBatchModal() {
+  const modal = document.getElementById("batch-modal");
+  document.getElementById("batch-date").value = new Date().toISOString().slice(0, 10);
+  const now = new Date();
+  document.getElementById("batch-time").value =
+    now.getHours().toString().padStart(2, "0") + ":" + now.getMinutes().toString().padStart(2, "0");
+
+  const container = document.getElementById("batch-items");
+  container.innerHTML = "";
+  for (let i = 0; i < 3; i++) addBatchRow();
+
+  document.getElementById("batch-results").innerHTML = "";
+  document.getElementById("batch-save").disabled = true;
+  setBatchEstimateStatus("");
+  _batchValidationData = null;
+
+  populateBatchSuggestions();
+  modal.classList.remove("hidden");
+}
+
+function populateBatchSuggestions() {
+  const entries = loadFoodEntries();
+  const foods = [...new Set(entries.map((e) => e.food))];
+  const units = [...new Set(entries.map((e) => e.unit))];
+
+  // Ensure datalists exist in the modal
+  let foodDl = document.getElementById("batch-food-suggestions");
+  if (!foodDl) {
+    foodDl = document.createElement("datalist");
+    foodDl.id = "batch-food-suggestions";
+    document.getElementById("batch-modal").appendChild(foodDl);
+  }
+  foodDl.innerHTML = foods.map((f) => `<option value="${escapeHtml(f)}">`).join("");
+
+  let unitDl = document.getElementById("batch-unit-suggestions");
+  if (!unitDl) {
+    unitDl = document.createElement("datalist");
+    unitDl.id = "batch-unit-suggestions";
+    document.getElementById("batch-modal").appendChild(unitDl);
+  }
+  unitDl.innerHTML = units.map((u) => `<option value="${escapeHtml(u)}">`).join("");
+}
+
+function addBatchRow() {
+  const container = document.getElementById("batch-items");
+  const row = document.createElement("div");
+  row.className = "batch-item-row";
+  row.innerHTML = `
+    <input type="text" placeholder="Food" class="batch-food" autocomplete="off" list="batch-food-suggestions">
+    <input type="number" placeholder="Qty" class="batch-qty" step="any">
+    <input type="text" placeholder="Unit" class="batch-unit" autocomplete="off" list="batch-unit-suggestions">
+    <button type="button" class="btn-icon delete batch-remove" title="Remove">&#10005;</button>
+  `;
+  row.querySelector(".batch-remove").addEventListener("click", () => removeBatchRow(row));
+  container.appendChild(row);
+}
+
+function removeBatchRow(row) {
+  const container = document.getElementById("batch-items");
+  if (container.children.length <= 1) return;
+  row.remove();
+}
+
+function closeBatchModal() {
+  document.getElementById("batch-modal").classList.add("hidden");
+}
+
+function renderBatchResults(inputItems, finalItems, validationData) {
+  const container = document.getElementById("batch-results");
+  let html = '';
+
+  // Validation panel
+  html += '<div class="validation-panel">';
+  html += '<div class="validation-header">AI Thought Process</div>';
+
+  // Round 1
+  html += '<div class="round-label">Round 1 &mdash; Initial estimates (fast models)</div>';
+  for (const r of validationData.round1) {
+    html += `<div style="font-size:0.78rem;font-weight:600;color:var(--text-dim);margin:6px 0 4px;">${escapeHtml(r.providerName)}</div>`;
+    html += '<table class="validation-table"><thead><tr>';
+    html += '<th>Food</th><th>Cal &#8595;</th><th>Cal &#8593;</th><th>Pro &#8595;</th><th>Pro &#8593;</th>';
+    html += '</tr></thead><tbody>';
+    for (const item of r.data.items) {
+      html += `<tr>
+        <td>${escapeHtml(item.food)}</td>
+        <td class="num">${renderNum(item.calories_lower, 1)}</td>
+        <td class="num">${renderNum(item.calories_upper, 1)}</td>
+        <td class="num">${renderNum(item.protein_lower, 1)}</td>
+        <td class="num">${renderNum(item.protein_upper, 1)}</td>
+      </tr>`;
+    }
+    html += '</tbody></table>';
+    html += renderReasoning(r.providerName, r.data.reasoning);
+  }
+
+  // Verdict
+  if (validationData.verdict === "single") {
+    html += `<div class="verdict verdict-warning">&#9888; ${escapeHtml(validationData.warning)}</div>`;
+  } else if (validationData.verdict === "consensus") {
+    html += `<div class="verdict verdict-consensus">&#10003; Consensus reached (worst spread: ${validationData.spread.toFixed(1)}%, within ${validationData.threshold}% threshold)</div>`;
+  } else if ((validationData.verdict === "reconciled" || validationData.verdict === "max_rounds") && validationData.reconRounds) {
+    html += `<div class="verdict verdict-escalated">&#9888; Round 1 worst spread: ${validationData.spread.toFixed(1)}% (exceeds ${validationData.threshold}% threshold)</div>`;
+    html += '<div class="verdict-detail">Escalated to secondary models for reconciliation.</div>';
+
+    for (const rnd of validationData.reconRounds) {
+      html += `<div class="round-label round-label-r2">Round ${rnd.roundNum} &mdash; Reconciliation (secondary models)</div>`;
+      for (const r of rnd.results) {
+        html += `<div style="font-size:0.78rem;font-weight:600;color:var(--text-dim);margin:6px 0 4px;">${escapeHtml(r.providerName)} (R${rnd.roundNum})</div>`;
+        html += '<table class="validation-table"><thead><tr>';
+        html += '<th>Food</th><th>Cal &#8595;</th><th>Cal &#8593;</th><th>Pro &#8595;</th><th>Pro &#8593;</th>';
+        html += '</tr></thead><tbody>';
+        for (const item of r.data.items) {
+          html += `<tr>
+            <td>${escapeHtml(item.food)}</td>
+            <td class="num">${renderNum(item.calories_lower, 1)}</td>
+            <td class="num">${renderNum(item.calories_upper, 1)}</td>
+            <td class="num">${renderNum(item.protein_lower, 1)}</td>
+            <td class="num">${renderNum(item.protein_upper, 1)}</td>
+          </tr>`;
+        }
+        html += '</tbody></table>';
+        html += renderReasoning(`${r.providerName} (R${rnd.roundNum})`, r.data.reasoning);
+      }
+
+      const prevSpread = rnd.roundNum === 2 ? validationData.spread : validationData.reconRounds[validationData.reconRounds.indexOf(rnd) - 1].spread;
+      html += `<div class="spread-summary">`;
+      html += `Worst spread: <span class="spread-r1">${prevSpread.toFixed(1)}%</span> &#8594; <span class="spread-r2">${rnd.spread.toFixed(1)}%</span>`;
+      if (rnd.spread < prevSpread) {
+        html += ` <span class="spread-improved">(&#8595;${(prevSpread - rnd.spread).toFixed(1)}% reduction)</span>`;
+      }
+      html += '</div>';
+    }
+
+    if (validationData.verdict === "reconciled") {
+      html += `<div class="verdict verdict-consensus">&#10003; Final values: average of Round ${validationData.round} reconciled estimates</div>`;
+    } else {
+      html += `<div class="verdict verdict-warning">&#9888; Spread still above threshold after ${validationData.round} rounds — using last round average</div>`;
+    }
+  } else if (validationData.verdict === "recon_failed") {
+    html += `<div class="verdict verdict-warning">&#9888; Worst spread: ${validationData.spread.toFixed(1)}% (exceeds ${validationData.threshold}% threshold)</div>`;
+    html += '<div class="verdict-detail">Reconciliation failed. Falling back to previous round average.</div>';
+  }
+
+  if (validationData.failed && validationData.failed.length > 0) {
+    for (const f of validationData.failed) {
+      html += `<div class="verdict verdict-warning">&#9888; ${escapeHtml(f.providerName)} failed: ${escapeHtml(f.error)}</div>`;
+    }
+  }
+
+  html += '</div>'; // end validation-panel
+
+  // Editable results table
+  html += '<div class="table-wrapper" style="margin-top:12px;"><table><thead><tr>';
+  html += '<th>Food</th><th>Qty</th><th>Unit</th><th>Cal (low)</th><th>Cal (high)</th><th>Pro (low)</th><th>Pro (high)</th>';
+  html += '</tr></thead><tbody>';
+
+  let totalCalLow = 0, totalCalHigh = 0, totalProLow = 0, totalProHigh = 0;
+  for (let i = 0; i < inputItems.length; i++) {
+    const inp = inputItems[i];
+    const fin = finalItems[i];
+    totalCalLow += fin.calories_lower;
+    totalCalHigh += fin.calories_upper;
+    totalProLow += fin.protein_lower;
+    totalProHigh += fin.protein_upper;
+    html += `<tr data-batch-idx="${i}">
+      <td>${escapeHtml(inp.food)}</td>
+      <td class="num">${inp.qty}</td>
+      <td>${escapeHtml(inp.unit)}</td>
+      <td><input type="number" class="batch-res-cal-low" step="any" value="${renderNum(fin.calories_lower, 1)}"></td>
+      <td><input type="number" class="batch-res-cal-high" step="any" value="${renderNum(fin.calories_upper, 1)}"></td>
+      <td><input type="number" class="batch-res-pro-low" step="any" value="${renderNum(fin.protein_lower, 1)}"></td>
+      <td><input type="number" class="batch-res-pro-high" step="any" value="${renderNum(fin.protein_upper, 1)}"></td>
+    </tr>`;
+  }
+
+  // Totals row
+  html += `<tr class="daily-total">
+    <td colspan="3">Total</td>
+    <td class="num">${renderNum(totalCalLow, 1)}</td>
+    <td class="num">${renderNum(totalCalHigh, 1)}</td>
+    <td class="num">${renderNum(totalProLow, 1)}</td>
+    <td class="num">${renderNum(totalProHigh, 1)}</td>
+  </tr>`;
+
+  html += '</tbody></table></div>';
+  container.innerHTML = html;
+  document.getElementById("batch-save").disabled = false;
+}
+
+function saveBatchFoods() {
+  const date = document.getElementById("batch-date").value;
+  const time = document.getElementById("batch-time").value;
+  if (!date || !time) {
+    setBatchEstimateStatus("Date and time are required.", true);
+    return;
+  }
+
+  const resultRows = document.querySelectorAll("#batch-results table tbody tr[data-batch-idx]");
+  if (resultRows.length === 0) return;
+
+  const entries = loadFoodEntries();
+  const maxId = entries.length ? Math.max(...entries.map((e) => e.id)) : 0;
+
+  const inputRows = document.querySelectorAll("#batch-items .batch-item-row");
+  const inputItems = [];
+  for (const row of inputRows) {
+    const food = row.querySelector(".batch-food").value.trim();
+    const qty = row.querySelector(".batch-qty").value;
+    const unit = row.querySelector(".batch-unit").value.trim();
+    if (food && qty && unit) inputItems.push({ food, qty: parseFloat(qty), unit });
+  }
+
+  resultRows.forEach((row, i) => {
+    const idx = parseInt(row.dataset.batchIdx);
+    const inp = inputItems[idx];
+    if (!inp) return;
+
+    const entry = {
+      id: maxId + 1 + i,
+      date,
+      time,
+      food: inp.food,
+      qty: inp.qty,
+      unit: inp.unit,
+      calLow: parseFloat(row.querySelector(".batch-res-cal-low").value) || 0,
+      calHigh: parseFloat(row.querySelector(".batch-res-cal-high").value) || 0,
+      proLow: parseFloat(row.querySelector(".batch-res-pro-low").value) || 0,
+      proHigh: parseFloat(row.querySelector(".batch-res-pro-high").value) || 0,
+    };
+
+    if (_batchValidationData) {
+      entry.aiThoughtProcess = _batchValidationData;
+    }
+
+    entries.push(entry);
+  });
+
+  saveFoodEntries(entries);
+  ensureDayExists(date);
+  _batchValidationData = null;
+  closeBatchModal();
+  renderFoodTable();
+  renderCalorieTracker();
+}
+
+// ============================================================
 // EVENT LISTENERS & INIT
 // ============================================================
 
-document.addEventListener("DOMContentLoaded", () => {
-  initData();
+document.addEventListener("DOMContentLoaded", async () => {
+  document.body.classList.add('loading');
+  try {
+    await initFromSupabase();
+  } catch (err) {
+    console.error('[Supabase] Init failed, falling back to localStorage:', err);
+    initFromLocalStorage();
+  }
+  document.body.classList.remove('loading');
 
   // Tab switching
   document.querySelectorAll(".tab").forEach((tab) => {
@@ -2759,6 +3895,14 @@ document.addEventListener("DOMContentLoaded", () => {
   // Estimate button
   document.getElementById("estimate-btn").addEventListener("click", estimateNutrition);
 
+  // Batch modal
+  document.getElementById("batch-add-btn").addEventListener("click", openBatchModal);
+  document.getElementById("batch-add-row").addEventListener("click", addBatchRow);
+  document.getElementById("batch-estimate-btn").addEventListener("click", estimateBatchNutrition);
+  document.getElementById("batch-save").addEventListener("click", saveBatchFoods);
+  document.getElementById("batch-cancel").addEventListener("click", closeBatchModal);
+  document.querySelector("#batch-modal .modal-overlay").addEventListener("click", closeBatchModal);
+
   // Diet Assessment
   document.getElementById("run-assessment-btn").addEventListener("click", runDietAssessment);
 
@@ -2797,19 +3941,42 @@ document.addEventListener("DOMContentLoaded", () => {
   renderAssessmentDataSummary(getAssessmentData("week"));
   renderAssessmentHistory();
 
-  // Auto-fill calories when selecting a previously used food
+  // Auto-fill calories when selecting a previously used food, with proportional scaling
+  function scaleFromMatch() {
+    const foodName = document.getElementById("food-name").value;
+    const qty = parseFloat(document.getElementById("food-qty").value);
+    const unit = document.getElementById("food-unit").value.trim();
+    if (!foodName || !unit || !qty) return;
+
+    const entries = loadFoodEntries();
+    const match = entries.findLast((e) => e.food === foodName && e.unit === unit);
+    if (match && match.qty > 0) {
+      const ratio = qty / match.qty;
+      document.getElementById("food-cal-low").value = parseFloat((match.calLow * ratio).toFixed(2));
+      document.getElementById("food-cal-high").value = parseFloat((match.calHigh * ratio).toFixed(2));
+      document.getElementById("food-protein-low").value = parseFloat((match.proLow * ratio).toFixed(2));
+      document.getElementById("food-protein-high").value = parseFloat((match.proHigh * ratio).toFixed(2));
+    } else {
+      // No match for this unit — clear nutrition fields
+      document.getElementById("food-cal-low").value = "";
+      document.getElementById("food-cal-high").value = "";
+      document.getElementById("food-protein-low").value = "";
+      document.getElementById("food-protein-high").value = "";
+    }
+  }
+
   document.getElementById("food-name").addEventListener("change", function () {
     const entries = loadFoodEntries();
     const match = entries.findLast((e) => e.food === this.value);
     if (match) {
       document.getElementById("food-unit").value = match.unit;
-      document.getElementById("food-cal-low").value = match.calLow;
-      document.getElementById("food-cal-high").value = match.calHigh;
-      document.getElementById("food-protein-low").value = match.proLow;
-      document.getElementById("food-protein-high").value = match.proHigh;
       document.getElementById("food-qty").value = match.qty;
+      scaleFromMatch();
     }
   });
+
+  document.getElementById("food-qty").addEventListener("input", scaleFromMatch);
+  document.getElementById("food-unit").addEventListener("change", scaleFromMatch);
 
   // Initial render
   renderFoodTable();

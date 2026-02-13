@@ -301,6 +301,67 @@ select {
   margin-bottom: 20px;
 }
 
+.modal-wide {
+  width: 700px;
+  max-width: 95vw;
+}
+
+/* Manual mode */
+.manual-step {
+  margin-bottom: 18px;
+}
+
+.manual-step-label {
+  font-weight: 600;
+  font-size: 0.88rem;
+  margin-bottom: 8px;
+  color: var(--text);
+}
+
+.manual-prompt-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.manual-prompt-preview {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 12px;
+  font-size: 0.72rem;
+  line-height: 1.4;
+  max-height: 200px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin-top: 6px;
+}
+
+.manual-textarea {
+  width: 100%;
+  min-height: 150px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 12px;
+  font-family: 'Fira Mono', 'Consolas', monospace;
+  font-size: 0.78rem;
+  color: var(--text);
+  resize: vertical;
+}
+
+.manual-textarea:focus {
+  border-color: var(--primary);
+  outline: none;
+}
+
+.manual-error {
+  color: var(--red);
+  font-size: 0.78rem;
+  margin-top: 6px;
+}
+
 .form-row {
   margin-bottom: 14px;
 }
@@ -1305,7 +1366,7 @@ details[open] > .food-log-toggle::before {
 /* Grocery grid layout */
 .grocery-grid {
   display: grid;
-  grid-template-columns: repeat(2, 1fr);
+  grid-template-columns: 1fr;
   gap: 12px;
 }
 
@@ -1348,35 +1409,32 @@ details[open] > .food-log-toggle::before {
 }
 
 .grocery-options {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: 18px auto auto 1fr;
+  gap: 0;
+  align-items: start;
 }
 
 .grocery-item {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  padding: 5px 0;
-  border-bottom: 1px solid var(--border);
+  display: contents;
   cursor: pointer;
   font-size: 0.82rem;
   line-height: 1.35;
 }
 
-.grocery-item:last-child {
-  border-bottom: none;
+.grocery-item > * {
+  padding: 5px 6px 5px 0;
+  border-bottom: 1px solid var(--border);
 }
 
-.grocery-item:hover {
-  background: rgba(108, 99, 255, 0.05);
-  border-radius: 4px;
+.grocery-item:last-child > * {
+  border-bottom: none;
 }
 
 .grocery-checkbox {
   width: 16px;
   height: 16px;
-  margin-top: 1px;
-  flex-shrink: 0;
+  margin-top: 2px;
   cursor: pointer;
   accent-color: var(--primary);
 }
@@ -1384,33 +1442,30 @@ details[open] > .food-log-toggle::before {
 .grocery-item-name {
   font-weight: 600;
   color: var(--text);
-  min-width: 0;
+  padding-right: 10px;
 }
 
 .grocery-item-portion {
-  font-size: 0.75rem;
-  color: var(--text-dim);
+  font-size: 0.78rem;
+  color: var(--text);
   white-space: nowrap;
+  padding-right: 10px;
 }
 
 .grocery-item-note {
-  font-size: 0.73rem;
-  color: var(--text-dim);
+  font-size: 0.76rem;
+  color: var(--text);
   font-style: italic;
-  opacity: 0.8;
 }
 
 /* Checked item styling */
-.grocery-item:has(.grocery-checkbox:checked) .grocery-item-name {
+.grocery-item:has(.grocery-checkbox:checked) .grocery-item-name,
+.grocery-item:has(.grocery-checkbox:checked) .grocery-item-portion,
+.grocery-item:has(.grocery-checkbox:checked) .grocery-item-note {
   text-decoration: line-through;
-  opacity: 0.6;
+  opacity: 0.5;
 }
 
-@media (max-width: 900px) {
-  .grocery-grid {
-    grid-template-columns: 1fr;
-  }
-}
 
 @media (max-width: 600px) {
   .action-plan-header {
@@ -1476,4 +1531,81 @@ details[open] > .food-log-toggle::before {
   .sourcing-table th {
     padding: 5px 6px;
   }
+}
+
+/* ============================================================
+   BATCH ADD MODAL
+   ============================================================ */
+
+.batch-item-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.batch-item-row .batch-food {
+  flex: 2;
+}
+
+.batch-item-row .batch-qty {
+  width: 70px;
+  flex: 0 0 70px;
+}
+
+.batch-item-row .batch-unit {
+  width: 100px;
+  flex: 0 0 100px;
+}
+
+.batch-item-row .batch-remove {
+  flex: 0 0 32px;
+  width: 32px;
+  text-align: center;
+}
+
+.batch-actions-top {
+  margin: 16px 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.batch-actions-top .btn-estimate {
+  width: auto;
+}
+
+/* Batch results table */
+#batch-results .table-wrapper {
+  margin-top: 12px;
+}
+
+#batch-results table {
+  font-size: 0.82rem;
+}
+
+#batch-results input[type="number"] {
+  width: 70px;
+  padding: 4px 6px;
+  font-size: 0.8rem;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text);
+  text-align: right;
+}
+
+#batch-results input[type="number"]:focus {
+  border-color: var(--primary);
+  outline: none;
+}
+
+/* Loading state */
+body.loading .app { opacity: 0.5; pointer-events: none; }
+body.loading::after {
+  content: 'Loading...';
+  position: fixed; top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 1.2rem; color: var(--text-dim);
+  z-index: 9999;
 }

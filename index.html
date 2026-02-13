@@ -22,6 +22,7 @@
     <section id="food-eaten" class="tab-content active">
       <div class="toolbar">
         <button id="add-food-btn" class="btn btn-primary">+ Add Food</button>
+        <button id="batch-add-btn" class="btn btn-secondary">+ Batch Add</button>
         <div class="filter-group">
           <label for="food-date-filter">Filter by date:</label>
           <input type="date" id="food-date-filter">
@@ -270,7 +271,45 @@
         </form>
       </div>
     </div>
+    <!-- MANUAL MODE MODAL -->
+    <div id="manual-modal" class="modal hidden">
+      <div class="modal-overlay"></div>
+      <div class="modal-content modal-wide">
+        <h2 id="manual-modal-title">Manual Mode</h2>
+        <div id="manual-modal-body"></div>
+      </div>
+    </div>
+
+    <!-- BATCH ADD MODAL -->
+    <div id="batch-modal" class="modal hidden">
+      <div class="modal-overlay"></div>
+      <div class="modal-content modal-wide">
+        <h2>Batch Add Foods</h2>
+        <div class="form-row-pair">
+          <div class="form-row">
+            <label for="batch-date">Date</label>
+            <input type="date" id="batch-date" required>
+          </div>
+          <div class="form-row">
+            <label for="batch-time">Time</label>
+            <input type="time" id="batch-time" required>
+          </div>
+        </div>
+        <div id="batch-items"></div>
+        <button type="button" id="batch-add-row" class="btn btn-secondary btn-sm">+ Add Row</button>
+        <div class="batch-actions-top">
+          <button type="button" id="batch-estimate-btn" class="btn btn-estimate">Estimate All Calories &amp; Protein</button>
+          <span id="batch-estimate-status" class="estimate-status"></span>
+        </div>
+        <div id="batch-results"></div>
+        <div class="modal-actions">
+          <button type="button" class="btn btn-secondary" id="batch-cancel">Cancel</button>
+          <button type="button" class="btn btn-primary" id="batch-save" disabled>Save All</button>
+        </div>
+      </div>
+    </div>
   </div>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
   <script src="app.js"></script>
 </body>
 </html>
