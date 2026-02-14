@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Finance Tracker</title>
+  <link rel="stylesheet" href="styles.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body>
+  <div class="layout">
+    <!-- SIDEBAR -->
+    <aside class="sidebar">
+      <div class="sidebar-brand">
+        <div class="brand-icon">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+        </div>
+        <span class="brand-text">Finance</span>
+      </div>
+
+      <nav class="sidebar-nav">
+        <button class="nav-item active" data-tab="transactions">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="4" width="22" height="16" rx="2" ry="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg>
+          <span>Transactions</span>
+        </button>
+        <button class="nav-item" data-tab="summary">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.21 15.89A10 10 0 1 1 8 2.83"/><path d="M22 12A10 10 0 0 0 12 2v10z"/></svg>
+          <span>Monthly Summary</span>
+        </button>
+        <button class="nav-item" data-tab="stocks">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/><polyline points="16 7 22 7 22 13"/></svg>
+          <span>Stock Journal</span>
+        </button>
+      </nav>
+
+    </aside>
+
+    <!-- MAIN CONTENT -->
+    <main class="main">
+      <!-- TRANSACTIONS TAB -->
+      <section id="transactions" class="tab-content active">
+        <div class="page-header">
+          <h1>Transactions</h1>
+          <div class="filter-group">
+            <input type="month" id="txn-month-filter">
+            <button id="manage-cats-btn" class="btn btn-secondary">Categories</button>
+            <button id="add-txn-btn" class="btn btn-primary">+ New Transaction</button>
+          </div>
+        </div>
+        <div id="month-totals" class="month-totals-bar"></div>
+        <div class="card">
+          <table id="txn-table">
+            <thead>
+              <tr>
+                <th>Type</th>
+                <th>Category</th>
+                <th>Description</th>
+                <th class="num">Amount</th>
+                <th>Notes</th>
+                <th class="th-actions">Actions</th>
+              </tr>
+            </thead>
+            <tbody id="txn-tbody"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- MONTHLY SUMMARY TAB -->
+      <section id="summary" class="tab-content">
+        <div class="page-header">
+          <h1>Monthly Summary</h1>
+          <div class="filter-group">
+            <input type="month" id="summary-month-filter">
+          </div>
+        </div>
+        <div id="summary-cards" class="summary-cards"></div>
+        <div class="summary-tables">
+          <div class="summary-section">
+            <h3>Expense Breakdown</h3>
+            <div class="card">
+              <table id="expense-breakdown">
+                <thead>
+                  <tr>
+                    <th>Category</th>
+                    <th class="num">Amount</th>
+                    <th class="num">% of Total</th>
+                  </tr>
+                </thead>
+                <tbody></tbody>
+              </table>
+            </div>
+          </div>
+          <div class="summary-section">
+            <h3>Income Breakdown</h3>
+            <div class="card">
+              <table id="income-breakdown">
+                <thead>
+                  <tr>
+                    <th>Category</th>
+                    <th class="num">Amount</th>
+                  </tr>
+                </thead>
+                <tbody></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- STOCK JOURNAL TAB -->
+      <section id="stocks" class="tab-content">
+        <div class="page-header">
+          <h1>Stock Journal</h1>
+          <button id="add-trade-btn" class="btn btn-primary">+ Add Trade</button>
+        </div>
+        <div id="stock-summary-cards" class="summary-cards"></div>
+
+        <h3 class="section-title">Open Positions</h3>
+        <div class="card" style="margin-bottom:24px">
+          <table id="open-positions-table">
+            <thead>
+              <tr>
+                <th>Stock</th>
+                <th>Date Bought</th>
+                <th class="num">Price</th>
+                <th class="num">Shares</th>
+                <th class="num">Buy Amount</th>
+                <th class="num">Fees</th>
+                <th class="th-actions">Actions</th>
+              </tr>
+            </thead>
+            <tbody id="open-positions-tbody"></tbody>
+          </table>
+        </div>
+
+        <h3 class="section-title">Trade History</h3>
+        <div class="card">
+          <table id="trade-history-table">
+            <thead>
+              <tr>
+                <th>Stock</th>
+                <th>Bought</th>
+                <th>Sold</th>
+                <th class="num">Shares</th>
+                <th class="num">Gross P&amp;L</th>
+                <th class="num">Fees</th>
+                <th class="num">Net P&amp;L</th>
+                <th class="num">Net %</th>
+                <th class="th-actions">Actions</th>
+              </tr>
+            </thead>
+            <tbody id="trade-history-tbody"></tbody>
+          </table>
+        </div>
+      </section>
+
+    </main>
+  </div>
+
+  <!-- TRANSACTION MODAL -->
+  <div id="txn-modal" class="modal hidden">
+    <div class="modal-overlay"></div>
+    <div class="modal-content">
+      <h2 id="txn-modal-title">Add Transaction</h2>
+      <div class="form-row">
+        <label for="txn-date">Date</label>
+        <input type="date" id="txn-date">
+      </div>
+      <div class="form-row-pair">
+        <div class="form-row">
+          <label for="txn-type">Type</label>
+          <select id="txn-type">
+            <option value="expense">Expense</option>
+            <option value="income">Income</option>
+          </select>
+        </div>
+        <div class="form-row">
+          <label for="txn-category">Category</label>
+          <select id="txn-category"></select>
+        </div>
+      </div>
+      <div class="form-row" id="subcategory-row" style="display:none">
+        <label for="txn-subcategory">Subcategory</label>
+        <select id="txn-subcategory"></select>
+      </div>
+      <div class="form-row">
+        <label for="txn-description">Description</label>
+        <input type="text" id="txn-description" placeholder="e.g. Grab ride to work">
+      </div>
+      <div class="form-row">
+        <label for="txn-amount">Amount (PHP)</label>
+        <input type="number" id="txn-amount" min="0" step="0.01" placeholder="0.00">
+      </div>
+      <div class="form-row">
+        <label for="txn-notes">Notes (optional)</label>
+        <input type="text" id="txn-notes" placeholder="Optional notes">
+      </div>
+      <div class="modal-actions">
+        <button id="txn-cancel" class="btn btn-secondary">Cancel</button>
+        <button id="txn-save" class="btn btn-primary">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- DELETE CONFIRM MODAL -->
+  <div id="delete-modal" class="modal hidden">
+    <div class="modal-overlay"></div>
+    <div class="modal-content">
+      <h2 id="delete-modal-title">Delete</h2>
+      <p id="delete-modal-msg">Are you sure?</p>
+      <div class="modal-actions">
+        <button id="delete-cancel" class="btn btn-secondary">Cancel</button>
+        <button id="delete-confirm" class="btn btn-danger">Delete</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MANAGE CATEGORIES MODAL -->
+  <div id="manage-cats-modal" class="modal hidden">
+    <div class="modal-overlay"></div>
+    <div class="modal-content modal-wide">
+      <h2>Manage Categories</h2>
+      <div class="categories-grid">
+        <div class="categories-col">
+          <div class="cat-section-header">
+            <h3>Expense</h3>
+            <button class="btn btn-secondary btn-sm" data-action="add-cat" data-type="expense">+ Add</button>
+          </div>
+          <div class="cat-card-inner">
+            <div id="expense-cats-list"></div>
+          </div>
+        </div>
+        <div class="categories-col">
+          <div class="cat-section-header">
+            <h3>Income</h3>
+            <button class="btn btn-secondary btn-sm" data-action="add-cat" data-type="income">+ Add</button>
+          </div>
+          <div class="cat-card-inner">
+            <div id="income-cats-list"></div>
+          </div>
+        </div>
+      </div>
+      <div class="modal-actions">
+        <button id="manage-cats-close" class="btn btn-primary">Done</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- CATEGORY MODAL -->
+  <div id="cat-modal" class="modal hidden">
+    <div class="modal-overlay"></div>
+    <div class="modal-content modal-narrow">
+      <h2 id="cat-modal-title">Add Category</h2>
+      <div class="form-row">
+        <label for="cat-modal-input">Name</label>
+        <input type="text" id="cat-modal-input" placeholder="Enter name">
+      </div>
+      <div class="modal-actions">
+        <button id="cat-modal-cancel" class="btn btn-secondary">Cancel</button>
+        <button id="cat-modal-save" class="btn btn-primary">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- STOCK TRADE MODAL -->
+  <div id="trade-modal" class="modal hidden">
+    <div class="modal-overlay"></div>
+    <div class="modal-content modal-wide">
+      <h2 id="trade-modal-title">Add Trade</h2>
+
+      <div class="form-row-pair">
+        <div class="form-row">
+          <label for="trade-stock">Stock Code</label>
+          <input type="text" id="trade-stock" placeholder="e.g. CNVRG" style="text-transform:uppercase">
+        </div>
+        <div class="form-row">
+          <label for="trade-date-bought">Date Bought</label>
+          <input type="date" id="trade-date-bought">
+        </div>
+      </div>
+
+      <div class="form-row-triple">
+        <div class="form-row">
+          <label for="trade-price-bought">Price Bought</label>
+          <input type="number" id="trade-price-bought" min="0" step="0.01" placeholder="0.00">
+        </div>
+        <div class="form-row">
+          <label for="trade-shares-bought">Shares Bought</label>
+          <input type="number" id="trade-shares-bought" min="0" step="1" placeholder="0">
+        </div>
+        <div class="form-row">
+          <label for="trade-buy-fees">Buy Fees</label>
+          <input type="number" id="trade-buy-fees" min="0" step="0.01" placeholder="0.00">
+        </div>
+      </div>
+
+      <hr class="form-divider">
+
+      <div class="form-row-pair">
+        <div class="form-row">
+          <label for="trade-date-sold">Date Sold <span class="label-hint">(leave blank if open)</span></label>
+          <input type="date" id="trade-date-sold">
+        </div>
+        <div class="form-row">
+          <label for="trade-price-sold">Price Sold</label>
+          <input type="number" id="trade-price-sold" min="0" step="0.01" placeholder="0.00">
+        </div>
+      </div>
+
+      <div class="form-row-triple">
+        <div class="form-row">
+          <label for="trade-shares-sold">Shares Sold</label>
+          <input type="number" id="trade-shares-sold" min="0" step="1" placeholder="Same as bought">
+        </div>
+        <div class="form-row">
+          <label for="trade-sell-fees">Sell Fees</label>
+          <input type="number" id="trade-sell-fees" min="0" step="0.01" placeholder="0.00">
+        </div>
+        <div class="form-row">
+          <label for="trade-notes">Notes</label>
+          <input type="text" id="trade-notes" placeholder="Optional">
+        </div>
+      </div>
+
+      <div class="modal-actions">
+        <button id="trade-cancel" class="btn btn-secondary">Cancel</button>
+        <button id="trade-save" class="btn btn-primary">Save Trade</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
