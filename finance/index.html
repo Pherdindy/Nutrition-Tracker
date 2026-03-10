@@ -28,7 +28,7 @@
         </button>
         <button class="nav-item" data-tab="summary">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.21 15.89A10 10 0 1 1 8 2.83"/><path d="M22 12A10 10 0 0 0 12 2v10z"/></svg>
-          <span>Monthly Summary</span>
+          <span>Summary</span>
         </button>
         <button class="nav-item" data-tab="stocks">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/><polyline points="16 7 22 7 22 13"/></svg>
@@ -68,18 +68,50 @@
         </div>
       </section>
 
-      <!-- MONTHLY SUMMARY TAB -->
+      <!-- SUMMARY TAB -->
       <section id="summary" class="tab-content">
         <div class="page-header">
-          <h1>Monthly Summary</h1>
-          <div class="filter-group">
-            <input type="month" id="summary-month-filter">
+          <h1>Summary</h1>
+          <div class="filter-group summary-filter-group">
+            <select id="summary-range-type">
+              <option value="weekly">Weekly</option>
+              <option value="monthly" selected>Monthly</option>
+              <option value="quarterly">Quarterly</option>
+              <option value="semiannual">Semi-Annual</option>
+              <option value="yearly">Yearly</option>
+              <option value="all">All Time</option>
+              <option value="custom">Custom</option>
+            </select>
+            <div id="summary-week-control" class="summary-filter-control hidden">
+              <input type="date" id="summary-week-filter">
+            </div>
+            <div id="summary-month-control" class="summary-filter-control">
+              <input type="month" id="summary-month-filter">
+            </div>
+            <div id="summary-quarter-control" class="summary-filter-control hidden">
+              <input type="month" id="summary-quarter-filter">
+            </div>
+            <div id="summary-semiannual-control" class="summary-filter-control hidden">
+              <input type="month" id="summary-semiannual-filter">
+            </div>
+            <div id="summary-year-control" class="summary-filter-control hidden">
+              <select id="summary-year-filter"></select>
+            </div>
+            <div id="summary-custom-control" class="summary-filter-control summary-custom-control hidden">
+              <input type="date" id="summary-custom-start-filter" aria-label="Custom start date">
+              <span class="summary-filter-separator">to</span>
+              <input type="date" id="summary-custom-end-filter" aria-label="Custom end date">
+            </div>
           </div>
         </div>
+        <div id="summary-range-label" class="summary-range-label"></div>
         <div id="summary-cards" class="summary-cards"></div>
         <div class="summary-tables">
           <div class="summary-section">
-            <h3>Expense Breakdown</h3>
+            <div class="summary-section-header">
+              <h3>Expense Breakdown</h3>
+              <span class="summary-section-hint">Click a category to inspect</span>
+            </div>
             <div class="card">
               <table id="expense-breakdown">
                 <thead>
@@ -94,7 +126,9 @@
             </div>
           </div>
           <div class="summary-section">
-            <h3>Income Breakdown</h3>
+            <div class="summary-section-header">
+              <h3>Income Breakdown</h3>
+            </div>
             <div class="card">
               <table id="income-breakdown">
                 <thead>
@@ -261,6 +295,32 @@
       <div class="modal-actions">
         <button id="cat-modal-cancel" class="btn btn-secondary">Cancel</button>
         <button id="cat-modal-save" class="btn btn-primary">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- EXPENSE DETAIL MODAL -->
+  <div id="expense-detail-modal" class="modal hidden">
+    <div class="modal-overlay"></div>
+    <div class="modal-content modal-wide">
+      <h2 id="expense-detail-title">Expense Details</h2>
+      <p id="expense-detail-period"></p>
+      <div id="expense-detail-summary" class="detail-summary-bar"></div>
+      <div class="card detail-table-card">
+        <table id="expense-detail-table">
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Description</th>
+              <th class="num">Amount</th>
+              <th>Notes</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <div class="modal-actions">
+        <button id="expense-detail-close" class="btn btn-primary">Close</button>
       </div>
     </div>
   </div>

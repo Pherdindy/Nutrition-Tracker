@@ -19,6 +19,7 @@ const DEFAULT_CATEGORIES = {
     'Salary': [], 'Freelance': [], 'Investment': [], 'Gift': [], 'Other': []
   }
 };
+const UNCATEGORIZED_CATEGORY = 'Uncategorized';
 
 // ---- bgWrite ----
 
@@ -41,6 +42,73 @@ function saveCategories(cats) {
     const { error } = await sb.from('settings').upsert({ key: 'ft_categories', value: JSON.stringify(cats) });
     if (error) throw error;
   });
+}
+
+function persistTransactions(list, changedRows = []) {
+  _cache.transactions = list;
+  localStorage.setItem('ft_transactions', JSON.stringify(list));
+  if (!changedRows.length) return;
+  bgWrite(async () => {
+    for (const txn of changedRows) {
+      const { created_at, ...row } = txn;
+      const { error } = await sb.from('transactions').update(row).eq('id', txn.id);
+      if (error) throw error;
+    }
+  });
+}
+
+function remapTransactions(remapFn) {
+  const list = loadTransactions();
+  const changedRows = [];
+  const next = list.map(txn => {
+    const updated = remapFn(txn);
+    if (!updated || updated === txn) return txn;
+    changedRows.push(updated);
+    return updated;
+  });
+  if (changedRows.length) persistTransactions(next, changedRows);
+  return changedRows.length;
+}
+
+function ensureCategoryExists(cats, type, name) {
+  if (!cats[type]) cats[type] = {};
+  if (!cats[type][name]) cats[type][name] = [];
+  return name;
+}
+
+function getDeletedCategoryFallback(cats, type, removedName) {
+  if (removedName !== 'Other') return ensureCategoryExists(cats, type, 'Other');
+  return ensureCategoryExists(cats, type, UNCATEGORIZED_CATEGORY);
+}
+
+function renameCategoryTransactions(type, oldName, newName) {
+  if (!oldName || oldName === newName) return;
+  remapTransactions(txn => txn.type === type && txn.category === oldName ? { ...txn, category: newName } : txn);
+}
+
+function moveDeletedCategoryTransactions(type, removedName, fallbackCategory) {
+  remapTransactions(txn => (
+    txn.type === type && txn.category === removedName
+      ? { ...txn, category: fallbackCategory, subcategory: null }
+      : txn
+  ));
+}
+
+function renameSubcategoryTransactions(type, categoryName, oldName, newName) {
+  if (!oldName || oldName === newName) return;
+  remapTransactions(txn => (
+    txn.type === type && txn.category === categoryName && txn.subcategory === oldName
+      ? { ...txn, subcategory: newName }
+      : txn
+  ));
+}
+
+function clearDeletedSubcategoryTransactions(type, categoryName, removedName) {
+  remapTransactions(txn => (
+    txn.type === type && txn.category === categoryName && txn.subcategory === removedName
+      ? { ...txn, subcategory: null }
+      : txn
+  ));
 }
 
 // ---- Transaction functions ----
@@ -99,6 +167,33 @@ async function refreshTransactions() {
     _cache.transactions = merged;
     localStorage.setItem('ft_transactions', JSON.stringify(merged));
   }
+}
+
+function reconcileTransactionsWithCategories() {
+  const cats = loadCategories();
+  const list = loadTransactions();
+  const changedRows = [];
+  let categoriesChanged = false;
+  const next = list.map(txn => {
+    const categoryName = txn.category || '';
+    const subcategoryName = txn.subcategory || null;
+    const typeCats = cats[txn.type] || {};
+    if (!typeCats[categoryName]) {
+      const fallbackCategory = ensureCategoryExists(cats, txn.type, UNCATEGORIZED_CATEGORY);
+      categoriesChanged = true;
+      const updated = { ...txn, category: fallbackCategory, subcategory: null };
+      changedRows.push(updated);
+      return updated;
+    }
+    if (subcategoryName && !typeCats[categoryName].includes(subcategoryName)) {
+      const updated = { ...txn, subcategory: null };
+      changedRows.push(updated);
+      return updated;
+    }
+    return txn;
+  });
+  if (categoriesChanged) saveCategories(cats);
+  if (changedRows.length) persistTransactions(next, changedRows);
 }
 
 // ---- Stock Trade functions ----
@@ -248,6 +343,55 @@ function currentMonth() {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
 }
 
+function formatInputDate(date) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+}
+
+function currentDateValue() {
+  return formatInputDate(new Date());
+}
+
+function parseMonthValue(monthValue) {
+  const match = /^(\d{4})-(\d{2})$/.exec(monthValue || currentMonth());
+  if (!match) return parseMonthValue(currentMonth());
+  return { year: Number(match[1]), monthIndex: Number(match[2]) - 1 };
+}
+
+function getMonthEnd(year, monthIndex) {
+  return formatInputDate(new Date(year, monthIndex + 1, 0));
+}
+
+function formatMonthLabel(year, monthIndex) {
+  return new Date(year, monthIndex, 1).toLocaleDateString('en-PH', { month: 'long', year: 'numeric' });
+}
+
+function formatDateRangeLabel(startDate, endDate) {
+  if (startDate && endDate) {
+    return startDate === endDate ? formatDateShort(startDate) : `${formatDateShort(startDate)} - ${formatDateShort(endDate)}`;
+  }
+  if (startDate) return `From ${formatDateShort(startDate)}`;
+  if (endDate) return `Up to ${formatDateShort(endDate)}`;
+  return 'All Time';
+}
+
+function getWeekStart(dateValue) {
+  const date = new Date(`${dateValue}T00:00:00`);
+  const day = date.getDay();
+  const diff = day === 0 ? -6 : 1 - day;
+  date.setDate(date.getDate() + diff);
+  return formatInputDate(date);
+}
+
+function getWeekEnd(dateValue) {
+  const start = new Date(`${getWeekStart(dateValue)}T00:00:00`);
+  start.setDate(start.getDate() + 6);
+  return formatInputDate(start);
+}
+
+function filterTransactionsByDateRange(txns, startDate, endDate) {
+  return txns.filter(t => t.date && (!startDate || t.date >= startDate) && (!endDate || t.date <= endDate));
+}
+
 function getFilteredTransactions(monthValue) {
   const all = loadTransactions();
   if (!monthValue) return all;
@@ -275,6 +419,8 @@ let deletingId = null;
 let deleteTarget = 'transaction'; // 'transaction' or 'trade'
 let catModalState = { mode: null, type: null, catName: null, subIdx: null };
 let editingTradeId = null;
+let currentSummaryContext = { txns: [], label: 'All Time', startDate: null, endDate: null };
+let activeExpenseDetailLabel = null;
 
 // ---- Tab switching ----
 
@@ -290,14 +436,127 @@ document.querySelectorAll('.nav-item').forEach(btn => {
   });
 });
 
-// ---- Month filter ----
-
 const txnMonthFilter = document.getElementById('txn-month-filter');
+const summaryRangeTypeSelect = document.getElementById('summary-range-type');
+const summaryWeekFilter = document.getElementById('summary-week-filter');
 const summaryMonthFilter = document.getElementById('summary-month-filter');
+const summaryQuarterFilter = document.getElementById('summary-quarter-filter');
+const summarySemiannualFilter = document.getElementById('summary-semiannual-filter');
+const summaryYearFilter = document.getElementById('summary-year-filter');
+const summaryCustomStartFilter = document.getElementById('summary-custom-start-filter');
+const summaryCustomEndFilter = document.getElementById('summary-custom-end-filter');
+const summaryRangeLabel = document.getElementById('summary-range-label');
+const summaryFilterControls = {
+  weekly: document.getElementById('summary-week-control'),
+  monthly: document.getElementById('summary-month-control'),
+  quarterly: document.getElementById('summary-quarter-control'),
+  semiannual: document.getElementById('summary-semiannual-control'),
+  yearly: document.getElementById('summary-year-control'),
+  custom: document.getElementById('summary-custom-control')
+};
+
+function getTransactionYears() {
+  const years = new Set([new Date().getFullYear()]);
+  loadTransactions().forEach(txn => {
+    if (txn.date) years.add(Number(txn.date.slice(0, 4)));
+  });
+  return [...years].filter(Number.isFinite).sort((a, b) => b - a);
+}
+
+function populateSummaryYearOptions() {
+  const years = getTransactionYears();
+  const previousValue = summaryYearFilter.value || String(new Date().getFullYear());
+  summaryYearFilter.innerHTML = years.map(year => `<option value="${year}">${year}</option>`).join('');
+  summaryYearFilter.value = years.includes(Number(previousValue)) ? previousValue : String(years[0] || new Date().getFullYear());
+}
+
+function updateSummaryFilterControls() {
+  const rangeType = summaryRangeTypeSelect.value;
+  Object.entries(summaryFilterControls).forEach(([type, control]) => {
+    control.classList.toggle('hidden', type !== rangeType);
+  });
+  if (rangeType === 'yearly') populateSummaryYearOptions();
+}
+
+function getSummaryRange() {
+  switch (summaryRangeTypeSelect.value) {
+    case 'weekly': {
+      const anchorDate = summaryWeekFilter.value || currentDateValue();
+      const startDate = getWeekStart(anchorDate);
+      const endDate = getWeekEnd(anchorDate);
+      return { startDate, endDate, label: formatDateRangeLabel(startDate, endDate) };
+    }
+    case 'monthly': {
+      const { year, monthIndex } = parseMonthValue(summaryMonthFilter.value);
+      return {
+        startDate: formatInputDate(new Date(year, monthIndex, 1)),
+        endDate: getMonthEnd(year, monthIndex),
+        label: formatMonthLabel(year, monthIndex)
+      };
+    }
+    case 'quarterly': {
+      const { year, monthIndex } = parseMonthValue(summaryQuarterFilter.value);
+      const quarter = Math.floor(monthIndex / 3) + 1;
+      const startMonth = (quarter - 1) * 3;
+      return {
+        startDate: formatInputDate(new Date(year, startMonth, 1)),
+        endDate: getMonthEnd(year, startMonth + 2),
+        label: `Q${quarter} ${year}`
+      };
+    }
+    case 'semiannual': {
+      const { year, monthIndex } = parseMonthValue(summarySemiannualFilter.value);
+      const half = monthIndex < 6 ? 1 : 2;
+      const startMonth = half === 1 ? 0 : 6;
+      return {
+        startDate: formatInputDate(new Date(year, startMonth, 1)),
+        endDate: getMonthEnd(year, startMonth + 5),
+        label: `H${half} ${year}`
+      };
+    }
+    case 'yearly': {
+      populateSummaryYearOptions();
+      const year = Number(summaryYearFilter.value) || new Date().getFullYear();
+      return {
+        startDate: `${year}-01-01`,
+        endDate: `${year}-12-31`,
+        label: String(year)
+      };
+    }
+    case 'custom': {
+      let startDate = summaryCustomStartFilter.value || null;
+      let endDate = summaryCustomEndFilter.value || null;
+      if (startDate && endDate && startDate > endDate) [startDate, endDate] = [endDate, startDate];
+      return { startDate, endDate, label: formatDateRangeLabel(startDate, endDate) };
+    }
+    case 'all':
+    default:
+      return { startDate: null, endDate: null, label: 'All Time' };
+  }
+}
+
+function getSummaryTransactions() {
+  const range = getSummaryRange();
+  return {
+    ...range,
+    txns: filterTransactionsByDateRange(loadTransactions(), range.startDate, range.endDate)
+  };
+}
+
 txnMonthFilter.value = currentMonth();
+summaryWeekFilter.value = currentDateValue();
 summaryMonthFilter.value = currentMonth();
+summaryQuarterFilter.value = currentMonth();
+summarySemiannualFilter.value = currentMonth();
+summaryCustomStartFilter.value = `${currentMonth()}-01`;
+summaryCustomEndFilter.value = currentDateValue();
+populateSummaryYearOptions();
+updateSummaryFilterControls();
+
 txnMonthFilter.addEventListener('change', render);
-summaryMonthFilter.addEventListener('change', render);
+summaryRangeTypeSelect.addEventListener('change', () => { updateSummaryFilterControls(); render(); });
+[summaryWeekFilter, summaryMonthFilter, summaryQuarterFilter, summarySemiannualFilter, summaryYearFilter, summaryCustomStartFilter, summaryCustomEndFilter]
+  .forEach(control => control.addEventListener('change', render));
 
 // ============================================================
 // RENDER — Transactions Tab
@@ -361,14 +620,17 @@ function renderTransactions() {
 // ============================================================
 
 function renderSummary() {
-  const month = summaryMonthFilter.value;
-  const txns = getFilteredTransactions(month);
+  populateSummaryYearOptions();
+  currentSummaryContext = getSummaryTransactions();
+  const { txns, label } = currentSummaryContext;
   let totalIncome = 0, totalExpense = 0;
   const expenseByCat = {}, incomeByCat = {};
+  summaryRangeLabel.textContent = `Period: ${label}`;
   txns.forEach(t => {
-    const a = Number(t.amount), label = t.subcategory ? `${t.category} > ${t.subcategory}` : t.category;
-    if (t.type === 'income') { totalIncome += a; incomeByCat[label] = (incomeByCat[label] || 0) + a; }
-    else { totalExpense += a; expenseByCat[label] = (expenseByCat[label] || 0) + a; }
+    const a = Number(t.amount);
+    const categoryLabel = t.subcategory ? `${t.category} > ${t.subcategory}` : t.category;
+    if (t.type === 'income') { totalIncome += a; incomeByCat[categoryLabel] = (incomeByCat[categoryLabel] || 0) + a; }
+    else { totalExpense += a; expenseByCat[categoryLabel] = (expenseByCat[categoryLabel] || 0) + a; }
   });
   const net = totalIncome - totalExpense;
 
@@ -379,12 +641,49 @@ function renderSummary() {
 
   const eRows = Object.entries(expenseByCat).sort((a, b) => b[1] - a[1]).map(([c, a]) => {
     const p = totalExpense > 0 ? (a / totalExpense * 100) : 0;
-    return `<tr><td>${escapeHtml(c)}</td><td class="num">${fmt(a)}</td><td><div class="pct-bar-cell"><div class="pct-bar"><div class="pct-bar-fill" style="width:${p}%"></div></div><span class="pct-text">${p.toFixed(1)}%</span></div></td></tr>`;
+    return `<tr><td><button type="button" class="breakdown-link" data-expense-label="${escapeAttr(c)}">${escapeHtml(c)}</button></td><td class="num">${fmt(a)}</td><td><div class="pct-bar-cell"><div class="pct-bar"><div class="pct-bar-fill" style="width:${p}%"></div></div><span class="pct-text">${p.toFixed(1)}%</span></div></td></tr>`;
   }).join('');
   document.querySelector('#expense-breakdown tbody').innerHTML = eRows || `<tr><td colspan="3"><div class="empty-state">No expenses</div></td></tr>`;
 
   const iRows = Object.entries(incomeByCat).sort((a, b) => b[1] - a[1]).map(([c, a]) => `<tr><td>${escapeHtml(c)}</td><td class="num">${fmt(a)}</td></tr>`).join('');
   document.querySelector('#income-breakdown tbody').innerHTML = iRows || `<tr><td colspan="2"><div class="empty-state">No income</div></td></tr>`;
+
+  if (activeExpenseDetailLabel && !expenseDetailModal.classList.contains('hidden')) renderExpenseDetailModal(activeExpenseDetailLabel);
+}
+
+function getSummaryCategoryLabel(txn) {
+  return txn.subcategory ? `${txn.category} > ${txn.subcategory}` : txn.category;
+}
+
+function renderExpenseDetailModal(label) {
+  const rows = currentSummaryContext.txns
+    .filter(txn => txn.type === 'expense' && getSummaryCategoryLabel(txn) === label)
+    .sort((a, b) => b.date.localeCompare(a.date) || Number(b.amount) - Number(a.amount));
+  const total = rows.reduce((sum, txn) => sum + Number(txn.amount), 0);
+  document.getElementById('expense-detail-title').textContent = label;
+  document.getElementById('expense-detail-period').textContent = `Period: ${currentSummaryContext.label}`;
+  document.getElementById('expense-detail-summary').innerHTML = `
+    <div class="detail-summary-pill"><strong>${rows.length}</strong> transaction${rows.length === 1 ? '' : 's'}</div>
+    <div class="detail-summary-pill">Total <strong>${fmt(total)}</strong></div>`;
+  document.querySelector('#expense-detail-table tbody').innerHTML = rows.map(txn => `
+    <tr>
+      <td>${formatDateShort(txn.date)}</td>
+      <td>${escapeHtml(txn.description)}</td>
+      <td class="num negative">-${fmt(txn.amount)}</td>
+      <td>${escapeHtml(txn.notes || '')}</td>
+    </tr>`).join('') || `<tr><td colspan="4"><div class="empty-state">No expenses in this period</div></td></tr>`;
+}
+
+function openExpenseDetailModal(label) {
+  if (!label) return;
+  activeExpenseDetailLabel = label;
+  renderExpenseDetailModal(label);
+  expenseDetailModal.classList.remove('hidden');
+}
+
+function closeExpenseDetailModal() {
+  expenseDetailModal.classList.add('hidden');
+  activeExpenseDetailLabel = null;
 }
 
 // ============================================================
@@ -420,15 +719,49 @@ document.getElementById('manage-cats-modal').addEventListener('click', (e) => {
   const idx = subIdx !== undefined ? parseInt(subIdx) : null;
   if (action === 'add-cat') openCatModal('add-cat', type);
   else if (action === 'edit-cat') openCatModal('edit-cat', type, cat);
-  else if (action === 'delete-cat') { if (confirm(`Delete "${cat}" and all subcategories?`)) { const c = loadCategories(); delete c[type][cat]; saveCategories(c); render(); } }
+  else if (action === 'delete-cat') {
+    if (confirm(`Delete "${cat}" and all subcategories?`)) {
+      const c = loadCategories();
+      const fallbackCategory = getDeletedCategoryFallback(c, type, cat);
+      delete c[type][cat];
+      saveCategories(c);
+      moveDeletedCategoryTransactions(type, cat, fallbackCategory);
+      renderCategories();
+      render();
+    }
+  }
   else if (action === 'add-sub') openCatModal('add-sub', type, cat);
   else if (action === 'edit-sub') openCatModal('edit-sub', type, cat, idx);
-  else if (action === 'delete-sub') { const c = loadCategories(); if (c[type][cat]) { c[type][cat].splice(idx, 1); saveCategories(c); render(); } }
+  else if (action === 'delete-sub') {
+    const c = loadCategories();
+    if (c[type][cat]) {
+      const removedSub = c[type][cat][idx];
+      c[type][cat].splice(idx, 1);
+      saveCategories(c);
+      clearDeletedSubcategoryTransactions(type, cat, removedSub);
+      renderCategories();
+      render();
+    }
+  }
 });
 
 // ============================================================
 // RENDER — Stock Journal Tab
 // ============================================================
+
+// ---- Summary detail modal ----
+
+const expenseBreakdownTableBody = document.querySelector('#expense-breakdown tbody');
+const expenseDetailModal = document.getElementById('expense-detail-modal');
+
+expenseBreakdownTableBody.addEventListener('click', e => {
+  const btn = e.target.closest('[data-expense-label]');
+  if (!btn) return;
+  openExpenseDetailModal(btn.dataset.expenseLabel);
+});
+
+document.getElementById('expense-detail-close').addEventListener('click', closeExpenseDetailModal);
+expenseDetailModal.querySelector('.modal-overlay').addEventListener('click', closeExpenseDetailModal);
 
 function renderStocks() {
   const trades = loadStockTrades();
@@ -651,12 +984,18 @@ function saveCatModal() {
   const name = catModalInput.value.trim(); if (!name) return;
   const cats = loadCategories();
   const { mode, type, catName, subIdx } = catModalState;
+  const prevSubName = mode === 'edit-sub' && cats[type][catName] ? cats[type][catName][subIdx] : null;
   if (mode === 'add-cat') { if (cats[type][name]) { alert('Already exists.'); return; } cats[type][name] = []; }
   else if (mode === 'edit-cat') {
     if (name !== catName) { if (cats[type][name]) { alert('Already exists.'); return; } const o = {}; for (const [k, v] of Object.entries(cats[type])) o[k === catName ? name : k] = v; cats[type] = o; }
   } else if (mode === 'add-sub') { if (!cats[type][catName]) return; if (cats[type][catName].includes(name)) { alert('Already exists.'); return; } cats[type][catName].push(name); }
   else if (mode === 'edit-sub') { if (!cats[type][catName]) return; if (cats[type][catName].includes(name) && cats[type][catName][subIdx] !== name) { alert('Already exists.'); return; } cats[type][catName][subIdx] = name; }
-  saveCategories(cats); closeCatModal(); renderCategories(); render();
+  saveCategories(cats);
+  if (mode === 'edit-cat' && name !== catName) renameCategoryTransactions(type, catName, name);
+  if (mode === 'edit-sub' && name !== prevSubName) renameSubcategoryTransactions(type, catName, prevSubName, name);
+  closeCatModal();
+  renderCategories();
+  render();
 }
 
 // ============================================================
@@ -744,6 +1083,7 @@ document.addEventListener('keydown', e => {
     if (!txnModal.classList.contains('hidden')) closeModal();
     if (!deleteModal.classList.contains('hidden')) closeDeleteModal();
     if (!catModal.classList.contains('hidden')) closeCatModal();
+    if (!expenseDetailModal.classList.contains('hidden')) closeExpenseDetailModal();
     if (!tradeModal.classList.contains('hidden')) closeTradeModal();
     if (!manageCatsModal.classList.contains('hidden')) closeManageCatsModal();
   }
@@ -756,5 +1096,6 @@ document.addEventListener('keydown', e => {
 (async () => {
   populateCategories();
   await initFromSupabase();
+  reconcileTransactionsWithCategories();
   render();
 })();

@@ -254,6 +254,44 @@ body {
   display: flex;
   align-items: center;
   gap: 8px;
+  flex-wrap: wrap;
+}
+
+.summary-filter-group {
+  justify-content: flex-end;
+}
+
+.summary-filter-control {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.summary-filter-control.hidden {
+  display: none;
+}
+
+.summary-custom-control input {
+  min-width: 150px;
+}
+
+.summary-filter-separator {
+  color: var(--text-dim);
+  font-size: 0.82rem;
+}
+
+.summary-range-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin: -8px 0 20px;
+  padding: 8px 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text-secondary);
+  font-size: 0.82rem;
+  box-shadow: var(--shadow-sm);
 }
 
 /* ========== TABLES ========== */
@@ -568,8 +606,42 @@ select {
 .summary-section h3 {
   font-size: 0.95rem;
   font-weight: 600;
-  margin-bottom: 12px;
+  margin-bottom: 0;
   color: var(--text);
+}
+
+.summary-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.summary-section-hint {
+  color: var(--text-dim);
+  font-size: 0.78rem;
+}
+
+.breakdown-link {
+  border: none;
+  background: none;
+  padding: 0;
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+  font-weight: 600;
+  text-align: left;
+}
+
+.breakdown-link:hover {
+  color: var(--primary);
+}
+
+.breakdown-link:focus-visible {
+  outline: 2px solid rgba(232, 119, 46, 0.35);
+  outline-offset: 2px;
+  border-radius: 4px;
 }
 
 /* ========== PERCENTAGE BAR ========== */
@@ -797,6 +869,51 @@ select {
   font-size: 0.78rem;
 }
 
+.detail-summary-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.detail-summary-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 12px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text-secondary);
+  font-size: 0.82rem;
+}
+
+.detail-summary-pill strong {
+  color: var(--text);
+  font-weight: 700;
+}
+
+.detail-table-card {
+  overflow: auto;
+}
+
+#expense-detail-modal .modal-content {
+  width: 760px;
+}
+
+#expense-detail-table {
+  white-space: normal;
+}
+
+#expense-detail-table td {
+  vertical-align: top;
+}
+
+#expense-detail-table td:nth-child(2),
+#expense-detail-table td:nth-child(4) {
+  white-space: normal;
+}
+
 /* Modal wide variant */
 .modal-wide {
   width: 620px;
@@ -852,5 +969,32 @@ select {
   .month-totals-bar {
     flex-direction: column;
     gap: 10px;
+  }
+
+  .summary-filter-group {
+    justify-content: flex-start;
+  }
+
+  .summary-filter-control {
+    width: 100%;
+  }
+
+  .summary-custom-control {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .summary-filter-separator {
+    display: none;
+  }
+
+  .summary-range-label {
+    width: 100%;
+    border-radius: var(--radius);
+  }
+
+  .summary-section-header {
+    flex-direction: column;
+    align-items: flex-start;
   }
 }
