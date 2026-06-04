@@ -1706,6 +1706,38 @@ function renderProviderSettings() {
   valContainer.innerHTML = valHtml;
 }
 
+function renderMacroSettings() {
+  const c = document.getElementById("macro-settings");
+  if (!c) return;
+  const enabled = new Set(getEnabledMacros());
+  const fmt = getValueFormat();
+  const mode = getEstimationMode();
+  let html = '<div class="settings-card"><h2>Macros &amp; estimation</h2>';
+  html += '<h3 class="provider-name">Macros to track</h3><div class="macro-toggle-list">';
+  for (const m of Macros.CATALOG) {
+    const checked = enabled.has(m.id) ? "checked" : "";
+    const lock = m.locked ? "disabled" : "";
+    html += `<label class="macro-toggle"><input type="checkbox" data-macro="${m.id}" ${checked} ${lock}> ${escapeHtml(m.label)} <span class="macro-unit">(${m.unit})</span></label>`;
+  }
+  html += "</div>";
+  html += `<div class="form-row"><label>Value format</label><select id="set-value-format">
+    <option value="single" ${fmt === "single" ? "selected" : ""}>Single value</option>
+    <option value="range" ${fmt === "range" ? "selected" : ""}>Low–high range</option></select></div>`;
+  html += `<div class="form-row"><label>Estimation</label><select id="set-estimation-mode">
+    <option value="reconcile" ${mode === "reconcile" ? "selected" : ""}>Dual-AI cross-check (accurate)</option>
+    <option value="single" ${mode === "single" ? "selected" : ""}>Single fast call</option></select></div>`;
+  html += "</div>";
+  c.innerHTML = html;
+
+  c.querySelectorAll("input[data-macro]").forEach((cb) => cb.addEventListener("change", () => {
+    const ids = [...c.querySelectorAll("input[data-macro]:checked")].map((x) => x.dataset.macro);
+    setEnabledMacros(ids);
+    renderFoodTable();
+  }));
+  c.querySelector("#set-value-format").addEventListener("change", (e) => { setValueFormat(e.target.value); renderFoodTable(); });
+  c.querySelector("#set-estimation-mode").addEventListener("change", (e) => setEstimationMode(e.target.value));
+}
+
 window.saveProviderKeyUI = function (providerId) {
   const input = document.getElementById(`key-${providerId}`);
   if (input) {
@@ -1725,6 +1757,7 @@ window.saveSpreadThresholdUI = function (val) {
 window.saveProviderModeUI = function (providerId, mode) {
   saveProviderMode(providerId, mode);
   renderProviderSettings();
+  renderMacroSettings();
 };
 
 // ============================================================
@@ -3968,6 +4001,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   // Provider settings
   renderProviderSettings();
+  renderMacroSettings();
 
   // Migrate old API key if present
   const oldKey = localStorage.getItem("nt_openai_key");
@@ -3975,6 +4009,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     localStorage.setItem("nt_key_openai", oldKey);
     localStorage.removeItem("nt_openai_key");
     renderProviderSettings();
+    renderMacroSettings();
   }
 
   // Estimate button
