@@ -383,7 +383,19 @@ git commit -m "feat(macros): add dynamic AI prompt/parse/spread/average helpers"
 
 **Files:**
 - Modify: `www/index.html` (add `<script src="macros.js">` before `app.js`)
-- Modify: `www/app.js` (settings helpers, migration on load, generalize `getDailyFoodTotals`)
+- Modify: `www/app.js` (settings helpers, row mappers, migration on load, generalize `getDailyFoodTotals`)
+- **Supabase schema:** add `macros jsonb` + `estimate_status text` columns to `food_entries` (USER ACTION — Task 2.0)
+
+### Task 2.0: Supabase schema migration (USER ACTION — run once)
+
+`food_entries` stores fixed `cal_low/cal_high/pro_low/pro_high` columns. Configurable macros + the background-estimate status need two new columns so they survive reload-from-Supabase. The user runs this once in the Supabase SQL editor (the app's anon key cannot `ALTER TABLE`):
+
+```sql
+alter table food_entries add column if not exists macros jsonb;
+alter table food_entries add column if not exists estimate_status text;
+```
+
+The mapper code in Task 2.2 tolerates these columns being absent on READ (falls back to legacy cal/pro columns), so nothing crashes before the SQL runs — but new macros/status only persist to Supabase after it is applied. localStorage persistence works regardless.
 
 ### Task 2.1: Load macros.js and add generic setting helpers
 
@@ -434,19 +446,41 @@ git commit -m "feat: load macros module and add macro/format/estimation settings
 
 ### Task 2.2: Migrate entries on load + generalize day totals
 
-- [ ] **Step 1:** In `www/app.js`, make all entries pass through `Macros.migrateEntry` as they enter `_cache`. In `initFromSupabase` and `initFromLocalStorage` (where `_cache.food` is populated) and in `loadFoodEntries()` (~line 99), normalize:
+- [ ] **Step 1:** Update the row mappers so entries carry a `macros` map + `estimateStatus` (sourced from the new columns, with a legacy fallback), and migrate at every point `_cache.food` is populated. In `www/app.js`:
+
+Replace `foodRowToJs` (line 34) and `foodJsToRow` (line 37):
+
+```js
+function foodRowToJs(r) {
+  const base = { id: r.id, date: r.date, time: r.time, food: r.food, qty: Number(r.qty), unit: r.unit,
+    estimateStatus: r.estimate_status || null };
+  if (r.macros) { base.macros = r.macros; return base; }
+  // legacy fallback: build macros from cal/pro columns
+  base.calLow = Number(r.cal_low); base.calHigh = Number(r.cal_high);
+  base.proLow = Number(r.pro_low); base.proHigh = Number(r.pro_high);
+  return Macros.migrateEntry(base);
+}
+function foodJsToRow(e) {
+  const cal = Macros.getMacro(e, "calories") || { low: null, high: null };
+  const pro = Macros.getMacro(e, "protein") || { low: null, high: null };
+  return { id: e.id, date: e.date, time: e.time, food: e.food, qty: e.qty, unit: e.unit,
+    macros: e.macros || {}, estimate_status: e.estimateStatus || null,
+    cal_low: cal.low, cal_high: cal.high, pro_low: pro.low, pro_high: pro.high, // keep legacy columns populated
+    ai_thought_process: null };
+}
+```
+
+`initFromSupabase` already maps via `foodRowToJs` (now migration-aware), so `_cache.food` is migrated at cloud load. Make the localStorage paths migrate too — rewrite `loadFoodEntries` (line 97) and add `.map(Macros.migrateEntry)` where `initFromLocalStorage` sets `_cache.food` from `JSON.parse(localStorage...)`:
 
 ```js
 function loadFoodEntries() {
-  const list = _cache.food || [];
-  let mutated = false;
-  for (let i = 0; i < list.length; i++) {
-    if (Macros.needsMigration(list[i])) { list[i] = Macros.migrateEntry(list[i]); mutated = true; }
-  }
-  if (mutated) _cache.food = list; // persisted on next saveFoodEntries
-  return list;
+  if (_cache.ready && _cache.food) return _cache.food.map(Macros.migrateEntry);
+  const saved = localStorage.getItem("nt_food");
+  return saved ? JSON.parse(saved).map(Macros.migrateEntry) : [];
 }
 ```
+
+(`migrateEntry` returns the same object reference when already migrated, so this preserves the existing copy-returning semantics with negligible overhead.)
 
 - [ ] **Step 2:** Generalize `getDailyFoodTotals` (line 443) to keep returning `calLow/calHigh/proLow/proHigh` (so existing callers still work) but source them from the macro map, and add a generic per-macro total:
 
