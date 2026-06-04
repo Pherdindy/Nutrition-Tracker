@@ -1674,3 +1674,14 @@ body.loading::after {
   .cards-list { display: flex; }
   .fab { display: block; }
 }
+
+.day-card { background: var(--card-bg, #fff); border-radius: 12px; box-shadow: 0 1px 4px rgba(0,0,0,.10); overflow: hidden; }
+.day-card-head { width: 100%; display: flex; align-items: center; gap: 8px; background: none; border: none;
+  padding: 12px 14px; cursor: pointer; text-align: left; color: var(--text, #e4e6ed); }
+.day-card-date { font-weight: 700; }
+.day-card-kcal { margin-left: auto; font-size: 13px; color: var(--text-dim, #8b8fa3); }
+.day-card-caret { transition: transform .15s; color: var(--text-dim, #8b8fa3); }
+.day-card.expanded .day-card-caret { transform: rotate(90deg); }
+.day-card-body { display: none; padding: 0 14px 12px; }
+.day-card.expanded .day-card-body { display: block; }
+.day-card-actions { display: flex; gap: 8px; margin-top: 10px; }

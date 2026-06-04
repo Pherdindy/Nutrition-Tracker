@@ -56,3 +56,51 @@ function renderFoodCards() {
     });
   });
 }
+
+function renderDayCards() {
+  const host = document.getElementById("day-cards");
+  if (!host) return;
+  if (!isMobile()) return; // cards only render on mobile; desktop uses the table
+
+  const profile = loadProfile();
+  const food = loadFoodEntries();
+  const days = loadDayEntries().slice().sort((a, b) => (a.date < b.date ? 1 : -1));
+
+  let html = "";
+  for (const day of days) {
+    const bmr = calcBMR(day.weight, profile.height, day.age);
+    const tdee = calcTDEE(bmr, day.activity);
+    const target = tdee - day.deficit;
+    const t = getDailyFoodTotals(day.date, food);
+    const overLow = t.calLow - target, overHigh = t.calHigh - target;
+    html += `<div class="day-card">
+      <button class="day-card-head" data-id="${day.id}">
+        <span class="day-card-date">${formatDate(day.date)}</span>
+        <span class="day-card-kcal">${renderNum(t.calLow, 0)}–${renderNum(t.calHigh, 0)} / ${renderNum(target, 0)} cal</span>
+        <span class="day-card-caret">&#9656;</span>
+      </button>
+      <div class="day-card-body">
+        <div class="food-card-row"><span>Weight</span><b>${day.weight} lb</b></div>
+        <div class="food-card-row"><span>BMR / TDEE</span><b>${renderNum(bmr,0)} / ${renderNum(tdee,0)}</b></div>
+        <div class="food-card-row"><span>Activity</span><b>${escapeHtml(day.activity)}</b></div>
+        <div class="food-card-row"><span>Deficit / Target</span><b>${day.deficit} / ${renderNum(target,0)}</b></div>
+        <div class="food-card-row"><span>Cal +/-</span><b class="${surplusClass(overLow)}">${renderNum(overLow,0)} … ${renderNum(overHigh,0)}</b></div>
+        <div class="food-card-row"><span>Protein</span><b>${renderNum(t.proLow,0)}–${renderNum(t.proHigh,0)} g (target ${day.proteinTargetLow}–${day.proteinTargetHigh})</b></div>
+        <div class="day-card-actions">
+          <button class="btn btn-secondary btn-sm" data-edit="${day.id}">Edit</button>
+          <button class="btn btn-secondary btn-sm" data-del="${day.id}">Delete</button>
+        </div>
+      </div>
+    </div>`;
+  }
+  if (!days.length) html = `<div class="cards-empty">No daily entries yet. Use + Add Day.</div>`;
+  host.innerHTML = html;
+
+  host.querySelectorAll(".day-card-head").forEach((h) => {
+    h.addEventListener("click", () => h.parentElement.classList.toggle("expanded"));
+  });
+  host.querySelectorAll("[data-edit]").forEach((b) =>
+    b.addEventListener("click", () => editDay(Number(b.dataset.edit))));
+  host.querySelectorAll("[data-del]").forEach((b) =>
+    b.addEventListener("click", () => deleteDay(Number(b.dataset.del))));  // deleteDay confirms internally
+}

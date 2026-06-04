@@ -609,6 +609,7 @@ function renderCalorieTracker() {
   }
 
   tbody.innerHTML = html;
+  if (typeof renderDayCards === "function") renderDayCards();
 }
 
 // ---- Calorie Target Tables ----
@@ -3889,6 +3890,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   document.getElementById("day-cancel").addEventListener("click", closeDayModal);
   document.querySelector("#day-modal .modal-overlay").addEventListener("click", closeDayModal);
   document.getElementById("day-form").addEventListener("submit", saveDay);
+  onBreakpointChange(renderCalorieTracker);
 
   // Food filter
   document.getElementById("food-date-filter").addEventListener("change", renderFoodTable);
