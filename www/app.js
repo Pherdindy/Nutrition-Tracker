@@ -758,6 +758,7 @@ function saveFood(e) {
   if (id) {
     const idx = entries.findIndex((x) => x.id === parseInt(id));
     if (idx === -1) { console.warn("saveFood: entry not found for id", id); return; }
+    // base.macros fully replaces prior macros: cleared fields re-estimate; macros for now-disabled types intentionally drop.
     saved = { ...entries[idx], ...base };
     entries[idx] = saved;
   } else {
@@ -1180,7 +1181,7 @@ function parseAIResponse(content, ids) {
   try { parsed = JSON.parse(cleaned); }
   catch (e) { throw new Error(`Invalid JSON from AI: ${e.message}`); }
   const flat = {};
-  Macros.macroFields(ids).forEach((f) => { flat[f] = parsed[f]; });
+  Macros.macroFields(ids).forEach((f) => { flat[f] = parsed[f] == null ? null : Number(parsed[f]); });
   return flat;
 }
 
@@ -1707,13 +1708,9 @@ function buildRangeData(foodEntries, dayEntries, profile, startDate, endDate) {
   const dates = Object.keys(foodByDate).sort();
   const numDays = dates.length || 1;
 
-  let totalCalLow = 0, totalCalHigh = 0, totalProLow = 0, totalProHigh = 0;
-  filteredFood.forEach(f => {
-    totalCalLow += Number(f.calLow) || 0;
-    totalCalHigh += Number(f.calHigh) || 0;
-    totalProLow += Number(f.proLow) || 0;
-    totalProHigh += Number(f.proHigh) || 0;
-  });
+  const _calTotal = Macros.sumMacro(filteredFood, "calories");
+  const _proTotal = Macros.sumMacro(filteredFood, "protein");
+  let totalCalLow = _calTotal.low, totalCalHigh = _calTotal.high, totalProLow = _proTotal.low, totalProHigh = _proTotal.high;
 
   // Per-day calorie context (TDEE varies by activity)
   const dailyContext = {};
@@ -1815,8 +1812,9 @@ function buildAssessmentPrompt(data) {
     for (const date of ctxDates) {
       const ctx = data.dailyContext[date];
       const dayFoods = data.foodByDate[date] || [];
-      const eatLow = dayFoods.reduce((s, f) => s + (Number(f.calLow) || 0), 0);
-      const eatHigh = dayFoods.reduce((s, f) => s + (Number(f.calHigh) || 0), 0);
+      const _eat = Macros.sumMacro(dayFoods, "calories");
+      const eatLow = _eat.low;
+      const eatHigh = _eat.high;
       prompt += `  ${date}: Activity="${ctx.activity}" | TDEE=${ctx.tdee} | Deficit=${ctx.deficit} | Target=${ctx.calorieTarget} | Eaten=${Math.round(eatLow)}-${Math.round(eatHigh)} kcal\n`;
     }
   }
@@ -1842,7 +1840,10 @@ function buildAssessmentPrompt(data) {
     prompt += `\n${date}:\n`;
     const items = data.foodByDate[date];
     for (const item of items) {
-      prompt += `  ${item.time} - ${item.food}, ${item.qty} ${item.unit} (${item.calLow}-${item.calHigh} cal, ${item.proLow}-${item.proHigh}g protein)\n`;
+      const _c = Macros.getMacro(item, "calories"), _p = Macros.getMacro(item, "protein");
+      const calStr = _c ? `${_c.low}-${_c.high}` : "?";
+      const proStr = _p ? `${_p.low}-${_p.high}` : "?";
+      prompt += `  ${item.time} - ${item.food}, ${item.qty} ${item.unit} (${calStr} cal, ${proStr}g protein)\n`;
     }
   }
 
@@ -2362,8 +2363,9 @@ function renderAssessmentDataSummary(data) {
     for (const date of ctxDates) {
       const ctx = data.dailyContext[date];
       const dayFoods = data.foodByDate[date] || [];
-      const eatLow = Math.round(dayFoods.reduce((s, f) => s + (Number(f.calLow) || 0), 0));
-      const eatHigh = Math.round(dayFoods.reduce((s, f) => s + (Number(f.calHigh) || 0), 0));
+      const _eat = Macros.sumMacro(dayFoods, "calories");
+      const eatLow = Math.round(_eat.low);
+      const eatHigh = Math.round(_eat.high);
 
       // vs Target: how close to the deficit goal (small numbers = on track)
       const vtLow = eatLow - ctx.calorieTarget;
