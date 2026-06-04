@@ -1234,6 +1234,45 @@ function setValueFormat(fmt) { setSetting("value_format", fmt === "range" ? "ran
 function getEstimationMode() { return getSetting("estimation_mode", "reconcile") === "single" ? "single" : "reconcile"; }
 function setEstimationMode(mode) { setSetting("estimation_mode", mode === "single" ? "single" : "reconcile"); }
 
+// --- Macro-aware estimation engine ---
+
+async function estimateEntry(entry, ids) {
+  const active = PROVIDERS.filter((p) => getProviderSettings(p.id).apiKey.length > 0);
+  if (!active.length) throw new Error("no-api-key");
+
+  const round1 = await Promise.all(active.map(async (p) => {
+    const s = getProviderSettings(p.id);
+    try { return { providerId: p.id, providerName: p.name, data: await p.call(entry.food, entry.qty, entry.unit, s.apiKey, s.primaryModel, ids) }; }
+    catch { return { providerId: p.id, providerName: p.name, data: null }; }
+  }));
+  let ok = round1.filter((r) => r.data);
+  if (!ok.length) throw new Error("all-providers-failed");
+
+  let flat;
+  if (ok.length === 1 || getEstimationMode() === "single") {
+    flat = Macros.averageEstimates(ok.map((r) => r.data), ids);
+  } else if (Macros.spread(ok.map((r) => r.data), ids) <= getSpreadThreshold()) {
+    flat = Macros.averageEstimates(ok.map((r) => r.data), ids);
+  } else {
+    const MAX = 5; let prev = ok;
+    for (let round = 2; round <= MAX; round++) {
+      const recon = await Promise.all(active
+        .filter((p) => prev.some((s) => s.providerId === p.id))
+        .map(async (p) => {
+          const s = getProviderSettings(p.id);
+          try { return { providerId: p.id, providerName: p.name, data: await p.callReconciliation(entry.food, entry.qty, entry.unit, s.apiKey, s.secondaryModel, prev, ids) }; }
+          catch { return { providerId: p.id, providerName: p.name, data: null }; }
+        }));
+      const rok = recon.filter((r) => r.data);
+      if (!rok.length) break;
+      prev = rok;
+      if (Macros.spread(rok.map((r) => r.data), ids) <= getSpreadThreshold()) break;
+    }
+    flat = Macros.averageEstimates(prev.map((r) => r.data), ids);
+  }
+  return Macros.parseMacros(flat, ids); // {id:{low,high}}
+}
+
 // --- Spread Calculation ---
 
 function calcSpread(results) {
