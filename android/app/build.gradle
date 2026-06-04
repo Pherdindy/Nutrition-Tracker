@@ -16,8 +16,27 @@ android {
             ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
         }
     }
+
+    // Release signing — reads credentials from android/key.properties (git-ignored).
+    def keystoreProps = new Properties()
+    def keystoreFile = rootProject.file("key.properties")
+    if (keystoreFile.exists()) { keystoreFile.withInputStream { keystoreProps.load(it) } }
+
+    signingConfigs {
+        release {
+            if (keystoreFile.exists()) {
+                storeFile file(keystoreProps['storeFile'])
+                storePassword keystoreProps['storePassword']
+                keyAlias keystoreProps['keyAlias']
+                keyPassword keystoreProps['keyPassword']
+            }
+        }
+    }
     buildTypes {
         release {
+            // Use the real upload key when key.properties exists; otherwise fall
+            // back to debug signing so a release build still completes for testing.
+            signingConfig keystoreFile.exists() ? signingConfigs.release : signingConfigs.debug
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }
