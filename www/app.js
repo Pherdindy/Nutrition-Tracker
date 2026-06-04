@@ -1079,6 +1079,25 @@ const PROVIDERS = [
       const data = await res.json();
       return parseAIResponse(extractOpenAIContent(data), ids);
     },
+    callVision: async (apiKey, model, b64, mime, systemPrompt, userText) => {
+      const res = await fetch("https://api.openai.com/v1/chat/completions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+        body: JSON.stringify({
+          model,
+          messages: [
+            { role: "system", content: systemPrompt },
+            { role: "user", content: [
+              { type: "text", text: userText },
+              { type: "image_url", image_url: { url: `data:${mime};base64,${b64}` } },
+            ] },
+          ],
+          ...openaiModelParams(model, 1500),
+        }),
+      });
+      if (!res.ok) { const err = await res.json().catch(() => ({})); throw new Error(err.error?.message || `OpenAI API error ${res.status}`); }
+      return extractOpenAIContent(await res.json());
+    },
   },
   {
     id: "anthropic",
@@ -1144,6 +1163,22 @@ const PROVIDERS = [
       }
       const data = await res.json();
       return parseAIResponse(data.content[0].text, ids);
+    },
+    callVision: async (apiKey, model, b64, mime, systemPrompt, userText) => {
+      const res = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01", "anthropic-dangerous-direct-browser-access": "true" },
+        body: JSON.stringify({
+          model, max_tokens: 1500,
+          messages: [ { role: "user", content: [
+            { type: "text", text: userText },
+            { type: "image", source: { type: "base64", media_type: mime, data: b64 } },
+          ] } ],
+          system: systemPrompt, temperature: 0,
+        }),
+      });
+      if (!res.ok) { const err = await res.json().catch(() => ({})); throw new Error(err.error?.message || `Claude API error ${res.status}`); }
+      return (await res.json()).content[0].text;
     },
   },
 ];
@@ -1315,6 +1350,36 @@ async function estimateEntry(entry, ids) {
     flat = Macros.averageEstimates(prev.map((r) => r.data), ids);
   }
   return Macros.parseMacros(flat, ids); // {id:{low,high}}
+}
+
+async function estimatePhoto(image, history) {
+  const provider = getVisionProvider();
+  if (!provider) throw new Error("no-api-key");
+  const ids = getEnabledMacros();
+  const settings = getProviderSettings(provider.id);
+  const text = await provider.callVision(
+    settings.apiKey, settings.primaryModel,
+    image.base64, image.mimeType,
+    PhotoEstimate.buildVisionSystemPrompt(ids),
+    PhotoEstimate.buildVisionUserText(history),
+  );
+  return PhotoEstimate.parseVisionResponse(text, ids);
+}
+
+async function capturePhoto() {
+  if (!(window.Capacitor && Capacitor.Plugins && Capacitor.Plugins.Camera)) {
+    alert("Camera is only available in the installed app.");
+    return null;
+  }
+  try {
+    const photo = await Capacitor.Plugins.Camera.getPhoto({
+      quality: 70, resultType: "base64", source: "PROMPT", width: 1024, correctOrientation: true,
+    });
+    if (!photo || !photo.base64String) return null;
+    return { base64: photo.base64String, mimeType: `image/${photo.format || "jpeg"}` };
+  } catch (e) {
+    return null; // user cancelled or denied permission — no-op
+  }
 }
 
 // --- Settings UI ---
