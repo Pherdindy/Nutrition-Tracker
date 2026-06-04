@@ -1836,18 +1836,19 @@ function buildRangeData(foodEntries, dayEntries, profile, startDate, endDate) {
   let avgProTargetLow = null, avgProTargetHigh = null;
   if (filteredDays.length > 0) {
     let totalProTLow = 0, totalProTHigh = 0;
+    const deficit = getDeficit();
     filteredDays.forEach(day => {
-      const bmr = calcBMR(day.weight, profile.height, day.age);
+      const bmr = calcBMR(day.weight, profile.height, profile.age);
       const tdee = calcTDEE(bmr, day.activity);
-      const target = tdee - day.deficit;
+      const target = tdee - deficit;
       dailyContext[day.date] = {
         activity: day.activity,
         tdee: Math.round(tdee),
-        deficit: day.deficit,
+        deficit: deficit,
         calorieTarget: Math.round(target),
       };
-      totalProTLow += day.proteinTargetLow;
-      totalProTHigh += day.proteinTargetHigh;
+      totalProTLow += profile.proteinLow;
+      totalProTHigh += profile.proteinHigh;
     });
     avgProTargetLow = Math.round(totalProTLow / filteredDays.length);
     avgProTargetHigh = Math.round(totalProTHigh / filteredDays.length);
