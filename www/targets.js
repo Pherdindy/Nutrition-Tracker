@@ -18,5 +18,28 @@
     return g ? g.daily : 550;
   }
 
-  return { GOALS, deficitForGoal };
+  function migrateDay(day) {
+    if (!day) return day;
+    return { id: day.id, date: day.date, weight: day.weight, activity: day.activity };
+  }
+
+  function goalForDeficit(daily) {
+    const g = GOALS.find((x) => x.daily === Number(daily));
+    return g ? g.goal : "0.50 kg/week";
+  }
+
+  function migrateProfile(profile, days) {
+    const out = { ...profile };
+    if (out.age == null) {
+      const d = (days || []).find((x) => x.age != null);
+      out.age = d ? Number(d.age) : 32;
+    }
+    if (out.weightLossGoal == null) {
+      const d = (days || []).find((x) => x.deficit != null);
+      out.weightLossGoal = d ? goalForDeficit(d.deficit) : "0.50 kg/week";
+    }
+    return out;
+  }
+
+  return { GOALS, deficitForGoal, migrateDay, migrateProfile };
 });
