@@ -357,7 +357,9 @@ async function migrateLocalStorageToSupabase() {
   if (foodRaw) {
     const food = JSON.parse(foodRaw);
     if (food.length > 0) {
-      const rows = food.map(foodJsToRow);
+      // Migrate legacy entries to the macros shape before mapping, so foodJsToRow's
+      // Macros.getMacro() reads find calorie/protein values instead of writing nulls.
+      const rows = food.map((e) => foodJsToRow(Macros.migrateEntry(e)));
       const { error } = await sb.from('food_entries').upsert(rows);
       if (error) console.error('[Supabase] Food migration error:', error);
     }
