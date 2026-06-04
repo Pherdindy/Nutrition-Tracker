@@ -915,7 +915,7 @@ In `www/app.js`, at the very top of `renderAssessmentResults(result)` (right aft
     const best = (result.round2 && result.round2[0] && result.round2[0].data)
       || (result.round1 && result.round1[0] && result.round1[0].data)
       || null;
-    if (best) { renderAssessmentScorecard(best, result); return; }
+    if (best && typeof renderAssessmentScorecard === "function") { renderAssessmentScorecard(best, result); return; }
   }
 ```
 This makes mobile skip the dual-provider comparison, Round 1/Round 2 labels, and agreement summaries entirely — the AI machinery becomes invisible. Desktop falls through to the existing detailed render.
