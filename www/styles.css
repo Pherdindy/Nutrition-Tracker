@@ -1685,3 +1685,21 @@ body.loading::after {
 .day-card-body { display: none; padding: 0 14px 12px; }
 .day-card.expanded .day-card-body { display: block; }
 .day-card-actions { display: flex; gap: 8px; margin-top: 10px; }
+
+/* ---- Calorie Target tab: mobile single-column reflow ---- */
+@media (max-width: 720px) {
+  #calorie-target .settings-grid { display: flex; flex-direction: column; gap: 14px; }
+  #calorie-target .settings-card { width: 100%; }
+  #calorie-target table { width: 100%; }
+  #calorie-target .form-row { display: flex; flex-direction: column; align-items: stretch; }
+  #calorie-target .form-row label { margin-bottom: 4px; }
+  #calorie-target input,
+  #calorie-target select,
+  #calorie-target .btn { min-height: 44px; font-size: 16px; }  /* 16px avoids mobile zoom; 44px tap target */
+}
+
+/* Contain the dense provider/validation settings blocks on mobile */
+@media (max-width: 720px) {
+  #provider-settings, #validation-settings { border: 1px solid var(--border, #2e3345); border-radius: 10px; }
+  #provider-settings > *:first-child, #validation-settings > *:first-child { padding: 12px; }
+}
