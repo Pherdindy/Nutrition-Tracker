@@ -107,10 +107,11 @@ function renderDayCards() {
 
 // Renders the simplified mobile scorecard from the best available assessment data.
 // `data` is a single provider's assessment object (result.round2[0].data or round1[0].data).
-function renderAssessmentScorecard(data, fullResult) {
+function renderAssessmentScorecard(data, fullResult) { // fullResult reserved for future provider attribution
   const container = document.getElementById("assessment-results");
   if (!container || !data) return;
   const AV = window.AssessmentView;
+  if (!AV) { container.innerHTML = '<p style="padding:16px;color:var(--text-dim)">Scorecard unavailable — assessment view module failed to load.</p>'; return; }
 
   const score = Number(data.overall_score) || 0;
   const pct = Math.max(0, Math.min(100, Math.round((score / 10) * 100)));
