@@ -1,6 +1,7 @@
 // Mobile renderers. Loaded after app.js + assessment-view.js; relies on globals:
 //  renderFoodCards:        loadFoodEntries, getDailyFoodTotals, formatDate, formatTime,
-//                          escapeHtml, renderNum, isMobile, editFood, deleteFood
+//                          escapeHtml, renderNum, isMobile, editFood, deleteFood,
+//                          getEnabledMacros, getValueFormat, Macros
 //  renderDayCards:         loadDayEntries, loadProfile, loadFoodEntries, calcBMR, calcTDEE,
 //                          surplusClass, getDailyFoodTotals, formatDate, escapeHtml, renderNum,
 //                          isMobile, editDay, deleteDay
@@ -27,7 +28,7 @@ function renderFoodCards() {
     const totals = getDailyFoodTotals(date, entries);
     html += `<div class="cards-day-header">
       <span>${formatDate(date)}</span>
-      <span class="cards-day-total">${renderNum(totals.calLow, 0)}–${renderNum(totals.calHigh, 0)} cal</span>
+      <span class="cards-day-total">${Macros.formatMacro(totals.macro("calories"), fmt)} cal</span>
     </div>`;
     for (const e of groups[date]) {
       const calStr = Macros.formatMacro(Macros.getMacro(e, "calories"), fmt);
@@ -39,7 +40,7 @@ function renderFoodCards() {
       html += `<div class="food-card" data-id="${e.id}">
         <div class="food-card-main">
           <div class="food-card-name">${escapeHtml(e.food)}</div>
-          <div class="food-card-cal">${calStr} cal ${badge}</div>
+          <div class="food-card-cal">${calStr} cal${badge ? " " + badge : ""}</div>
         </div>
         <div class="food-card-sub">${formatTime(e.time)} · ${e.qty} ${escapeHtml(e.unit)}</div>
         ${rows}

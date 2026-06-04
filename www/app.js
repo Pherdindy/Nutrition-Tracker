@@ -519,11 +519,12 @@ function renderFoodTable() {
   });
   const groups = {};
   entries.forEach((e) => { (groups[e.date] ||= []).push(e); });
+  const allEntries = loadFoodEntries();
   let html = "";
   const sortedDates = Object.keys(groups).sort((a, b) => (a < b ? 1 : -1));
   for (const date of sortedDates) {
     const items = groups[date];
-    const totals = getDailyFoodTotals(date, loadFoodEntries());
+    const totals = getDailyFoodTotals(date, allEntries);
     html += `<tr class="date-group-row"><td colspan="5">${formatDate(date)} - ${items.length} items</td>`
       + enabled.map((id) => `<td class="num">${Macros.formatMacro(totals.macro(id), fmt)}</td>`).join("")
       + `<td></td></tr>`;
