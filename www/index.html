@@ -23,6 +23,7 @@
       <div class="toolbar">
         <button id="add-food-btn" class="btn btn-primary">+ Add Food</button>
         <button id="batch-add-btn" class="btn btn-secondary">+ Batch Add</button>
+        <button id="photo-add-btn" class="btn btn-secondary">📷 Snap</button>
         <div class="filter-group">
           <label for="food-date-filter">Filter by date:</label>
           <input type="date" id="food-date-filter">
@@ -37,6 +38,7 @@
       </div>
       <div id="food-cards" class="cards-list mobile-only"></div>
       <button id="food-fab" class="fab mobile-only" aria-label="Add food">&#43;</button>
+      <button id="photo-fab" class="fab fab-secondary mobile-only" aria-label="Snap a photo">📷</button>
     </section>
 
     <!-- CALORIE TRACKER TAB -->
@@ -287,9 +289,29 @@
         </div>
       </div>
     </div>
+    <!-- PHOTO MODAL -->
+    <div id="photo-modal" class="modal hidden">
+      <div class="modal-overlay"></div>
+      <div class="modal-content">
+        <h2>Snap to Log</h2>
+        <p id="photo-status" class="estimate-status"></p>
+        <div id="photo-items"></div>
+        <div id="photo-correct" class="hidden">
+          <label for="photo-correct-text">Correction</label>
+          <input type="text" id="photo-correct-text" placeholder="e.g. That's not bean soup — it's a sloppy joe with fries" autocomplete="off">
+          <button type="button" id="photo-correct-submit" class="btn btn-primary btn-sm">Re-estimate</button>
+        </div>
+        <div class="modal-actions">
+          <button type="button" class="btn btn-secondary" id="photo-cancel">Cancel</button>
+          <button type="button" class="btn btn-secondary" id="photo-correct-toggle">Correct</button>
+          <button type="button" class="btn btn-primary" id="photo-confirm">Confirm all</button>
+        </div>
+      </div>
+    </div>
   </div>
   <script src="vendor/supabase.min.js"></script>
   <script src="macros.js"></script>
+  <script src="photo.js"></script>
   <script src="app.js"></script>
   <script src="assessment-view.js"></script>
   <script src="mobile-render.js"></script>

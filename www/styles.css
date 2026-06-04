@@ -1737,3 +1737,9 @@ body.loading::after {
 .est-pending { color: var(--text-dim); animation: est-pulse 1.2s infinite; }
 .est-error { background:#7a2b2b; color:#fff; border:none; cursor:pointer; }
 @keyframes est-pulse { 50% { opacity:.4; } }
+
+.photo-item { padding: 8px 0; border-bottom: 1px solid rgba(255,255,255,.08); }
+.photo-item-food { display: block; font-weight: 600; width: 100%; margin-bottom: 4px; }
+.photo-item-portion { display: block; width: 100%; font-size: .85rem; color: var(--text-dim); margin-bottom: 4px; }
+.photo-item-macros { font-size: .8rem; color: var(--text-dim); }
+.fab-secondary { right: 80px; }

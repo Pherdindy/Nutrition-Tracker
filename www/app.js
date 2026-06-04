@@ -970,7 +970,10 @@ function saveProfileForm(e) {
 function escapeHtml(str) {
   const div = document.createElement("div");
   div.textContent = str;
-  return div.innerHTML;
+  // Also escape quotes so the result is safe inside double/single-quoted HTML attributes
+  // (textContent→innerHTML escapes &,<,> but not quotes). Entities decode identically in
+  // both attribute and text contexts, so this is safe for all existing callers.
+  return div.innerHTML.replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 }
 
 // ============================================================
@@ -1079,6 +1082,25 @@ const PROVIDERS = [
       const data = await res.json();
       return parseAIResponse(extractOpenAIContent(data), ids);
     },
+    callVision: async (apiKey, model, b64, mime, systemPrompt, userText) => {
+      const res = await fetch("https://api.openai.com/v1/chat/completions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+        body: JSON.stringify({
+          model,
+          messages: [
+            { role: "system", content: systemPrompt },
+            { role: "user", content: [
+              { type: "text", text: userText },
+              { type: "image_url", image_url: { url: `data:${mime};base64,${b64}` } },
+            ] },
+          ],
+          ...openaiModelParams(model, 1500),
+        }),
+      });
+      if (!res.ok) { const err = await res.json().catch(() => ({})); throw new Error(err.error?.message || `OpenAI API error ${res.status}`); }
+      return extractOpenAIContent(await res.json());
+    },
   },
   {
     id: "anthropic",
@@ -1144,6 +1166,26 @@ const PROVIDERS = [
       }
       const data = await res.json();
       return parseAIResponse(data.content[0].text, ids);
+    },
+    callVision: async (apiKey, model, b64, mime, systemPrompt, userText) => {
+      const res = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01", "anthropic-dangerous-direct-browser-access": "true" },
+        body: JSON.stringify({
+          model, max_tokens: 1500,
+          messages: [ { role: "user", content: [
+            { type: "text", text: userText },
+            { type: "image", source: { type: "base64", media_type: mime, data: b64 } },
+          ] } ],
+          system: systemPrompt, temperature: 0,
+        }),
+      });
+      if (!res.ok) { const err = await res.json().catch(() => ({})); throw new Error(err.error?.message || `Claude API error ${res.status}`); }
+      const data = await res.json();
+      if (data.stop_reason === "max_tokens") throw new Error("Response truncated (token limit) — try a simpler photo");
+      const block = data.content && data.content[0];
+      if (!block || block.type !== "text") throw new Error("Empty or non-text response from Claude");
+      return block.text;
     },
   },
 ];
@@ -1270,6 +1312,12 @@ function getValueFormat() { return getSetting("value_format", "single") === "ran
 function setValueFormat(fmt) { setSetting("value_format", fmt === "range" ? "range" : "single"); }
 function getEstimationMode() { return getSetting("estimation_mode", "reconcile") === "single" ? "single" : "reconcile"; }
 function setEstimationMode(mode) { setSetting("estimation_mode", mode === "single" ? "single" : "reconcile"); }
+function getVisionProvider() {
+  const pref = getSetting("vision_provider", "");
+  const withKeys = PROVIDERS.filter((p) => getProviderSettings(p.id).apiKey.length > 0);
+  return withKeys.find((p) => p.id === pref) || withKeys[0] || null;
+}
+function setVisionProvider(id) { setSetting("vision_provider", id); }
 
 // --- Macro-aware estimation engine ---
 
@@ -1309,6 +1357,112 @@ async function estimateEntry(entry, ids) {
     flat = Macros.averageEstimates(prev.map((r) => r.data), ids);
   }
   return Macros.parseMacros(flat, ids); // {id:{low,high}}
+}
+
+async function estimatePhoto(image, history) {
+  const provider = getVisionProvider();
+  if (!provider) throw new Error("no-api-key");
+  const ids = getEnabledMacros();
+  const settings = getProviderSettings(provider.id);
+  const text = await provider.callVision(
+    settings.apiKey, settings.primaryModel,
+    image.base64, image.mimeType,
+    PhotoEstimate.buildVisionSystemPrompt(ids),
+    PhotoEstimate.buildVisionUserText(history),
+  );
+  return PhotoEstimate.parseVisionResponse(text, ids);
+}
+
+async function capturePhoto() {
+  if (!(window.Capacitor && Capacitor.Plugins && Capacitor.Plugins.Camera)) {
+    alert("Camera is only available in the installed app.");
+    return null;
+  }
+  try {
+    // TODO: getPhoto is deprecated in @capacitor/camera v8; migrate to pickImages/pickMedia when upgrading to v9.
+    const photo = await Capacitor.Plugins.Camera.getPhoto({
+      quality: 70, resultType: "base64", source: "PROMPT", width: 1024, correctOrientation: true,
+    });
+    if (!photo || !photo.base64String) return null;
+    return { base64: photo.base64String, mimeType: `image/${photo.format || "jpeg"}` };
+  } catch (e) {
+    return null; // user cancelled or denied permission — no-op
+  }
+}
+
+// --- Photo capture modal ---
+
+let _photoImage = null, _photoHistory = null, _photoItems = [];
+
+function setPhotoStatus(msg, isErr) {
+  const el = document.getElementById("photo-status");
+  if (el) { el.textContent = msg || ""; el.classList.toggle("error", !!isErr); }
+}
+function openPhotoModal() {
+  _photoItems = [];
+  document.getElementById("photo-items").innerHTML = "";
+  document.getElementById("photo-correct").classList.add("hidden");
+  document.getElementById("photo-correct-text").value = "";
+  document.getElementById("photo-confirm").disabled = true;
+  setPhotoStatus("");
+  document.getElementById("photo-modal").classList.remove("hidden");
+}
+function closePhotoModal() {
+  _photoImage = null; _photoHistory = null; _photoItems = [];
+  document.getElementById("photo-modal").classList.add("hidden");
+}
+function renderPhotoItems() {
+  const fmt = getValueFormat();
+  const host = document.getElementById("photo-items");
+  if (!_photoItems.length) { host.innerHTML = `<p class="cards-empty">No foods detected. Add a correction or cancel.</p>`; document.getElementById("photo-confirm").disabled = true; return; }
+  host.innerHTML = _photoItems.map((it, i) => `
+    <div class="photo-item" data-idx="${i}">
+      <input class="photo-item-food" data-idx="${i}" value="${escapeHtml(it.food)}">
+      <input class="photo-item-portion" data-idx="${i}" value="${escapeHtml(it.portion)}">
+      <div class="photo-item-macros">${getEnabledMacros().map((id) => `${escapeHtml(Macros.byId(id).label)} ${Macros.formatMacro(Macros.getMacro(it, id), fmt)}`).join(" · ")}</div>
+    </div>`).join("");
+  document.getElementById("photo-confirm").disabled = false;
+  host.querySelectorAll(".photo-item-food").forEach((el) => el.addEventListener("input", (e) => { _photoItems[+e.target.dataset.idx].food = e.target.value; }));
+  host.querySelectorAll(".photo-item-portion").forEach((el) => el.addEventListener("input", (e) => { _photoItems[+e.target.dataset.idx].portion = e.target.value; }));
+}
+async function runPhotoEstimate() {
+  setPhotoStatus("Reading photo…");
+  document.getElementById("photo-confirm").disabled = true;
+  document.getElementById("photo-correct-submit").disabled = true;
+  try {
+    const { items } = await estimatePhoto(_photoImage, _photoHistory);
+    // _photoItems is fully replaced by each estimate; inline edits made before a
+    // Correct round-trip are intentionally discarded (the AI re-reads the photo).
+    _photoItems = items;
+    setPhotoStatus(items.length ? "" : "No foods detected.");
+    renderPhotoItems();
+  } catch (e) {
+    setPhotoStatus(e.message === "no-api-key" ? "No vision provider key — add one in Targets." : "Couldn't read that photo — try again or add manually.", true);
+  } finally {
+    document.getElementById("photo-correct-submit").disabled = false;
+  }
+}
+async function startPhotoCapture() {
+  if (!document.getElementById("photo-modal").classList.contains("hidden")) return; // already open
+  if (!getVisionProvider()) { alert("Add an AI provider API key in Targets to use photo capture."); return; }
+  const image = await capturePhoto();
+  if (!image) return;
+  _photoImage = image; _photoHistory = null;
+  openPhotoModal();
+  await runPhotoEstimate();
+}
+function confirmPhotoItems() {
+  document.getElementById("photo-confirm").disabled = true;
+  const entries = loadFoodEntries();
+  const maxId = entries.length ? Math.max(...entries.map((e) => e.id)) : 0;
+  const now = new Date();
+  const date = now.toISOString().slice(0, 10), time = now.toTimeString().slice(0, 5);
+  const created = PhotoEstimate.itemsToEntries(_photoItems, date, time, maxId + 1);
+  if (!created.length) return;
+  saveFoodEntries([...entries, ...created]);
+  ensureDayExists(date);
+  closePhotoModal();
+  renderFoodTable(); renderCalorieTracker();
 }
 
 // --- Settings UI ---
@@ -1407,6 +1561,13 @@ function renderMacroSettings() {
   html += `<div class="form-row"><label>Estimation</label><select id="set-estimation-mode">
     <option value="reconcile" ${mode === "reconcile" ? "selected" : ""}>Dual-AI cross-check (accurate)</option>
     <option value="single" ${mode === "single" ? "selected" : ""}>Single fast call</option></select></div>`;
+  const visionId = (getVisionProvider() || {}).id || "";
+  html += `<div class="form-row"><label>Photo (vision) provider</label><select id="set-vision-provider">`;
+  html += PROVIDERS.map((p) => {
+    const hasKey = getProviderSettings(p.id).apiKey.length > 0;
+    return `<option value="${escapeHtml(p.id)}" ${p.id === visionId ? "selected" : ""}>${escapeHtml(p.name)}${hasKey ? "" : " (no key)"}</option>`;
+  }).join("");
+  html += `</select></div>`;
   html += "</div>";
   c.innerHTML = html;
 
@@ -1417,6 +1578,8 @@ function renderMacroSettings() {
   }));
   c.querySelector("#set-value-format").addEventListener("change", (e) => { setValueFormat(e.target.value); renderFoodTable(); });
   c.querySelector("#set-estimation-mode").addEventListener("change", (e) => setEstimationMode(e.target.value));
+  const vp = c.querySelector("#set-vision-provider");
+  if (vp) vp.addEventListener("change", (e) => setVisionProvider(e.target.value));
 }
 
 window.saveProviderKeyUI = function (providerId) {
@@ -3145,6 +3308,22 @@ document.addEventListener("DOMContentLoaded", async () => {
   document.getElementById("batch-save").addEventListener("click", saveBatchFoods);
   document.getElementById("batch-cancel").addEventListener("click", closeBatchModal);
   document.querySelector("#batch-modal .modal-overlay").addEventListener("click", closeBatchModal);
+
+  // Photo capture modal
+  document.getElementById("photo-add-btn")?.addEventListener("click", startPhotoCapture);
+  document.getElementById("photo-fab")?.addEventListener("click", startPhotoCapture);
+  document.getElementById("photo-cancel").addEventListener("click", closePhotoModal);
+  document.querySelector("#photo-modal .modal-overlay").addEventListener("click", closePhotoModal);
+  document.getElementById("photo-confirm").addEventListener("click", confirmPhotoItems);
+  document.getElementById("photo-correct-toggle").addEventListener("click", () => document.getElementById("photo-correct").classList.toggle("hidden"));
+  document.getElementById("photo-correct-submit").addEventListener("click", () => {
+    const t = document.getElementById("photo-correct-text").value.trim();
+    if (!t) return;
+    _photoHistory = { priorItems: _photoItems, correction: t };
+    document.getElementById("photo-correct-text").value = "";
+    document.getElementById("photo-correct").classList.add("hidden");
+    runPhotoEstimate();
+  });
 
   // Diet Assessment
   document.getElementById("run-assessment-btn").addEventListener("click", runDietAssessment);
