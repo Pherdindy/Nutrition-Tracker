@@ -721,25 +721,10 @@ function closeFoodModal() {
 function ensureDayExists(date) {
   const days = loadDayEntries();
   if (days.some((d) => d.date === date)) return;
-
-  // Copy defaults from most recent existing day, or use fallback defaults
   const sorted = [...days].sort((a, b) => (a.date < b.date ? 1 : -1));
   const prev = sorted[0];
-  const profile = loadProfile();
-
   const maxId = days.length ? Math.max(...days.map((d) => d.id)) : 0;
-  const newDay = {
-    id: maxId + 1,
-    date,
-    age: prev ? prev.age : 32,
-    weight: prev ? prev.weight : 168,
-    activity: prev ? prev.activity : ACTIVITY_TYPES[0].label,
-    deficit: prev ? prev.deficit : 550,
-    proteinTargetLow: prev ? prev.proteinTargetLow : profile.proteinLow,
-    proteinTargetHigh: prev ? prev.proteinTargetHigh : profile.proteinHigh,
-  };
-
-  days.push(newDay);
+  days.push({ id: maxId + 1, date, weight: prev ? prev.weight : 168, activity: prev ? prev.activity : ACTIVITY_TYPES[0].label });
   saveDayEntries(days);
 }
 
@@ -878,38 +863,12 @@ function populateActivitySelect() {
 
 function openDayModal(entry) {
   const modal = document.getElementById("day-modal");
-  const title = document.getElementById("day-modal-title");
-  const profile = loadProfile();
-
+  document.getElementById("day-modal-title").textContent = "Edit Day";
   populateActivitySelect();
-
-  if (entry) {
-    title.textContent = "Edit Day";
-    document.getElementById("day-id").value = entry.id;
-    document.getElementById("day-date").value = entry.date;
-    document.getElementById("day-age").value = entry.age;
-    document.getElementById("day-weight").value = entry.weight;
-    document.getElementById("day-activity").value = entry.activity;
-    document.getElementById("day-deficit").value = entry.deficit;
-    document.getElementById("day-protein-target-low").value = entry.proteinTargetLow;
-    document.getElementById("day-protein-target-high").value = entry.proteinTargetHigh;
-  } else {
-    title.textContent = "Add Day";
-    document.getElementById("day-form").reset();
-    document.getElementById("day-id").value = "";
-    document.getElementById("day-date").value = new Date().toISOString().slice(0, 10);
-    document.getElementById("day-deficit").value = 550;
-    document.getElementById("day-protein-target-low").value = profile.proteinLow;
-    document.getElementById("day-protein-target-high").value = profile.proteinHigh;
-    // Default age/weight from last entry
-    const days = loadDayEntries();
-    if (days.length) {
-      days.sort((a, b) => (a.date < b.date ? 1 : -1));
-      document.getElementById("day-age").value = days[0].age;
-      document.getElementById("day-weight").value = days[0].weight;
-    }
-  }
-
+  document.getElementById("day-id").value = entry.id;
+  document.getElementById("day-date").value = entry.date;
+  document.getElementById("day-weight").value = entry.weight;
+  document.getElementById("day-activity").value = entry.activity;
   modal.classList.remove("hidden");
 }
 
@@ -921,33 +880,9 @@ function saveDay(e) {
   e.preventDefault();
   const entries = loadDayEntries();
   const id = document.getElementById("day-id").value;
-
-  const entry = {
-    date: document.getElementById("day-date").value,
-    age: parseInt(document.getElementById("day-age").value),
-    weight: parseFloat(document.getElementById("day-weight").value),
-    activity: document.getElementById("day-activity").value,
-    deficit: parseFloat(document.getElementById("day-deficit").value),
-    proteinTargetLow: parseFloat(document.getElementById("day-protein-target-low").value),
-    proteinTargetHigh: parseFloat(document.getElementById("day-protein-target-high").value),
-  };
-
-  if (id) {
-    const idx = entries.findIndex((e) => e.id === parseInt(id));
-    if (idx !== -1) {
-      entries[idx] = { ...entries[idx], ...entry };
-    }
-  } else {
-    // Check for duplicate date
-    if (entries.some((e) => e.date === entry.date)) {
-      alert("A day entry for this date already exists. Please edit the existing entry instead.");
-      return;
-    }
-    const maxId = entries.length ? Math.max(...entries.map((e) => e.id)) : 0;
-    entry.id = maxId + 1;
-    entries.push(entry);
-  }
-
+  const idx = entries.findIndex((x) => x.id === parseInt(id));
+  if (idx === -1) { console.warn("saveDay: day not found", id); return; }
+  entries[idx] = { ...entries[idx], weight: parseFloat(document.getElementById("day-weight").value), activity: document.getElementById("day-activity").value };
   saveDayEntries(entries);
   closeDayModal();
   renderCalorieTracker();
@@ -3295,7 +3230,6 @@ document.addEventListener("DOMContentLoaded", async () => {
   document.getElementById("food-form").addEventListener("submit", saveFood);
 
   // Day modal
-  document.getElementById("add-day-btn").addEventListener("click", () => openDayModal(null));
   document.getElementById("day-cancel").addEventListener("click", closeDayModal);
   document.querySelector("#day-modal .modal-overlay").addEventListener("click", closeDayModal);
   document.getElementById("day-form").addEventListener("submit", saveDay);
