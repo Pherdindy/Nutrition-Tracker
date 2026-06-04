@@ -502,71 +502,60 @@ function renderNum(val, decimals = 0) {
 
 function renderFoodTable() {
   const tbody = document.querySelector("#food-eaten-table tbody");
+  const enabled = getEnabledMacros();
+  const fmt = getValueFormat();
+  const head = document.getElementById("food-eaten-head");
+  if (head) {
+    head.innerHTML = `<tr><th>Date</th><th>Time</th><th>Food</th><th>Qty</th><th>Unit</th>`
+      + enabled.map((id) => `<th class="num">${escapeHtml(Macros.byId(id).label)}</th>`).join("")
+      + `<th>Actions</th></tr>`;
+  }
   const filterDate = document.getElementById("food-date-filter").value;
   let entries = loadFoodEntries();
-
-  if (filterDate) {
-    entries = entries.filter((f) => f.date === filterDate);
-  }
-
-  // Sort by date desc, then time
+  if (filterDate) entries = entries.filter((f) => f.date === filterDate);
   entries.sort((a, b) => {
     if (a.date !== b.date) return a.date < b.date ? 1 : -1;
     return a.time < b.time ? -1 : 1;
   });
-
-  // Group by date
   const groups = {};
-  entries.forEach((e) => {
-    if (!groups[e.date]) groups[e.date] = [];
-    groups[e.date].push(e);
-  });
-
+  entries.forEach((e) => { (groups[e.date] ||= []).push(e); });
   let html = "";
   const sortedDates = Object.keys(groups).sort((a, b) => (a < b ? 1 : -1));
-
   for (const date of sortedDates) {
     const items = groups[date];
-    // Date group header
     const totals = getDailyFoodTotals(date, loadFoodEntries());
-    html += `<tr class="date-group-row">
-      <td colspan="5">${formatDate(date)} - ${items.length} items</td>
-      <td class="num">${renderNum(totals.calLow, 1)}</td>
-      <td class="num">${renderNum(totals.calHigh, 1)}</td>
-      <td class="num">${renderNum(totals.proLow, 1)}</td>
-      <td class="num">${renderNum(totals.proHigh, 1)}</td>
-      <td></td>
-    </tr>`;
-
+    html += `<tr class="date-group-row"><td colspan="5">${formatDate(date)} - ${items.length} items</td>`
+      + enabled.map((id) => `<td class="num">${Macros.formatMacro(totals.macro(id), fmt)}</td>`).join("")
+      + `<td></td></tr>`;
     for (const entry of items) {
       html += `<tr>
         <td>${formatDate(entry.date)}</td>
         <td>${formatTime(entry.time)}</td>
         <td>${escapeHtml(entry.food)}</td>
         <td class="num">${entry.qty}</td>
-        <td>${escapeHtml(entry.unit)}</td>
-        <td class="num">${renderNum(entry.calLow, 2)}</td>
-        <td class="num">${renderNum(entry.calHigh, 2)}</td>
-        <td class="num">${renderNum(entry.proLow, 2)}</td>
-        <td class="num">${renderNum(entry.proHigh, 2)}</td>
-        <td>
-          <div class="actions">
-            ${entry.aiThoughtProcess ? `<button class="btn-icon thought-btn" onclick="viewThoughtProcess(${entry.id})" title="View AI thought process">&#129504;</button>` : ''}
-            <button class="btn-icon" onclick="editFood(${entry.id})" title="Edit">&#9998;</button>
-            <button class="btn-icon delete" onclick="deleteFood(${entry.id})" title="Delete">&#10005;</button>
-          </div>
-        </td>
+        <td>${escapeHtml(entry.unit)}</td>`
+        + enabled.map((id) => `<td class="num">${Macros.formatMacro(Macros.getMacro(entry, id), fmt)}</td>`).join("")
+        + `<td><div class="actions">${statusBadge(entry)}<button class="btn-icon" onclick="editFood(${entry.id})" title="Edit">&#9998;</button><button class="btn-icon delete" onclick="deleteFood(${entry.id})" title="Delete">&#10005;</button></div></td>
       </tr>`;
     }
   }
-
   if (!entries.length) {
-    html = `<tr><td colspan="10" style="text-align:center;color:var(--text-dim);padding:32px;">No food entries yet. Click "+ Add Food" to start tracking.</td></tr>`;
+    html = `<tr><td colspan="${5 + enabled.length + 1}" style="text-align:center;color:var(--text-dim);padding:32px;">No food entries yet. Click "+ Add Food" to start tracking.</td></tr>`;
   }
-
   tbody.innerHTML = html;
   if (typeof renderFoodCards === "function") renderFoodCards();
 }
+
+function statusBadge(entry) {
+  if (entry.estimateStatus === "pending") return `<span class="est-badge est-pending" title="Estimating…">…</span>`;
+  if (entry.estimateStatus === "error") return `<button class="btn-icon est-badge est-error" onclick="retryEstimate(${entry.id})" title="Estimate failed — tap to retry">!</button>`;
+  return "";
+}
+window.retryEstimate = function (id) {
+  const entries = loadFoodEntries();
+  const e = entries.find((x) => x.id === id);
+  if (e) { e.estimateStatus = "pending"; saveFoodEntries(entries); renderFoodTable(); renderCalorieTracker(); enqueueEstimate(id); }
+};
 
 // ---- Calorie Tracker Table ----
 
