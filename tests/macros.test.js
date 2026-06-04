@@ -47,3 +47,22 @@ test("formatMacro: single shows midpoint, range shows low-high (collapsed when e
   assert.equal(M.formatMacro({ low: 50, high: 50 }, "range"), "50");
   assert.equal(M.formatMacro(null, "single"), "—");
 });
+
+test("needsMigration true when legacy fields present and no macros", () => {
+  assert.equal(M.needsMigration({ calLow: 1, calHigh: 2 }), true);
+  assert.equal(M.needsMigration({ macros: {} }), false);
+});
+
+test("migrateEntry maps legacy cal/protein into macros and drops legacy fields + aiThoughtProcess", () => {
+  const e = { id: 1, food: "x", calLow: 100, calHigh: 120, proLow: 5, proHigh: 7, aiThoughtProcess: { foo: 1 } };
+  const out = M.migrateEntry(e);
+  assert.deepEqual(out.macros.calories, { low: 100, high: 120 });
+  assert.deepEqual(out.macros.protein, { low: 5, high: 7 });
+  assert.equal("calLow" in out, false);
+  assert.equal("aiThoughtProcess" in out, false);
+});
+
+test("migrateEntry leaves already-migrated entries untouched", () => {
+  const e = { id: 2, macros: { calories: { low: 1, high: 1 } } };
+  assert.deepEqual(M.migrateEntry(e), e);
+});
