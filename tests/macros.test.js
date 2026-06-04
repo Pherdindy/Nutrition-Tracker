@@ -81,3 +81,35 @@ test("sumMacro totals low/high across entries", () => {
   ];
   assert.deepEqual(M.sumMacro(entries, "carbs"), { low: 15, high: 17 });
 });
+
+test("macroFields returns flat lower/upper field names", () => {
+  assert.deepEqual(M.macroFields(["calories", "carbs"]),
+    ["calories_lower", "calories_upper", "carbs_lower", "carbs_upper"]);
+});
+
+test("parseMacros builds {low,high} map, tolerates missing keys", () => {
+  const parsed = { calories_lower: 100, calories_upper: 120, carbs_lower: 30, carbs_upper: 33 };
+  assert.deepEqual(M.parseMacros(parsed, ["calories", "carbs", "fat"]), {
+    calories: { low: 100, high: 120 },
+    carbs: { low: 30, high: 33 },
+  });
+});
+
+test("spread is worst per-field percent across estimates", () => {
+  const a = { calories_lower: 100, calories_upper: 100 };
+  const b = { calories_lower: 120, calories_upper: 120 };
+  assert.ok(Math.abs(M.spread([a, b], ["calories"]) - 18.18) < 0.1);
+});
+
+test("averageEstimates averages each field to 1 decimal", () => {
+  const a = { calories_lower: 100, calories_upper: 110 };
+  const b = { calories_lower: 120, calories_upper: 130 };
+  assert.deepEqual(M.averageEstimates([a, b], ["calories"]),
+    { calories_lower: 110, calories_upper: 120 });
+});
+
+test("promptFields renders JSON lines for requested macros", () => {
+  const s = M.promptFields(["calories", "sodium"]);
+  assert.match(s, /"calories_lower"/);
+  assert.match(s, /"sodium_upper"/);
+});
