@@ -5,7 +5,7 @@
   if (typeof module === "object" && module.exports) module.exports = api;
   root.Macros = api;
 })(typeof self !== "undefined" ? self : this, function () {
-  const CATALOG = [
+  const CATALOG = Object.freeze([
     { id: "calories", label: "Calories", unit: "kcal", locked: true, defaultOn: true },
     { id: "protein", label: "Protein", unit: "g", locked: true, defaultOn: true },
     { id: "carbs", label: "Carbs", unit: "g", locked: false, defaultOn: true },
@@ -14,7 +14,7 @@
     { id: "sugar", label: "Sugar", unit: "g", locked: false, defaultOn: false },
     { id: "saturatedFat", label: "Saturated fat", unit: "g", locked: false, defaultOn: false },
     { id: "sodium", label: "Sodium", unit: "mg", locked: false, defaultOn: false },
-  ];
+  ].map(Object.freeze));
 
   const byId = (id) => CATALOG.find((m) => m.id === id);
   const defaultEnabled = () => CATALOG.filter((m) => m.defaultOn).map((m) => m.id);
@@ -49,8 +49,9 @@
   function formatMacro(v, format) {
     if (!v || v.low == null || v.high == null) return "—";
     if (format === "range") {
-      if (Number(v.low) === Number(v.high)) return fmtNum(v.low);
-      return fmtNum(v.low) + "–" + fmtNum(v.high);
+      const lo = fmtNum(v.low), hi = fmtNum(v.high);
+      if (lo === hi) return lo;
+      return lo + "–" + hi;
     }
     return fmtNum(midpoint(v)); // single (default)
   }
@@ -112,6 +113,7 @@
   }
 
   function averageEstimates(results, ids) {
+    if (!results || !results.length) return {};
     const n = results.length, out = {};
     for (const field of macroFields(ids)) {
       out[field] = round1(results.reduce((s, r) => s + (Number(r[field]) || 0), 0) / n);

@@ -113,3 +113,17 @@ test("promptFields renders JSON lines for requested macros", () => {
   assert.match(s, /"calories_lower"/);
   assert.match(s, /"sodium_upper"/);
 });
+
+test("averageEstimates returns {} for empty results (no NaN)", () => {
+  assert.deepEqual(M.averageEstimates([], ["calories"]), {});
+});
+test("formatMacro range collapses when equal after rounding", () => {
+  assert.equal(M.formatMacro({ low: 10.05, high: 10.1 }, "range"), "10.1");
+});
+test("resolveEnabled([]) returns only locked macros", () => {
+  assert.deepEqual(M.resolveEnabled([]), ["calories", "protein"]);
+});
+test("promptFields exact format for a single macro", () => {
+  assert.equal(M.promptFields(["calories"]),
+    '  "calories_lower": <number>,\n  "calories_upper": <number>');
+});
