@@ -970,7 +970,10 @@ function saveProfileForm(e) {
 function escapeHtml(str) {
   const div = document.createElement("div");
   div.textContent = str;
-  return div.innerHTML;
+  // Also escape quotes so the result is safe inside double/single-quoted HTML attributes
+  // (textContent→innerHTML escapes &,<,> but not quotes). Entities decode identically in
+  // both attribute and text contexts, so this is safe for all existing callers.
+  return div.innerHTML.replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 }
 
 // ============================================================
