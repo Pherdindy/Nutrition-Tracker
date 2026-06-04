@@ -323,7 +323,7 @@ At the end of `www/styles.css`, add:
 ```css
 .bottom-nav {
   position: fixed; left: 0; right: 0; bottom: 0; z-index: 50;
-  display: flex; justify-content: space-around; align-items: stretch;
+  display: none; justify-content: space-around; align-items: stretch;  /* hidden by default; shown only in the mobile media query below */
   background: var(--surface, #16324f);
   border-top: 1px solid rgba(255,255,255,.12);
   padding: 4px 0; padding-bottom: env(safe-area-inset-bottom, 4px);
@@ -337,6 +337,7 @@ At the end of `www/styles.css`, add:
 .bottom-nav-item.active { color: #fff; }
 @media (max-width: 720px) {
   header .tabs { display: none; }   /* hide top tabs on mobile; bottom nav replaces them */
+  .bottom-nav { display: flex; }    /* show the bottom bar only on mobile (overrides base display:none) */
 }
 ```
 
