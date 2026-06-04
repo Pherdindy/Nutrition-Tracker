@@ -1213,6 +1213,32 @@ function saveSpreadThreshold(val) {
   });
 }
 
+function getSetting(key, fallback) {
+  if (_cache.settings[key] != null) return _cache.settings[key];
+  const ls = localStorage.getItem(`nt_${key}`);
+  return ls != null ? ls : fallback;
+}
+function setSetting(key, value) {
+  const v = String(value);
+  _cache.settings[key] = v;
+  localStorage.setItem(`nt_${key}`, v);
+  bgWrite(async () => {
+    const { error } = await sb.from("settings").upsert({ key, value: v });
+    if (error) throw error;
+  });
+}
+// Macro-tracking settings
+function getEnabledMacros() {
+  const raw = getSetting("macros_enabled", null);
+  try { return Macros.resolveEnabled(raw ? JSON.parse(raw) : null); }
+  catch { return Macros.defaultEnabled(); }
+}
+function setEnabledMacros(ids) { setSetting("macros_enabled", JSON.stringify(Macros.resolveEnabled(ids))); }
+function getValueFormat() { return getSetting("value_format", "single") === "range" ? "range" : "single"; }
+function setValueFormat(fmt) { setSetting("value_format", fmt === "range" ? "range" : "single"); }
+function getEstimationMode() { return getSetting("estimation_mode", "reconcile") === "single" ? "single" : "reconcile"; }
+function setEstimationMode(mode) { setSetting("estimation_mode", mode === "single" ? "single" : "reconcile"); }
+
 // --- Spread Calculation ---
 
 function calcSpread(results) {
