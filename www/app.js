@@ -1425,16 +1425,22 @@ function renderPhotoItems() {
 async function runPhotoEstimate() {
   setPhotoStatus("Reading photo…");
   document.getElementById("photo-confirm").disabled = true;
+  document.getElementById("photo-correct-submit").disabled = true;
   try {
     const { items } = await estimatePhoto(_photoImage, _photoHistory);
+    // _photoItems is fully replaced by each estimate; inline edits made before a
+    // Correct round-trip are intentionally discarded (the AI re-reads the photo).
     _photoItems = items;
     setPhotoStatus(items.length ? "" : "No foods detected.");
     renderPhotoItems();
   } catch (e) {
     setPhotoStatus(e.message === "no-api-key" ? "No vision provider key — add one in Targets." : "Couldn't read that photo — try again or add manually.", true);
+  } finally {
+    document.getElementById("photo-correct-submit").disabled = false;
   }
 }
 async function startPhotoCapture() {
+  if (!document.getElementById("photo-modal").classList.contains("hidden")) return; // already open
   if (!getVisionProvider()) { alert("Add an AI provider API key in Targets to use photo capture."); return; }
   const image = await capturePhoto();
   if (!image) return;
@@ -1443,6 +1449,7 @@ async function startPhotoCapture() {
   await runPhotoEstimate();
 }
 function confirmPhotoItems() {
+  document.getElementById("photo-confirm").disabled = true;
   const entries = loadFoodEntries();
   const maxId = entries.length ? Math.max(...entries.map((e) => e.id)) : 0;
   const now = new Date();
