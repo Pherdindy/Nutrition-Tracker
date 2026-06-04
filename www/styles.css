@@ -1703,3 +1703,28 @@ body.loading::after {
   #provider-settings, #validation-settings { border: 1px solid var(--border, #2e3345); border-radius: 10px; }
   #provider-settings > *:first-child, #validation-settings > *:first-child { padding: 12px; }
 }
+
+.score-card { padding: 16px; display: flex; flex-direction: column; gap: 12px; align-items: stretch; }
+.score-ring { width: 110px; height: 110px; border-radius: 50%; margin: 4px auto 0;
+  background: conic-gradient(#2bb673 calc(var(--pct) * 1%), #e6e8eb 0);
+  display: flex; align-items: center; justify-content: center; }
+.score-ring-inner { width: 84px; height: 84px; border-radius: 50%; background: var(--card-bg, #fff);
+  display: flex; flex-direction: column; align-items: center; justify-content: center; }
+.score-num { font-size: 28px; font-weight: 800; line-height: 1; }
+.score-den { font-size: 11px; color: var(--text-dim, #8b8fa3); }
+.score-verdict { text-align: center; font-weight: 700; }
+.score-chips { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; }
+.chip { padding: 5px 10px; border-radius: 20px; font-size: 12px; font-weight: 600; }
+.chip-ok { background: #d8f3e3; color: #1c7a4a; }
+.chip-warn { background: #fde8c8; color: #9a6212; }
+.chip-bad { background: #fbd9d9; color: #a32626; }
+.score-section-label { font-size: 12px; text-transform: uppercase; letter-spacing: .04em;
+  color: var(--text-dim, #8b8fa3); margin-top: 4px; }
+.score-actions { display: flex; flex-direction: column; gap: 8px; }
+.score-action { background: var(--card-bg, #fff); border-radius: 10px; padding: 11px 12px;
+  box-shadow: 0 1px 4px rgba(0,0,0,.08); }
+.score-drill { background: var(--card-bg, #fff); border-radius: 10px; box-shadow: 0 1px 4px rgba(0,0,0,.08); }
+.score-drill > summary { padding: 12px 14px; font-weight: 600; cursor: pointer; list-style: none; }
+.score-drill > summary::after { content: "▼"; float: right; color: var(--text-dim, #8b8fa3); font-size: 11px; }
+.score-drill[open] > summary::after { content: "▲"; }
+.score-drill-body { padding: 0 14px 14px; }

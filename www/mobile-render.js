@@ -104,3 +104,54 @@ function renderDayCards() {
   host.querySelectorAll("[data-del]").forEach((b) =>
     b.addEventListener("click", () => deleteDay(Number(b.dataset.del))));  // deleteDay confirms internally
 }
+
+// Renders the simplified mobile scorecard from the best available assessment data.
+// `data` is a single provider's assessment object (result.round2[0].data or round1[0].data).
+function renderAssessmentScorecard(data, fullResult) {
+  const container = document.getElementById("assessment-results");
+  if (!container || !data) return;
+  const AV = window.AssessmentView;
+
+  const score = Number(data.overall_score) || 0;
+  const pct = Math.max(0, Math.min(100, Math.round((score / 10) * 100)));
+  const chips = [
+    AV.calorieChip(data.calorie_assessment && data.calorie_assessment.status),
+    AV.proteinChip(data.protein_assessment && data.protein_assessment.status),
+    AV.varietyChip(data),
+  ];
+  const actions = AV.topActions(data, 3);
+
+  let html = `<div class="score-card">
+    <div class="score-ring" style="--pct:${pct}">
+      <div class="score-ring-inner"><span class="score-num">${score}</span><span class="score-den">/10</span></div>
+    </div>
+    <div class="score-verdict">${escapeHtml(AV.verdictLine(score))}</div>
+    <div class="score-chips">
+      ${chips.map((c) => `<span class="chip chip-${c.tone}">${escapeHtml(c.label)}</span>`).join("")}
+    </div>`;
+
+  if (actions.length) {
+    html += `<div class="score-section-label">Do this week</div>
+      <div class="score-actions">
+        ${actions.map((a) => `<div class="score-action">${escapeHtml(a.text)}</div>`).join("")}
+      </div>`;
+  }
+
+  // Progressive disclosure — reuse existing detailed renderers inside <details>.
+  html += `<details class="score-drill"><summary>Food groups</summary><div class="score-drill-body" id="drill-groups"></div></details>`;
+  html += `<details class="score-drill"><summary>Full grocery &amp; sourcing plan</summary><div class="score-drill-body" id="drill-plan"></div></details>`;
+  html += `<details class="score-drill"><summary>Why this score</summary><div class="score-drill-body">${escapeHtml(data.reasoning || "")}</div></details>`;
+  container.innerHTML = html;
+
+  // Populate drill-downs.
+  const groupsHost = document.getElementById("drill-groups");
+  if (groupsHost) {
+    groupsHost.innerHTML = Object.entries(data.food_groups || {})
+      .map(([k, v]) => `<div class="food-card-row"><span>${escapeHtml(k.replace(/_/g, " "))}</span><b>${escapeHtml((v && v.status) || "")}</b></div>`)
+      .join("");
+  }
+  const planHost = document.getElementById("drill-plan");
+  if (planHost && typeof renderActionPlan === "function") {
+    planHost.innerHTML = renderActionPlan(data);
+  }
+}

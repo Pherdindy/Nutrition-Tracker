@@ -3013,6 +3013,12 @@ function renderAgreementSummary(agreement, providerA, providerB) {
 function renderAssessmentResults(result) {
   const container = document.getElementById("assessment-results");
   if (!container) return;
+  if (isMobile()) {
+    const best = (result.round2 && result.round2[0] && result.round2[0].data)
+      || (result.round1 && result.round1[0] && result.round1[0].data)
+      || null;
+    if (best) { renderAssessmentScorecard(best, result); return; }
+  }
 
   let html = '';
 
@@ -3961,6 +3967,13 @@ document.addEventListener("DOMContentLoaded", async () => {
   // Render initial data preview and history
   renderAssessmentDataSummary(getAssessmentData("week"));
   renderAssessmentHistory();
+
+  onBreakpointChange(() => {
+    const last = loadAssessments()[0];
+    if (last && document.getElementById("assessment-results").children.length) {
+      renderAssessmentResults(last);
+    }
+  });
 
   // Auto-fill calories when selecting a previously used food, with proportional scaling
   function scaleFromMatch() {
