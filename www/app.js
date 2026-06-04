@@ -551,6 +551,7 @@ function renderFoodTable() {
   }
 
   tbody.innerHTML = html;
+  if (typeof renderFoodCards === "function") renderFoodCards();
 }
 
 // ---- Calorie Tracker Table ----
@@ -3877,6 +3878,8 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   // Food modal
   document.getElementById("add-food-btn").addEventListener("click", () => openFoodModal(null));
+  document.getElementById("food-fab").addEventListener("click", () => openFoodModal(null));
+  onBreakpointChange(renderFoodTable);
   document.getElementById("food-cancel").addEventListener("click", closeFoodModal);
   document.querySelector("#food-modal .modal-overlay").addEventListener("click", closeFoodModal);
   document.getElementById("food-form").addEventListener("submit", saveFood);

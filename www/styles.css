@@ -1644,3 +1644,32 @@ body.loading::after {
   header .tabs { display: none; }   /* hide top tabs on mobile; bottom nav replaces them */
   .bottom-nav { display: flex; }    /* show the bottom bar only on mobile (overrides base display:none) */
 }
+
+/* ============================================================
+   FOOD EATEN — MOBILE CARDS
+   ============================================================ */
+/* Base rules: no display property, so .mobile-only { display:none } wins on desktop */
+.cards-list { flex-direction: column; gap: 10px; padding: 12px; }
+.cards-day-header { display: flex; justify-content: space-between; align-items: baseline;
+  font-weight: 700; margin-top: 6px; color: var(--text, #1f2933); }
+.cards-day-total { font-size: 12px; color: var(--text-dim, #6b7480); }
+.food-card { position: relative; background: var(--card-bg, #fff); border-radius: 12px;
+  padding: 12px 40px 12px 14px; box-shadow: 0 1px 4px rgba(0,0,0,.10); cursor: pointer; }
+.food-card-main { display: flex; justify-content: space-between; gap: 8px; }
+.food-card-name { font-weight: 700; }
+.food-card-cal { font-weight: 600; white-space: nowrap; }
+.food-card-sub { color: var(--text-dim, #6b7480); font-size: 12px; margin: 2px 0 6px; }
+.food-card-row { display: flex; justify-content: space-between; font-size: 13px; }
+.card-menu-btn { position: absolute; top: 8px; right: 6px; background: none; border: none;
+  font-size: 20px; color: var(--text-dim, #6b7480); padding: 4px 8px; cursor: pointer; }
+.cards-empty { text-align: center; color: var(--text-dim, #6b7480); padding: 40px 16px; }
+/* .fab base: no display property — .mobile-only { display:none } keeps it hidden on desktop */
+.fab { position: fixed; right: 16px; bottom: 84px; z-index: 60; width: 56px; height: 56px;
+  border-radius: 50%; border: none; background: #2bb673; color: #fff; font-size: 28px;
+  box-shadow: 0 4px 12px rgba(0,0,0,.3); cursor: pointer; }
+
+/* Mobile: turn on display for cards-list and fab */
+@media (max-width: 720px) {
+  .cards-list { display: flex; }
+  .fab { display: block; }
+}
