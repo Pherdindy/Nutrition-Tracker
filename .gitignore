@@ -2,3 +2,14 @@
 nul
 Calorie and Activity Tracker.html
 .superpowers/
+
+# Node / Capacitor / Android build artifacts
+node_modules/
+android/app/build/
+android/build/
+android/.gradle/
+android/local.properties
+android/app/release/
+android/capacitor-cordova-android-plugins/
+*.keystore
+android/key.properties

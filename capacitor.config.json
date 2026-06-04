@@ -1,0 +1,15 @@
+{
+  "appId": "com.lazymacros.app",
+  "appName": "Lazy Macros",
+  "webDir": "www",
+  "server": {
+    "androidScheme": "https"
+  },
+  "plugins": {
+    "SplashScreen": {
+      "launchShowDuration": 800,
+      "backgroundColor": "#16324f",
+      "showSpinner": false
+    }
+  }
+}
