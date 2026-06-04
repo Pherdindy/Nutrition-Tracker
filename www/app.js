@@ -50,17 +50,21 @@ function foodJsToRow(e) {
 }
 
 function dayRowToJs(r) {
-  return { id: r.id, date: r.date, age: r.age, weight: Number(r.weight), activity: r.activity, deficit: Number(r.deficit), proteinTargetLow: Number(r.protein_target_low), proteinTargetHigh: Number(r.protein_target_high) };
+  return Targets.migrateDay({ id: r.id, date: r.date, weight: Number(r.weight), activity: r.activity });
 }
 function dayJsToRow(e) {
-  return { id: e.id, date: e.date, age: e.age, weight: e.weight, activity: e.activity, deficit: e.deficit, protein_target_low: e.proteinTargetLow, protein_target_high: e.proteinTargetHigh };
+  // Keep legacy day columns populated from the current global profile so old rows stay valid
+  // (no days-table schema change) and any reader that still expects them works. Reads ignore them.
+  const p = (typeof loadProfile === "function") ? loadProfile() : {};
+  return { id: e.id, date: e.date, weight: e.weight, activity: e.activity,
+    age: p.age != null ? p.age : 32, deficit: Targets.deficitForGoal(p.weightLossGoal),
+    protein_target_low: p.proteinLow != null ? p.proteinLow : 135, protein_target_high: p.proteinHigh != null ? p.proteinHigh : 150 };
 }
-
 function profileRowToJs(r) {
-  return { height: Number(r.height), proteinLow: Number(r.protein_low), proteinHigh: Number(r.protein_high) };
+  return { height: Number(r.height), age: r.age != null ? Number(r.age) : null, proteinLow: Number(r.protein_low), proteinHigh: Number(r.protein_high), weightLossGoal: r.weight_loss_goal || null };
 }
 function profileJsToRow(p) {
-  return { id: 1, height: p.height, protein_low: p.proteinLow, protein_high: p.proteinHigh };
+  return { id: 1, height: p.height, age: p.age, protein_low: p.proteinLow, protein_high: p.proteinHigh, weight_loss_goal: p.weightLossGoal };
 }
 
 // ---- bgWrite: fire-and-forget async write to Supabase ----
@@ -86,7 +90,7 @@ const WEIGHT_LOSS_GOALS = [
   { goal: "1.00 kg/week", daily: 1100, weekly: 7700 },
 ];
 
-const DEFAULT_PROFILE = { height: 170.1, proteinLow: 135, proteinHigh: 150 };
+const DEFAULT_PROFILE = { height: 170.1, age: 32, proteinLow: 135, proteinHigh: 150, weightLossGoal: "0.50 kg/week" };
 
 // ---- Data functions (synchronous reads from cache, write-through to Supabase) ----
 
@@ -104,6 +108,8 @@ function saveProfile(profile) {
     if (error) throw error;
   });
 }
+
+function getDeficit() { return Targets.deficitForGoal(loadProfile().weightLossGoal); }
 
 function loadFoodEntries() {
   if (_cache.ready && _cache.food) return _cache.food.map(Macros.migrateEntry);
