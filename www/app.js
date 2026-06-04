@@ -940,27 +940,26 @@ function escapeHtml(str) {
 // MULTI-AI PROVIDER INTEGRATION
 // ============================================================
 
-const SYSTEM_PROMPT_ESTIMATE = `You are a precise nutrition database assistant. You base estimates on USDA FoodData Central, nutrition labels, and established food composition databases. Be consistent and deterministic — the same food and quantity must always produce the same numbers.
+function buildSystemPromptEstimate(ids) {
+  return `You are a precise nutrition database assistant. You base estimates on USDA FoodData Central, nutrition labels, and established food composition databases. Be consistent and deterministic.
 
-You MUST respond with ONLY a JSON object (no markdown fences, no extra text) in this exact format:
+Respond with ONLY a JSON object (no markdown fences) in this exact format:
 {
-  "reasoning": "<your step-by-step reasoning: identify the food, cite the database/source you are referencing, show the per-unit values, then multiply by the quantity>",
-  "calories_lower": <number>,
-  "calories_upper": <number>,
-  "protein_lower": <number>,
-  "protein_upper": <number>
-}`;
+  "reasoning": "<step-by-step reasoning; not shown to the user>",
+${Macros.promptFields(ids)}
+}
+Units: calories in kcal, sodium in mg, all other macros in grams.`;
+}
+function buildSystemPromptReconcile(ids) {
+  return `You are a precise nutrition database assistant performing a reconciliation review. Two models disagreed. Analyze both, decide which is closer to database values, and return corrected values.
 
-const SYSTEM_PROMPT_RECONCILE = `You are a precise nutrition database assistant performing a reconciliation review. Two AI models estimated nutrition for the same food but disagreed. You must analyze both estimates, identify which is more accurate based on USDA FoodData Central and established databases, explain your reasoning, and provide corrected values.
-
-You MUST respond with ONLY a JSON object (no markdown fences, no extra text) in this exact format:
+Respond with ONLY a JSON object (no markdown fences) in this exact format:
 {
-  "reasoning": "<analyze each prior estimate, identify which is closer to database values and why, explain any corrections you are making>",
-  "calories_lower": <number>,
-  "calories_upper": <number>,
-  "protein_lower": <number>,
-  "protein_upper": <number>
-}`;
+  "reasoning": "<analysis; not shown to the user>",
+${Macros.promptFields(ids)}
+}
+Units: calories in kcal, sodium in mg, all other macros in grams.`;
+}
 
 // GPT-5+ and reasoning models use max_completion_tokens (includes thinking tokens) and don't support temperature
 function openaiModelParams(model, tokens) {
@@ -995,7 +994,7 @@ const PROVIDERS = [
     ],
     defaultPrimary: "gpt-5-mini",
     defaultSecondary: "gpt-5.2",
-    call: async (food, qty, unit, apiKey, model) => {
+    call: async (food, qty, unit, apiKey, model, ids) => {
       const prompt = buildEstimatePrompt(food, qty, unit);
       const res = await fetch("https://api.openai.com/v1/chat/completions", {
         method: "POST",
@@ -1006,7 +1005,7 @@ const PROVIDERS = [
         body: JSON.stringify({
           model,
           messages: [
-            { role: "system", content: SYSTEM_PROMPT_ESTIMATE },
+            { role: "system", content: buildSystemPromptEstimate(ids) },
             { role: "user", content: prompt },
           ],
           ...openaiModelParams(model, 500),
@@ -1017,10 +1016,10 @@ const PROVIDERS = [
         throw new Error(err.error?.message || `OpenAI API error ${res.status}`);
       }
       const data = await res.json();
-      return parseAIResponse(extractOpenAIContent(data));
+      return parseAIResponse(extractOpenAIContent(data), ids);
     },
-    callReconciliation: async (food, qty, unit, apiKey, model, round1Results) => {
-      const prompt = buildReconciliationPrompt(food, qty, unit, round1Results);
+    callReconciliation: async (food, qty, unit, apiKey, model, round1Results, ids) => {
+      const prompt = buildReconciliationPrompt(food, qty, unit, round1Results, ids);
       const res = await fetch("https://api.openai.com/v1/chat/completions", {
         method: "POST",
         headers: {
@@ -1030,7 +1029,7 @@ const PROVIDERS = [
         body: JSON.stringify({
           model,
           messages: [
-            { role: "system", content: SYSTEM_PROMPT_RECONCILE },
+            { role: "system", content: buildSystemPromptReconcile(ids) },
             { role: "user", content: prompt },
           ],
           ...openaiModelParams(model, 600),
@@ -1041,7 +1040,7 @@ const PROVIDERS = [
         throw new Error(err.error?.message || `OpenAI API error ${res.status}`);
       }
       const data = await res.json();
-      return parseAIResponse(extractOpenAIContent(data));
+      return parseAIResponse(extractOpenAIContent(data), ids);
     },
   },
   {
@@ -1055,7 +1054,7 @@ const PROVIDERS = [
     ],
     defaultPrimary: "claude-haiku-4-5-20251001",
     defaultSecondary: "claude-opus-4-6",
-    call: async (food, qty, unit, apiKey, model) => {
+    call: async (food, qty, unit, apiKey, model, ids) => {
       const prompt = buildEstimatePrompt(food, qty, unit);
       const res = await fetch("https://api.anthropic.com/v1/messages", {
         method: "POST",
@@ -1071,7 +1070,7 @@ const PROVIDERS = [
           messages: [
             { role: "user", content: prompt },
           ],
-          system: SYSTEM_PROMPT_ESTIMATE,
+          system: buildSystemPromptEstimate(ids),
           temperature: 0,
         }),
       });
@@ -1080,10 +1079,10 @@ const PROVIDERS = [
         throw new Error(err.error?.message || `Claude API error ${res.status}`);
       }
       const data = await res.json();
-      return parseAIResponse(data.content[0].text);
+      return parseAIResponse(data.content[0].text, ids);
     },
-    callReconciliation: async (food, qty, unit, apiKey, model, round1Results) => {
-      const prompt = buildReconciliationPrompt(food, qty, unit, round1Results);
+    callReconciliation: async (food, qty, unit, apiKey, model, round1Results, ids) => {
+      const prompt = buildReconciliationPrompt(food, qty, unit, round1Results, ids);
       const res = await fetch("https://api.anthropic.com/v1/messages", {
         method: "POST",
         headers: {
@@ -1098,7 +1097,7 @@ const PROVIDERS = [
           messages: [
             { role: "user", content: prompt },
           ],
-          system: SYSTEM_PROMPT_RECONCILE,
+          system: buildSystemPromptReconcile(ids),
           temperature: 0,
         }),
       });
@@ -1107,7 +1106,7 @@ const PROVIDERS = [
         throw new Error(err.error?.message || `Claude API error ${res.status}`);
       }
       const data = await res.json();
-      return parseAIResponse(data.content[0].text);
+      return parseAIResponse(data.content[0].text, ids);
     },
   },
 ];
@@ -1127,45 +1126,33 @@ Instructions:
 6. Show your reasoning step by step in the "reasoning" field`;
 }
 
-function buildReconciliationPrompt(food, qty, unit, round1Results) {
-  let estimateLines = round1Results
-    .map((r) => {
-      let line = `${r.providerName} estimated: calories ${r.data.calories_lower}-${r.data.calories_upper} kcal, protein ${r.data.protein_lower}-${r.data.protein_upper} g`;
-      if (r.data.reasoning) line += `\n  Reasoning: ${r.data.reasoning}`;
-      return line;
-    })
-    .join("\n\n");
-
-  return `Two AI models estimated the nutrition for this food but disagreed. Review both estimates and their reasoning, then provide the corrected final answer.
+function buildReconciliationPrompt(food, qty, unit, round1Results, ids) {
+  const estimateLines = round1Results.map((r) => {
+    const parts = ids.map((id) => {
+      const m = Macros.byId(id);
+      return `${m.label} ${r.data[id + "_lower"]}-${r.data[id + "_upper"]} ${m.unit}`;
+    }).join(", ");
+    return `${r.providerName} estimated: ${parts}`;
+  }).join("\n");
+  return `Two AI models estimated nutrition for this food and disagreed. Review and provide corrected values.
 
 Food: ${food}
 Quantity: ${qty} ${unit}
 
---- Previous estimates ---
+Prior estimates:
 ${estimateLines}
 
-Instructions:
-1. Compare both estimates against USDA FoodData Central or known nutrition data
-2. Identify which estimate is more accurate and explain why
-3. If one model made an error (wrong serving size, wrong food variant, etc.), call it out
-4. Provide your corrected final values with reasoning`;
+Provide your single reconciled best estimate as the JSON object specified.`;
 }
 
-function parseAIResponse(content) {
+function parseAIResponse(content, ids) {
   const cleaned = content.trim().replace(/```json?\s*/g, "").replace(/```/g, "").trim();
   let parsed;
-  try {
-    parsed = JSON.parse(cleaned);
-  } catch (e) {
-    throw new Error(`Invalid JSON from AI (response may have been truncated): ${e.message}`);
-  }
-  return {
-    calories_lower: parsed.calories_lower,
-    calories_upper: parsed.calories_upper,
-    protein_lower: parsed.protein_lower,
-    protein_upper: parsed.protein_upper,
-    reasoning: parsed.reasoning || null,
-  };
+  try { parsed = JSON.parse(cleaned); }
+  catch (e) { throw new Error(`Invalid JSON from AI: ${e.message}`); }
+  const flat = {};
+  Macros.macroFields(ids).forEach((f) => { flat[f] = parsed[f]; });
+  return flat;
 }
 
 // --- Provider Settings ---
