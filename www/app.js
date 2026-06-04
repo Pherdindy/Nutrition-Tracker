@@ -1270,6 +1270,12 @@ function getValueFormat() { return getSetting("value_format", "single") === "ran
 function setValueFormat(fmt) { setSetting("value_format", fmt === "range" ? "range" : "single"); }
 function getEstimationMode() { return getSetting("estimation_mode", "reconcile") === "single" ? "single" : "reconcile"; }
 function setEstimationMode(mode) { setSetting("estimation_mode", mode === "single" ? "single" : "reconcile"); }
+function getVisionProvider() {
+  const pref = getSetting("vision_provider", "");
+  const withKeys = PROVIDERS.filter((p) => getProviderSettings(p.id).apiKey.length > 0);
+  return withKeys.find((p) => p.id === pref) || withKeys[0] || null;
+}
+function setVisionProvider(id) { setSetting("vision_provider", id); }
 
 // --- Macro-aware estimation engine ---
 
@@ -1407,6 +1413,10 @@ function renderMacroSettings() {
   html += `<div class="form-row"><label>Estimation</label><select id="set-estimation-mode">
     <option value="reconcile" ${mode === "reconcile" ? "selected" : ""}>Dual-AI cross-check (accurate)</option>
     <option value="single" ${mode === "single" ? "selected" : ""}>Single fast call</option></select></div>`;
+  const visionId = (getVisionProvider() || {}).id || "";
+  html += `<div class="form-row"><label>Photo (vision) provider</label><select id="set-vision-provider">`;
+  html += PROVIDERS.map((p) => `<option value="${escapeHtml(p.id)}" ${p.id === visionId ? "selected" : ""}>${escapeHtml(p.name)}</option>`).join("");
+  html += `</select></div>`;
   html += "</div>";
   c.innerHTML = html;
 
@@ -1417,6 +1427,8 @@ function renderMacroSettings() {
   }));
   c.querySelector("#set-value-format").addEventListener("change", (e) => { setValueFormat(e.target.value); renderFoodTable(); });
   c.querySelector("#set-estimation-mode").addEventListener("change", (e) => setEstimationMode(e.target.value));
+  const vp = c.querySelector("#set-vision-provider");
+  if (vp) vp.addEventListener("change", (e) => setVisionProvider(e.target.value));
 }
 
 window.saveProviderKeyUI = function (providerId) {
