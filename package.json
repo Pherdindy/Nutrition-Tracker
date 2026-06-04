@@ -1,0 +1,23 @@
+{
+  "name": "nutrition-tracker",
+  "version": "1.0.0",
+  "main": "index.js",
+  "directories": {
+    "doc": "docs"
+  },
+  "scripts": {
+    "test": "node --test"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Pherdindy/Nutrition-Tracker.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/Pherdindy/Nutrition-Tracker/issues"
+  },
+  "homepage": "https://github.com/Pherdindy/Nutrition-Tracker#readme",
+  "description": ""
+}
