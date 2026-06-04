@@ -66,3 +66,18 @@ test("migrateEntry leaves already-migrated entries untouched", () => {
   const e = { id: 2, macros: { calories: { low: 1, high: 1 } } };
   assert.deepEqual(M.migrateEntry(e), e);
 });
+
+test("blankEnabled lists enabled macros with no value", () => {
+  const e = { macros: { calories: { low: 100, high: 120 } } };
+  assert.deepEqual(M.blankEnabled(e, ["calories", "protein", "carbs"]), ["protein", "carbs"]);
+  assert.deepEqual(M.blankEnabled(e, ["calories"]), []);
+});
+
+test("sumMacro totals low/high across entries", () => {
+  const entries = [
+    { date: "d", macros: { carbs: { low: 10, high: 12 } } },
+    { date: "d", macros: { carbs: { low: 5, high: 5 } } },
+    { date: "d", macros: {} },
+  ];
+  assert.deepEqual(M.sumMacro(entries, "carbs"), { low: 15, high: 17 });
+});
