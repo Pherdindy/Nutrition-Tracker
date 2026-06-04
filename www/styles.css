@@ -1728,3 +1728,12 @@ body.loading::after {
 .score-drill > summary::after { content: "▼"; float: right; color: var(--text-dim, #8b8fa3); font-size: 11px; }
 .score-drill[open] > summary::after { content: "▲"; }
 .score-drill-body { padding: 0 14px 14px; }
+
+.macro-toggle-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 16px; }
+.macro-toggle { display: flex; align-items: center; gap: 8px; font-size: .9rem; }
+.macro-unit { color: var(--text-dim); font-size: .8rem; }
+
+.est-badge { display:inline-flex; align-items:center; justify-content:center; min-width:18px; height:18px; border-radius:9px; font-size:.72rem; padding:0 4px; }
+.est-pending { color: var(--text-dim); animation: est-pulse 1.2s infinite; }
+.est-error { background:#7a2b2b; color:#fff; border:none; cursor:pointer; }
+@keyframes est-pulse { 50% { opacity:.4; } }

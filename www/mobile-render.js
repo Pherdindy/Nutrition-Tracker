@@ -1,6 +1,7 @@
 // Mobile renderers. Loaded after app.js + assessment-view.js; relies on globals:
 //  renderFoodCards:        loadFoodEntries, getDailyFoodTotals, formatDate, formatTime,
-//                          escapeHtml, renderNum, isMobile, editFood, deleteFood
+//                          escapeHtml, renderNum, isMobile, editFood, deleteFood,
+//                          getEnabledMacros, getValueFormat, Macros
 //  renderDayCards:         loadDayEntries, loadProfile, loadFoodEntries, calcBMR, calcTDEE,
 //                          surplusClass, getDailyFoodTotals, formatDate, escapeHtml, renderNum,
 //                          isMobile, editDay, deleteDay
@@ -11,6 +12,8 @@ function renderFoodCards() {
   if (!host) return;
   if (!isMobile()) return; // cards only render on mobile; desktop uses the table
 
+  const enabled = getEnabledMacros();
+  const fmt = getValueFormat();
   const filterDate = document.getElementById("food-date-filter")?.value;
   let entries = loadFoodEntries();
   if (filterDate) entries = entries.filter((f) => f.date === filterDate);
@@ -25,16 +28,22 @@ function renderFoodCards() {
     const totals = getDailyFoodTotals(date, entries);
     html += `<div class="cards-day-header">
       <span>${formatDate(date)}</span>
-      <span class="cards-day-total">${renderNum(totals.calLow, 0)}–${renderNum(totals.calHigh, 0)} cal</span>
+      <span class="cards-day-total">${Macros.formatMacro(totals.macro("calories"), fmt)} cal</span>
     </div>`;
     for (const e of groups[date]) {
+      const calStr = Macros.formatMacro(Macros.getMacro(e, "calories"), fmt);
+      const rows = enabled.filter((id) => id !== "calories")
+        .map((id) => `<div class="food-card-row"><span>${escapeHtml(Macros.byId(id).label)}</span><b>${Macros.formatMacro(Macros.getMacro(e, id), fmt)} ${escapeHtml(Macros.byId(id).unit)}</b></div>`)
+        .join("");
+      const badge = e.estimateStatus === "pending" ? '<span class="est-badge est-pending" title="Estimating…">…</span>'
+        : (e.estimateStatus === "error" ? '<span class="est-badge est-error" title="Estimate failed">!</span>' : "");
       html += `<div class="food-card" data-id="${e.id}">
         <div class="food-card-main">
           <div class="food-card-name">${escapeHtml(e.food)}</div>
-          <div class="food-card-cal">${renderNum(e.calLow, 0)}–${renderNum(e.calHigh, 0)} cal</div>
+          <div class="food-card-cal">${calStr} cal${badge ? " " + badge : ""}</div>
         </div>
         <div class="food-card-sub">${formatTime(e.time)} · ${e.qty} ${escapeHtml(e.unit)}</div>
-        <div class="food-card-row"><span>Protein</span><b>${renderNum(e.proLow, 0)}–${renderNum(e.proHigh, 0)} g</b></div>
+        ${rows}
         <button class="card-menu-btn" data-id="${e.id}" aria-label="Actions">&#8942;</button>
       </div>`;
     }

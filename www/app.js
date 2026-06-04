@@ -32,10 +32,21 @@ const _cache = { food: null, days: null, profile: null, assessments: null, setti
 // ---- Mappers: snake_case DB ↔ camelCase JS ----
 
 function foodRowToJs(r) {
-  return { id: r.id, date: r.date, time: r.time, food: r.food, qty: Number(r.qty), unit: r.unit, calLow: Number(r.cal_low), calHigh: Number(r.cal_high), proLow: Number(r.pro_low), proHigh: Number(r.pro_high), aiThoughtProcess: r.ai_thought_process || null };
+  const base = { id: r.id, date: r.date, time: r.time, food: r.food, qty: Number(r.qty), unit: r.unit,
+    estimateStatus: r.estimate_status || null };
+  if (r.macros) { base.macros = r.macros; return base; }
+  // legacy fallback: build macros from cal/pro columns
+  base.calLow = Number(r.cal_low); base.calHigh = Number(r.cal_high);
+  base.proLow = Number(r.pro_low); base.proHigh = Number(r.pro_high);
+  return Macros.migrateEntry(base);
 }
 function foodJsToRow(e) {
-  return { id: e.id, date: e.date, time: e.time, food: e.food, qty: e.qty, unit: e.unit, cal_low: e.calLow, cal_high: e.calHigh, pro_low: e.proLow, pro_high: e.proHigh, ai_thought_process: e.aiThoughtProcess || null };
+  const cal = Macros.getMacro(e, "calories") || { low: null, high: null };
+  const pro = Macros.getMacro(e, "protein") || { low: null, high: null };
+  return { id: e.id, date: e.date, time: e.time, food: e.food, qty: e.qty, unit: e.unit,
+    macros: e.macros || {}, estimate_status: e.estimateStatus || null,
+    cal_low: cal.low, cal_high: cal.high, pro_low: pro.low, pro_high: pro.high,
+    ai_thought_process: null };
 }
 
 function dayRowToJs(r) {
@@ -95,9 +106,9 @@ function saveProfile(profile) {
 }
 
 function loadFoodEntries() {
-  if (_cache.ready && _cache.food) return [..._cache.food];
+  if (_cache.ready && _cache.food) return _cache.food.map(Macros.migrateEntry);
   const saved = localStorage.getItem("nt_food");
-  return saved ? JSON.parse(saved) : [];
+  return saved ? JSON.parse(saved).map(Macros.migrateEntry) : [];
 }
 
 function saveFoodEntries(entries) {
@@ -322,7 +333,7 @@ function initFromLocalStorage() {
   }
 
   const savedFood = localStorage.getItem("nt_food");
-  _cache.food = savedFood ? JSON.parse(savedFood) : [];
+  _cache.food = savedFood ? JSON.parse(savedFood).map(Macros.migrateEntry) : [];
   const savedDays = localStorage.getItem("nt_days");
   _cache.days = savedDays ? JSON.parse(savedDays) : [];
   const savedProfile = localStorage.getItem("nt_profile");
@@ -346,7 +357,9 @@ async function migrateLocalStorageToSupabase() {
   if (foodRaw) {
     const food = JSON.parse(foodRaw);
     if (food.length > 0) {
-      const rows = food.map(foodJsToRow);
+      // Migrate legacy entries to the macros shape before mapping, so foodJsToRow's
+      // Macros.getMacro() reads find calorie/protein values instead of writing nulls.
+      const rows = food.map((e) => foodJsToRow(Macros.migrateEntry(e)));
       const { error } = await sb.from('food_entries').upsert(rows);
       if (error) console.error('[Supabase] Food migration error:', error);
     }
@@ -442,11 +455,12 @@ function calcTDEE(bmr, activityLabel) {
 
 function getDailyFoodTotals(date, foodEntries) {
   const dayFoods = foodEntries.filter((f) => f.date === date);
+  const cal = Macros.sumMacro(dayFoods, "calories");
+  const pro = Macros.sumMacro(dayFoods, "protein");
   return {
-    calLow: dayFoods.reduce((s, f) => s + (Number(f.calLow) || 0), 0),
-    calHigh: dayFoods.reduce((s, f) => s + (Number(f.calHigh) || 0), 0),
-    proLow: dayFoods.reduce((s, f) => s + (Number(f.proLow) || 0), 0),
-    proHigh: dayFoods.reduce((s, f) => s + (Number(f.proHigh) || 0), 0),
+    calLow: cal.low, calHigh: cal.high,
+    proLow: pro.low, proHigh: pro.high,
+    macro: (id) => Macros.sumMacro(dayFoods, id),
   };
 }
 
@@ -488,71 +502,61 @@ function renderNum(val, decimals = 0) {
 
 function renderFoodTable() {
   const tbody = document.querySelector("#food-eaten-table tbody");
+  const enabled = getEnabledMacros();
+  const fmt = getValueFormat();
+  const head = document.getElementById("food-eaten-head");
+  if (head) {
+    head.innerHTML = `<tr><th>Date</th><th>Time</th><th>Food</th><th>Qty</th><th>Unit</th>`
+      + enabled.map((id) => `<th class="num">${escapeHtml(Macros.byId(id).label)}</th>`).join("")
+      + `<th>Actions</th></tr>`;
+  }
   const filterDate = document.getElementById("food-date-filter").value;
   let entries = loadFoodEntries();
-
-  if (filterDate) {
-    entries = entries.filter((f) => f.date === filterDate);
-  }
-
-  // Sort by date desc, then time
+  if (filterDate) entries = entries.filter((f) => f.date === filterDate);
   entries.sort((a, b) => {
     if (a.date !== b.date) return a.date < b.date ? 1 : -1;
     return a.time < b.time ? -1 : 1;
   });
-
-  // Group by date
   const groups = {};
-  entries.forEach((e) => {
-    if (!groups[e.date]) groups[e.date] = [];
-    groups[e.date].push(e);
-  });
-
+  entries.forEach((e) => { (groups[e.date] ||= []).push(e); });
+  const allEntries = loadFoodEntries();
   let html = "";
   const sortedDates = Object.keys(groups).sort((a, b) => (a < b ? 1 : -1));
-
   for (const date of sortedDates) {
     const items = groups[date];
-    // Date group header
-    const totals = getDailyFoodTotals(date, loadFoodEntries());
-    html += `<tr class="date-group-row">
-      <td colspan="5">${formatDate(date)} - ${items.length} items</td>
-      <td class="num">${renderNum(totals.calLow, 1)}</td>
-      <td class="num">${renderNum(totals.calHigh, 1)}</td>
-      <td class="num">${renderNum(totals.proLow, 1)}</td>
-      <td class="num">${renderNum(totals.proHigh, 1)}</td>
-      <td></td>
-    </tr>`;
-
+    const totals = getDailyFoodTotals(date, allEntries);
+    html += `<tr class="date-group-row"><td colspan="5">${formatDate(date)} - ${items.length} items</td>`
+      + enabled.map((id) => `<td class="num">${Macros.formatMacro(totals.macro(id), fmt)}</td>`).join("")
+      + `<td></td></tr>`;
     for (const entry of items) {
       html += `<tr>
         <td>${formatDate(entry.date)}</td>
         <td>${formatTime(entry.time)}</td>
         <td>${escapeHtml(entry.food)}</td>
         <td class="num">${entry.qty}</td>
-        <td>${escapeHtml(entry.unit)}</td>
-        <td class="num">${renderNum(entry.calLow, 2)}</td>
-        <td class="num">${renderNum(entry.calHigh, 2)}</td>
-        <td class="num">${renderNum(entry.proLow, 2)}</td>
-        <td class="num">${renderNum(entry.proHigh, 2)}</td>
-        <td>
-          <div class="actions">
-            ${entry.aiThoughtProcess ? `<button class="btn-icon thought-btn" onclick="viewThoughtProcess(${entry.id})" title="View AI thought process">&#129504;</button>` : ''}
-            <button class="btn-icon" onclick="editFood(${entry.id})" title="Edit">&#9998;</button>
-            <button class="btn-icon delete" onclick="deleteFood(${entry.id})" title="Delete">&#10005;</button>
-          </div>
-        </td>
+        <td>${escapeHtml(entry.unit)}</td>`
+        + enabled.map((id) => `<td class="num">${Macros.formatMacro(Macros.getMacro(entry, id), fmt)}</td>`).join("")
+        + `<td><div class="actions">${statusBadge(entry)}<button class="btn-icon" onclick="editFood(${entry.id})" title="Edit">&#9998;</button><button class="btn-icon delete" onclick="deleteFood(${entry.id})" title="Delete">&#10005;</button></div></td>
       </tr>`;
     }
   }
-
   if (!entries.length) {
-    html = `<tr><td colspan="10" style="text-align:center;color:var(--text-dim);padding:32px;">No food entries yet. Click "+ Add Food" to start tracking.</td></tr>`;
+    html = `<tr><td colspan="${5 + enabled.length + 1}" style="text-align:center;color:var(--text-dim);padding:32px;">No food entries yet. Click "+ Add Food" to start tracking.</td></tr>`;
   }
-
   tbody.innerHTML = html;
   if (typeof renderFoodCards === "function") renderFoodCards();
 }
+
+function statusBadge(entry) {
+  if (entry.estimateStatus === "pending") return `<span class="est-badge est-pending" title="Estimating…">…</span>`;
+  if (entry.estimateStatus === "error") return `<button class="btn-icon est-badge est-error" onclick="retryEstimate(${entry.id})" title="Estimate failed — tap to retry">!</button>`;
+  return "";
+}
+window.retryEstimate = function (id) {
+  const entries = loadFoodEntries();
+  const e = entries.find((x) => x.id === id);
+  if (e) { e.estimateStatus = "pending"; saveFoodEntries(entries); renderFoodTable(); renderCalorieTracker(); enqueueEstimate(id); }
+};
 
 // ---- Calorie Tracker Table ----
 
@@ -638,54 +642,40 @@ function renderCalorieTarget() {
 // FOOD CRUD
 // ============================================================
 
+function renderFoodMacroFields(entry) {
+  const host = document.getElementById("food-macro-fields");
+  if (!host) return;
+  const fmt = getValueFormat();
+  let html = "";
+  for (const id of getEnabledMacros()) {
+    const m = Macros.byId(id);
+    const v = entry ? Macros.getMacro(entry, id) : null;
+    if (fmt === "range") {
+      html += `<div class="form-row-pair">
+        <div class="form-row"><label>${escapeHtml(m.label)} lower (${escapeHtml(m.unit)})</label>
+          <input type="number" step="any" data-macro-low="${escapeHtml(id)}" value="${v ? Math.round(v.low * 10) / 10 : ""}"></div>
+        <div class="form-row"><label>${escapeHtml(m.label)} upper (${escapeHtml(m.unit)})</label>
+          <input type="number" step="any" data-macro-high="${escapeHtml(id)}" value="${v ? Math.round(v.high * 10) / 10 : ""}"></div>
+      </div>`;
+    } else {
+      html += `<div class="form-row"><label>${escapeHtml(m.label)} (${escapeHtml(m.unit)})</label>
+        <input type="number" step="any" data-macro-single="${escapeHtml(id)}" value="${v != null ? Macros.midpoint(v) : ""}"></div>`;
+    }
+  }
+  host.innerHTML = html;
+}
+
 function openFoodModal(entry) {
   const modal = document.getElementById("food-modal");
-  const title = document.getElementById("food-modal-title");
-
-  if (entry) {
-    title.textContent = "Edit Food Entry";
-    document.getElementById("food-id").value = entry.id;
-    document.getElementById("food-date").value = entry.date;
-    document.getElementById("food-time").value = entry.time;
-    document.getElementById("food-name").value = entry.food;
-    document.getElementById("food-qty").value = entry.qty;
-    document.getElementById("food-unit").value = entry.unit;
-    document.getElementById("food-cal-low").value = entry.calLow;
-    document.getElementById("food-cal-high").value = entry.calHigh;
-    document.getElementById("food-protein-low").value = entry.proLow;
-    document.getElementById("food-protein-high").value = entry.proHigh;
-    // Restore saved thought process
-    if (entry.aiThoughtProcess) {
-      _lastValidationData = entry.aiThoughtProcess;
-    }
-  } else {
-    title.textContent = "Add Food Entry";
-    document.getElementById("food-form").reset();
-    document.getElementById("food-id").value = "";
-    // Default date to today
-    document.getElementById("food-date").value = new Date().toISOString().slice(0, 10);
-    // Default time to now
-    const now = new Date();
-    document.getElementById("food-time").value =
-      now.getHours().toString().padStart(2, "0") + ":" + now.getMinutes().toString().padStart(2, "0");
-  }
-
+  document.getElementById("food-modal-title").textContent = entry ? "Edit Food Entry" : "Add Food Entry";
+  document.getElementById("food-id").value = entry ? entry.id : "";
+  document.getElementById("food-date").value = entry ? entry.date : new Date().toISOString().slice(0, 10);
+  document.getElementById("food-time").value = entry ? entry.time : new Date().toTimeString().slice(0, 5);
+  document.getElementById("food-name").value = entry ? entry.food : "";
+  document.getElementById("food-qty").value = entry ? entry.qty : "";
+  document.getElementById("food-unit").value = entry ? entry.unit : "";
   populateFoodSuggestions();
-  document.getElementById("validation-results").innerHTML = "";
-  setEstimateStatus("");
-
-  // Show saved thought process if editing an entry that has one.
-  // Never let a malformed/legacy thought-process shape block the modal from
-  // opening — displaying it is secondary to being able to edit the entry.
-  if (entry && entry.aiThoughtProcess) {
-    try {
-      renderValidationResults(entry.aiThoughtProcess);
-    } catch (err) {
-      console.error("Failed to render saved AI thought process:", err);
-      document.getElementById("validation-results").innerHTML = "";
-    }
-  }
-
+  renderFoodMacroFields(entry);
   modal.classList.remove("hidden");
 }
 
@@ -726,55 +716,111 @@ function ensureDayExists(date) {
   saveDayEntries(days);
 }
 
+function readMacroInputs() {
+  const fmt = getValueFormat();
+  const macros = {};
+  if (fmt === "range") {
+    document.querySelectorAll("#food-macro-fields [data-macro-low]").forEach((lo) => {
+      const id = lo.dataset.macroLow;
+      const hi = document.querySelector(`#food-macro-fields [data-macro-high="${id}"]`);
+      if (lo.value === "" || !hi || hi.value === "") return;
+      const low = parseFloat(lo.value), high = parseFloat(hi.value);
+      if (isNaN(low) || isNaN(high)) return;
+      macros[id] = { low, high };
+    });
+  } else {
+    document.querySelectorAll("#food-macro-fields [data-macro-single]").forEach((el) => {
+      if (el.value === "") return;
+      const n = parseFloat(el.value);
+      if (isNaN(n)) return;
+      macros[el.dataset.macroSingle] = { low: n, high: n };
+    });
+  }
+  return macros;
+}
+
 function saveFood(e) {
   e.preventDefault();
   const entries = loadFoodEntries();
   const id = document.getElementById("food-id").value;
-
-  const entry = {
+  const base = {
     date: document.getElementById("food-date").value,
     time: document.getElementById("food-time").value,
     food: document.getElementById("food-name").value,
     qty: parseFloat(document.getElementById("food-qty").value),
     unit: document.getElementById("food-unit").value,
-    calLow: parseFloat(document.getElementById("food-cal-low").value),
-    calHigh: parseFloat(document.getElementById("food-cal-high").value),
-    proLow: parseFloat(document.getElementById("food-protein-low").value),
-    proHigh: parseFloat(document.getElementById("food-protein-high").value),
+    macros: readMacroInputs(),
   };
+  const blanks = Macros.blankEnabled(base, getEnabledMacros());
+  base.estimateStatus = blanks.length ? "pending" : "manual";
 
-  // Attach AI thought process if available
-  if (_lastValidationData) {
-    entry.aiThoughtProcess = _lastValidationData;
-    _lastValidationData = null;
-  }
-
-  // Preserve existing thought process if no new estimation was run
-  if (!entry.aiThoughtProcess && id) {
-    const existing = entries.find((e) => e.id === parseInt(id));
-    if (existing && existing.aiThoughtProcess) {
-      entry.aiThoughtProcess = existing.aiThoughtProcess;
-    }
-  }
-
+  let saved;
   if (id) {
-    // Edit
-    const idx = entries.findIndex((e) => e.id === parseInt(id));
-    if (idx !== -1) {
-      entries[idx] = { ...entries[idx], ...entry };
-    }
+    const idx = entries.findIndex((x) => x.id === parseInt(id));
+    if (idx === -1) { console.warn("saveFood: entry not found for id", id); return; }
+    // base.macros fully replaces prior macros: cleared fields re-estimate; macros for now-disabled types intentionally drop.
+    saved = { ...entries[idx], ...base };
+    entries[idx] = saved;
   } else {
-    // Add
-    const maxId = entries.length ? Math.max(...entries.map((e) => e.id)) : 0;
-    entry.id = maxId + 1;
-    entries.push(entry);
+    const maxId = entries.length ? Math.max(...entries.map((x) => x.id)) : 0;
+    saved = { ...base, id: maxId + 1 };
+    entries.push(saved);
   }
-
   saveFoodEntries(entries);
-  ensureDayExists(entry.date);
+  ensureDayExists(base.date);
   closeFoodModal();
   renderFoodTable();
   renderCalorieTracker();
+  if (saved && saved.estimateStatus === "pending") enqueueEstimate(saved.id);
+}
+
+const _estimateQueue = [];
+let _estimateRunning = false;
+
+function enqueueEstimate(entryId) {
+  if (!_estimateQueue.includes(entryId)) _estimateQueue.push(entryId);
+  runEstimateQueue();
+}
+async function runEstimateQueue() {
+  if (_estimateRunning) return;
+  _estimateRunning = true;
+  try {
+    while (_estimateQueue.length) {
+      const id = _estimateQueue.shift();
+      const snapshot = loadFoodEntries();
+      const entry = snapshot.find((e) => e.id === id);
+      if (!entry || entry.estimateStatus !== "pending") continue;
+      const ids = Macros.blankEnabled(entry, getEnabledMacros());
+      if (!ids.length) {
+        const fresh = loadFoodEntries();
+        const t = fresh.find((e) => e.id === id);
+        if (t) { t.estimateStatus = "manual"; saveFoodEntries(fresh); }
+        continue;
+      }
+      let filled = null, noKey = false;
+      try {
+        filled = await estimateEntry(entry, ids);
+      } catch (err) {
+        noKey = err && err.message === "no-api-key";
+      }
+      // Reload fresh AFTER the await so a concurrent user edit isn't overwritten.
+      const fresh = loadFoodEntries();
+      const t = fresh.find((e) => e.id === id);
+      if (!t) continue; // entry deleted while estimate was in flight
+      if (filled) {
+        if (!t.macros) t.macros = {};
+        for (const mid of ids) if (filled[mid]) t.macros[mid] = filled[mid];
+        t.estimateStatus = ids.every((mid) => filled[mid]) ? "done" : "error";
+      } else {
+        t.estimateStatus = noKey ? "manual" : "error";
+      }
+      saveFoodEntries(fresh);
+      renderFoodTable(); renderCalorieTracker();
+    }
+  } finally { _estimateRunning = false; }
+}
+function resumePendingEstimates() {
+  loadFoodEntries().filter((e) => e.estimateStatus === "pending").forEach((e) => enqueueEstimate(e.id));
 }
 
 window.editFood = function (id) {
@@ -790,14 +836,6 @@ window.deleteFood = function (id) {
   saveFoodEntries(entries);
   renderFoodTable();
   renderCalorieTracker();
-};
-
-window.viewThoughtProcess = function (id) {
-  const entries = loadFoodEntries();
-  const entry = entries.find((e) => e.id === id);
-  if (!entry || !entry.aiThoughtProcess) return;
-  // Open the food modal in edit mode — it will display the saved thought process
-  openFoodModal(entry);
 };
 
 // ============================================================
@@ -932,27 +970,26 @@ function escapeHtml(str) {
 // MULTI-AI PROVIDER INTEGRATION
 // ============================================================
 
-const SYSTEM_PROMPT_ESTIMATE = `You are a precise nutrition database assistant. You base estimates on USDA FoodData Central, nutrition labels, and established food composition databases. Be consistent and deterministic — the same food and quantity must always produce the same numbers.
+function buildSystemPromptEstimate(ids) {
+  return `You are a precise nutrition database assistant. You base estimates on USDA FoodData Central, nutrition labels, and established food composition databases. Be consistent and deterministic.
 
-You MUST respond with ONLY a JSON object (no markdown fences, no extra text) in this exact format:
+Respond with ONLY a JSON object (no markdown fences) in this exact format:
 {
-  "reasoning": "<your step-by-step reasoning: identify the food, cite the database/source you are referencing, show the per-unit values, then multiply by the quantity>",
-  "calories_lower": <number>,
-  "calories_upper": <number>,
-  "protein_lower": <number>,
-  "protein_upper": <number>
-}`;
+  "reasoning": "<step-by-step reasoning; not shown to the user>",
+${Macros.promptFields(ids)}
+}
+Units: calories in kcal, sodium in mg, all other macros in grams.`;
+}
+function buildSystemPromptReconcile(ids) {
+  return `You are a precise nutrition database assistant performing a reconciliation review. Two models disagreed. Analyze both, decide which is closer to database values, and return corrected values.
 
-const SYSTEM_PROMPT_RECONCILE = `You are a precise nutrition database assistant performing a reconciliation review. Two AI models estimated nutrition for the same food but disagreed. You must analyze both estimates, identify which is more accurate based on USDA FoodData Central and established databases, explain your reasoning, and provide corrected values.
-
-You MUST respond with ONLY a JSON object (no markdown fences, no extra text) in this exact format:
+Respond with ONLY a JSON object (no markdown fences) in this exact format:
 {
-  "reasoning": "<analyze each prior estimate, identify which is closer to database values and why, explain any corrections you are making>",
-  "calories_lower": <number>,
-  "calories_upper": <number>,
-  "protein_lower": <number>,
-  "protein_upper": <number>
-}`;
+  "reasoning": "<analysis; not shown to the user>",
+${Macros.promptFields(ids)}
+}
+Units: calories in kcal, sodium in mg, all other macros in grams.`;
+}
 
 // GPT-5+ and reasoning models use max_completion_tokens (includes thinking tokens) and don't support temperature
 function openaiModelParams(model, tokens) {
@@ -987,7 +1024,7 @@ const PROVIDERS = [
     ],
     defaultPrimary: "gpt-5-mini",
     defaultSecondary: "gpt-5.2",
-    call: async (food, qty, unit, apiKey, model) => {
+    call: async (food, qty, unit, apiKey, model, ids) => {
       const prompt = buildEstimatePrompt(food, qty, unit);
       const res = await fetch("https://api.openai.com/v1/chat/completions", {
         method: "POST",
@@ -998,7 +1035,7 @@ const PROVIDERS = [
         body: JSON.stringify({
           model,
           messages: [
-            { role: "system", content: SYSTEM_PROMPT_ESTIMATE },
+            { role: "system", content: buildSystemPromptEstimate(ids) },
             { role: "user", content: prompt },
           ],
           ...openaiModelParams(model, 500),
@@ -1009,10 +1046,10 @@ const PROVIDERS = [
         throw new Error(err.error?.message || `OpenAI API error ${res.status}`);
       }
       const data = await res.json();
-      return parseAIResponse(extractOpenAIContent(data));
+      return parseAIResponse(extractOpenAIContent(data), ids);
     },
-    callReconciliation: async (food, qty, unit, apiKey, model, round1Results) => {
-      const prompt = buildReconciliationPrompt(food, qty, unit, round1Results);
+    callReconciliation: async (food, qty, unit, apiKey, model, round1Results, ids) => {
+      const prompt = buildReconciliationPrompt(food, qty, unit, round1Results, ids);
       const res = await fetch("https://api.openai.com/v1/chat/completions", {
         method: "POST",
         headers: {
@@ -1022,7 +1059,7 @@ const PROVIDERS = [
         body: JSON.stringify({
           model,
           messages: [
-            { role: "system", content: SYSTEM_PROMPT_RECONCILE },
+            { role: "system", content: buildSystemPromptReconcile(ids) },
             { role: "user", content: prompt },
           ],
           ...openaiModelParams(model, 600),
@@ -1033,7 +1070,7 @@ const PROVIDERS = [
         throw new Error(err.error?.message || `OpenAI API error ${res.status}`);
       }
       const data = await res.json();
-      return parseAIResponse(extractOpenAIContent(data));
+      return parseAIResponse(extractOpenAIContent(data), ids);
     },
   },
   {
@@ -1047,7 +1084,7 @@ const PROVIDERS = [
     ],
     defaultPrimary: "claude-haiku-4-5-20251001",
     defaultSecondary: "claude-opus-4-6",
-    call: async (food, qty, unit, apiKey, model) => {
+    call: async (food, qty, unit, apiKey, model, ids) => {
       const prompt = buildEstimatePrompt(food, qty, unit);
       const res = await fetch("https://api.anthropic.com/v1/messages", {
         method: "POST",
@@ -1063,7 +1100,7 @@ const PROVIDERS = [
           messages: [
             { role: "user", content: prompt },
           ],
-          system: SYSTEM_PROMPT_ESTIMATE,
+          system: buildSystemPromptEstimate(ids),
           temperature: 0,
         }),
       });
@@ -1072,10 +1109,10 @@ const PROVIDERS = [
         throw new Error(err.error?.message || `Claude API error ${res.status}`);
       }
       const data = await res.json();
-      return parseAIResponse(data.content[0].text);
+      return parseAIResponse(data.content[0].text, ids);
     },
-    callReconciliation: async (food, qty, unit, apiKey, model, round1Results) => {
-      const prompt = buildReconciliationPrompt(food, qty, unit, round1Results);
+    callReconciliation: async (food, qty, unit, apiKey, model, round1Results, ids) => {
+      const prompt = buildReconciliationPrompt(food, qty, unit, round1Results, ids);
       const res = await fetch("https://api.anthropic.com/v1/messages", {
         method: "POST",
         headers: {
@@ -1090,7 +1127,7 @@ const PROVIDERS = [
           messages: [
             { role: "user", content: prompt },
           ],
-          system: SYSTEM_PROMPT_RECONCILE,
+          system: buildSystemPromptReconcile(ids),
           temperature: 0,
         }),
       });
@@ -1099,7 +1136,7 @@ const PROVIDERS = [
         throw new Error(err.error?.message || `Claude API error ${res.status}`);
       }
       const data = await res.json();
-      return parseAIResponse(data.content[0].text);
+      return parseAIResponse(data.content[0].text, ids);
     },
   },
 ];
@@ -1119,45 +1156,33 @@ Instructions:
 6. Show your reasoning step by step in the "reasoning" field`;
 }
 
-function buildReconciliationPrompt(food, qty, unit, round1Results) {
-  let estimateLines = round1Results
-    .map((r) => {
-      let line = `${r.providerName} estimated: calories ${r.data.calories_lower}-${r.data.calories_upper} kcal, protein ${r.data.protein_lower}-${r.data.protein_upper} g`;
-      if (r.data.reasoning) line += `\n  Reasoning: ${r.data.reasoning}`;
-      return line;
-    })
-    .join("\n\n");
-
-  return `Two AI models estimated the nutrition for this food but disagreed. Review both estimates and their reasoning, then provide the corrected final answer.
+function buildReconciliationPrompt(food, qty, unit, round1Results, ids) {
+  const estimateLines = round1Results.map((r) => {
+    const parts = ids.map((id) => {
+      const m = Macros.byId(id);
+      return `${m.label} ${r.data[id + "_lower"]}-${r.data[id + "_upper"]} ${m.unit}`;
+    }).join(", ");
+    return `${r.providerName} estimated: ${parts}`;
+  }).join("\n");
+  return `Two AI models estimated nutrition for this food and disagreed. Review and provide corrected values.
 
 Food: ${food}
 Quantity: ${qty} ${unit}
 
---- Previous estimates ---
+Prior estimates:
 ${estimateLines}
 
-Instructions:
-1. Compare both estimates against USDA FoodData Central or known nutrition data
-2. Identify which estimate is more accurate and explain why
-3. If one model made an error (wrong serving size, wrong food variant, etc.), call it out
-4. Provide your corrected final values with reasoning`;
+Provide your single reconciled best estimate as the JSON object specified.`;
 }
 
-function parseAIResponse(content) {
+function parseAIResponse(content, ids) {
   const cleaned = content.trim().replace(/```json?\s*/g, "").replace(/```/g, "").trim();
   let parsed;
-  try {
-    parsed = JSON.parse(cleaned);
-  } catch (e) {
-    throw new Error(`Invalid JSON from AI (response may have been truncated): ${e.message}`);
-  }
-  return {
-    calories_lower: parsed.calories_lower,
-    calories_upper: parsed.calories_upper,
-    protein_lower: parsed.protein_lower,
-    protein_upper: parsed.protein_upper,
-    reasoning: parsed.reasoning || null,
-  };
+  try { parsed = JSON.parse(cleaned); }
+  catch (e) { throw new Error(`Invalid JSON from AI: ${e.message}`); }
+  const flat = {};
+  Macros.macroFields(ids).forEach((f) => { flat[f] = parsed[f] == null ? null : Number(parsed[f]); });
+  return flat;
 }
 
 // --- Provider Settings ---
@@ -1213,381 +1238,70 @@ function saveSpreadThreshold(val) {
   });
 }
 
-// --- Spread Calculation ---
-
-function calcSpread(results) {
-  // results is an array of { calories_lower, calories_upper, protein_lower, protein_upper }
-  const fields = ["calories_lower", "calories_upper", "protein_lower", "protein_upper"];
-  let worstSpread = 0;
-
-  for (const field of fields) {
-    const values = results.map((r) => r[field]);
-    const min = Math.min(...values);
-    const max = Math.max(...values);
-    const avg = values.reduce((a, b) => a + b, 0) / values.length;
-    if (avg === 0) continue;
-    const spread = ((max - min) / avg) * 100;
-    if (spread > worstSpread) worstSpread = spread;
-  }
-
-  return worstSpread;
+function getSetting(key, fallback) {
+  if (_cache.settings[key] != null) return _cache.settings[key];
+  const ls = localStorage.getItem(`nt_${key}`);
+  return ls != null ? ls : fallback;
 }
-
-function averageResults(results) {
-  const n = results.length;
-  return {
-    calories_lower: Math.round(results.reduce((s, r) => s + r.calories_lower, 0) / n * 10) / 10,
-    calories_upper: Math.round(results.reduce((s, r) => s + r.calories_upper, 0) / n * 10) / 10,
-    protein_lower: Math.round(results.reduce((s, r) => s + r.protein_lower, 0) / n * 10) / 10,
-    protein_upper: Math.round(results.reduce((s, r) => s + r.protein_upper, 0) / n * 10) / 10,
-  };
-}
-
-// --- Last validation data (saved with food entry) ---
-let _lastValidationData = null;
-
-// --- Estimation Flow ---
-
-async function estimateNutrition() {
-  _lastValidationData = null;
-  const food = document.getElementById("food-name").value.trim();
-  const qty = document.getElementById("food-qty").value;
-  const unit = document.getElementById("food-unit").value.trim();
-
-  if (!food || !qty || !unit) {
-    setEstimateStatus("Fill in food name, quantity, and unit first.", true);
-    return;
-  }
-
-  // Determine which providers have API keys configured
-  const activeProviders = PROVIDERS.filter((p) => {
-    const settings = getProviderSettings(p.id);
-    return settings.apiKey.length > 0;
+function setSetting(key, value) {
+  const v = String(value);
+  _cache.settings[key] = v;
+  localStorage.setItem(`nt_${key}`, v);
+  bgWrite(async () => {
+    const { error } = await sb.from("settings").upsert({ key, value: v });
+    if (error) throw error;
   });
-
-  if (activeProviders.length === 0) {
-    setEstimateStatus("Configure at least one AI provider API key in the Calorie Target tab.", true);
-    return;
-  }
-
-  const btn = document.getElementById("estimate-btn");
-  btn.disabled = true;
-  setEstimateStatus("Estimating...");
-  document.getElementById("validation-results").innerHTML = "";
-
-  try {
-    // --- Round 1: Run all providers in parallel with primary models ---
-    const round1Promises = activeProviders.map(async (provider) => {
-      const settings = getProviderSettings(provider.id);
-      try {
-        const data = await provider.call(food, qty, unit, settings.apiKey, settings.primaryModel);
-        return { providerId: provider.id, providerName: provider.name, data, error: null };
-      } catch (err) {
-        return { providerId: provider.id, providerName: provider.name, data: null, error: err.message };
-      }
-    });
-
-    const round1Results = await Promise.all(round1Promises);
-    const successful = round1Results.filter((r) => r.data !== null);
-    const failed = round1Results.filter((r) => r.error !== null);
-
-    if (successful.length === 0) {
-      const errMsgs = failed.map((f) => `${f.providerName}: ${f.error}`).join("; ");
-      setEstimateStatus(`All providers failed: ${errMsgs}`, true);
-      btn.disabled = false;
-      return;
-    }
-
-    // Single provider or only one succeeded — use directly
-    if (successful.length === 1) {
-      const result = successful[0].data;
-      fillNutritionFields(result);
-      const warning = failed.length > 0
-        ? `${failed[0].providerName} failed. Using ${successful[0].providerName} only.`
-        : `Only ${successful[0].providerName} configured. No cross-validation.`;
-      _lastValidationData = {
-        round: 1,
-        round1: successful,
-        failed,
-        final: result,
-        spread: 0,
-        verdict: "single",
-        warning,
-      };
-      renderValidationResults(_lastValidationData);
-      setEstimateStatus("Done!");
-      btn.disabled = false;
-      return;
-    }
-
-    // Multiple providers succeeded — check spread
-    const spread = calcSpread(successful.map((r) => r.data));
-    const threshold = getSpreadThreshold();
-
-    if (spread <= threshold) {
-      // Consensus — use average
-      const avg = averageResults(successful.map((r) => r.data));
-      fillNutritionFields(avg);
-      _lastValidationData = {
-        round: 1,
-        round1: successful,
-        failed,
-        final: avg,
-        spread,
-        threshold,
-        verdict: "consensus",
-      };
-      renderValidationResults(_lastValidationData);
-      setEstimateStatus("Done!");
-      btn.disabled = false;
-      return;
-    }
-
-    // --- Reconciliation loop: keep going until spread is within threshold (max 5 rounds) ---
-    const MAX_ROUNDS = 5;
-    const reconRounds = [];
-    let prevResults = successful;
-    let converged = false;
-
-    for (let roundNum = 2; roundNum <= MAX_ROUNDS; roundNum++) {
-      setEstimateStatus(`Providers disagreed — reconciling (round ${roundNum})...`);
-
-      const reconPromises = activeProviders
-        .filter((p) => prevResults.some((s) => s.providerId === p.id))
-        .map(async (provider) => {
-          const settings = getProviderSettings(provider.id);
-          try {
-            const data = await provider.callReconciliation(food, qty, unit, settings.apiKey, settings.secondaryModel, prevResults);
-            return { providerId: provider.id, providerName: provider.name, model: settings.secondaryModel, data, error: null };
-          } catch (err) {
-            return { providerId: provider.id, providerName: provider.name, model: settings.secondaryModel, data: null, error: err.message };
-          }
-        });
-
-      const reconResults = await Promise.all(reconPromises);
-      const reconSuccessful = reconResults.filter((r) => r.data !== null);
-
-      if (reconSuccessful.length === 0) {
-        // This round failed — fall back to previous best
-        const prevAvg = averageResults(prevResults.map((r) => r.data));
-        fillNutritionFields(prevAvg);
-        _lastValidationData = {
-          round: roundNum - 1,
-          round1: successful,
-          reconRounds,
-          failed,
-          final: prevAvg,
-          spread,
-          threshold,
-          verdict: "recon_failed",
-        };
-        renderValidationResults(_lastValidationData);
-        setEstimateStatus(`Round ${roundNum} failed — using round ${roundNum - 1} average.`, true);
-        btn.disabled = false;
-        return;
-      }
-
-      const reconSpread = calcSpread(reconSuccessful.map((r) => r.data));
-      reconRounds.push({ roundNum, results: reconSuccessful, spread: reconSpread });
-
-      if (reconSpread <= threshold) {
-        converged = true;
-        const avg = averageResults(reconSuccessful.map((r) => r.data));
-        fillNutritionFields(avg);
-        _lastValidationData = {
-          round: roundNum,
-          round1: successful,
-          reconRounds,
-          failed,
-          final: avg,
-          spread,
-          threshold,
-          verdict: "reconciled",
-        };
-        renderValidationResults(_lastValidationData);
-        setEstimateStatus("Done!");
-        break;
-      }
-
-      // Spread still too high — feed this round's results as input to next round
-      prevResults = reconSuccessful;
-    }
-
-    if (!converged) {
-      // Hit max rounds — use the last round's average
-      const lastRound = reconRounds[reconRounds.length - 1];
-      const avg = averageResults(lastRound.results.map((r) => r.data));
-      fillNutritionFields(avg);
-      _lastValidationData = {
-        round: MAX_ROUNDS,
-        round1: successful,
-        reconRounds,
-        failed,
-        final: avg,
-        spread,
-        threshold,
-        verdict: "max_rounds",
-      };
-      renderValidationResults(_lastValidationData);
-      setEstimateStatus(`Spread still ${lastRound.spread.toFixed(1)}% after ${MAX_ROUNDS} rounds — using last average.`, true);
-    }
-  } catch (err) {
-    setEstimateStatus(err.message, true);
-  } finally {
-    btn.disabled = false;
-  }
 }
-
-function fillNutritionFields(result) {
-  document.getElementById("food-cal-low").value = result.calories_lower;
-  document.getElementById("food-cal-high").value = result.calories_upper;
-  document.getElementById("food-protein-low").value = result.protein_lower;
-  document.getElementById("food-protein-high").value = result.protein_upper;
+// Macro-tracking settings
+function getEnabledMacros() {
+  const raw = getSetting("macros_enabled", null);
+  try { return Macros.resolveEnabled(raw ? JSON.parse(raw) : null); }
+  catch { return Macros.defaultEnabled(); }
 }
+function setEnabledMacros(ids) { setSetting("macros_enabled", JSON.stringify(Macros.resolveEnabled(ids))); }
+function getValueFormat() { return getSetting("value_format", "single") === "range" ? "range" : "single"; }
+function setValueFormat(fmt) { setSetting("value_format", fmt === "range" ? "range" : "single"); }
+function getEstimationMode() { return getSetting("estimation_mode", "reconcile") === "single" ? "single" : "reconcile"; }
+function setEstimationMode(mode) { setSetting("estimation_mode", mode === "single" ? "single" : "reconcile"); }
 
-function setEstimateStatus(msg, isError = false) {
-  const el = document.getElementById("estimate-status");
-  el.textContent = msg;
-  el.className = "estimate-status" + (isError ? " error" : "");
-}
+// --- Macro-aware estimation engine ---
 
-// --- Validation Results UI ---
+async function estimateEntry(entry, ids) {
+  const active = PROVIDERS.filter((p) => getProviderSettings(p.id).apiKey.length > 0);
+  if (!active.length) throw new Error("no-api-key");
 
-function formatDelta(r1Val, r2Val) {
-  const diff = r2Val - r1Val;
-  if (Math.abs(diff) < 0.05) return '<span class="delta delta-same">=</span>';
-  const arrow = diff > 0 ? "&#9650;" : "&#9660;";
-  const cls = diff > 0 ? "delta-up" : "delta-down";
-  return `<span class="delta ${cls}">${arrow}${Math.abs(diff).toFixed(1)}</span>`;
-}
+  const round1 = await Promise.all(active.map(async (p) => {
+    const s = getProviderSettings(p.id);
+    try { return { providerId: p.id, providerName: p.name, data: await p.call(entry.food, entry.qty, entry.unit, s.apiKey, s.primaryModel, ids) }; }
+    catch { return { providerId: p.id, providerName: p.name, data: null }; }
+  }));
+  let ok = round1.filter((r) => r.data);
+  if (!ok.length) throw new Error("all-providers-failed");
 
-function renderReasoning(providerName, reasoning) {
-  if (!reasoning) return '';
-  return `<div class="reasoning-block">
-    <details>
-      <summary class="reasoning-toggle">${escapeHtml(providerName)}'s reasoning</summary>
-      <div class="reasoning-text">${escapeHtml(reasoning)}</div>
-    </details>
-  </div>`;
-}
-
-function renderValidationResults(data) {
-  const container = document.getElementById("validation-results");
-  if (!container) return;
-
-  let html = '<div class="validation-panel">';
-  html += '<div class="validation-header">AI Thought Process</div>';
-
-  // --- Round 1 section ---
-  html += '<div class="round-label">Round 1 &mdash; Initial estimates (fast models)</div>';
-  html += '<table class="validation-table"><thead><tr>';
-  html += '<th>Provider</th><th>Cal &#8595;</th><th>Cal &#8593;</th><th>Pro &#8595;</th><th>Pro &#8593;</th>';
-  html += '</tr></thead><tbody>';
-
-  for (const r of data.round1) {
-    html += `<tr>
-      <td>${escapeHtml(r.providerName)}</td>
-      <td class="num">${renderNum(r.data.calories_lower, 1)}</td>
-      <td class="num">${renderNum(r.data.calories_upper, 1)}</td>
-      <td class="num">${renderNum(r.data.protein_lower, 1)}</td>
-      <td class="num">${renderNum(r.data.protein_upper, 1)}</td>
-    </tr>`;
-  }
-  html += '</tbody></table>';
-
-  // Round 1 reasoning
-  for (const r of data.round1) {
-    html += renderReasoning(r.providerName, r.data.reasoning);
-  }
-
-  // --- Verdict ---
-  if (data.verdict === "single") {
-    html += `<div class="verdict verdict-warning">&#9888; ${escapeHtml(data.warning)}</div>`;
-  } else if (data.verdict === "consensus") {
-    html += `<div class="verdict verdict-consensus">&#10003; Consensus reached (${data.spread.toFixed(1)}% spread, within ${data.threshold}% threshold)</div>`;
-    html += '<div class="verdict-detail">Models agreed &mdash; final values are the average of Round 1.</div>';
-  } else if ((data.verdict === "reconciled" || data.verdict === "max_rounds") && data.reconRounds) {
-    html += `<div class="verdict verdict-escalated">&#9888; Round 1 spread: ${data.spread.toFixed(1)}% (exceeds ${data.threshold}% threshold)</div>`;
-    html += '<div class="verdict-detail">Escalated to smarter secondary models for reconciliation.</div>';
-
-    // --- Render each reconciliation round ---
-    let prevRoundResults = data.round1;
-    for (const rnd of data.reconRounds) {
-      html += `<div class="round-label round-label-r2">Round ${rnd.roundNum} &mdash; Reconciliation (secondary models)</div>`;
-      html += '<table class="validation-table"><thead><tr>';
-      html += '<th>Provider</th><th>Cal &#8595;</th><th></th><th>Cal &#8593;</th><th></th><th>Pro &#8595;</th><th></th><th>Pro &#8593;</th><th></th>';
-      html += '</tr></thead><tbody>';
-
-      for (const r of rnd.results) {
-        const prev = prevRoundResults.find((p) => p.providerId === r.providerId);
-        const prevD = prev ? prev.data : r.data;
-        html += `<tr>
-          <td>${escapeHtml(r.providerName)}</td>
-          <td class="num">${renderNum(r.data.calories_lower, 1)}</td>
-          <td class="num">${formatDelta(prevD.calories_lower, r.data.calories_lower)}</td>
-          <td class="num">${renderNum(r.data.calories_upper, 1)}</td>
-          <td class="num">${formatDelta(prevD.calories_upper, r.data.calories_upper)}</td>
-          <td class="num">${renderNum(r.data.protein_lower, 1)}</td>
-          <td class="num">${formatDelta(prevD.protein_lower, r.data.protein_lower)}</td>
-          <td class="num">${renderNum(r.data.protein_upper, 1)}</td>
-          <td class="num">${formatDelta(prevD.protein_upper, r.data.protein_upper)}</td>
-        </tr>`;
-      }
-      html += '</tbody></table>';
-
-      for (const r of rnd.results) {
-        html += renderReasoning(`${r.providerName} (R${rnd.roundNum})`, r.data.reasoning);
-      }
-
-      // Spread summary for this round
-      const prevSpread = rnd.roundNum === 2 ? data.spread : data.reconRounds[data.reconRounds.indexOf(rnd) - 1].spread;
-      html += `<div class="spread-summary">`;
-      html += `Spread: <span class="spread-r1">${prevSpread.toFixed(1)}%</span> &#8594; <span class="spread-r2">${rnd.spread.toFixed(1)}%</span>`;
-      if (rnd.spread < prevSpread) {
-        html += ` <span class="spread-improved">(&#8595;${(prevSpread - rnd.spread).toFixed(1)}% reduction)</span>`;
-      }
-      html += '</div>';
-
-      prevRoundResults = rnd.results;
+  let flat;
+  if (ok.length === 1 || getEstimationMode() === "single") {
+    flat = Macros.averageEstimates(ok.map((r) => r.data), ids);
+  } else if (Macros.spread(ok.map((r) => r.data), ids) <= getSpreadThreshold()) {
+    flat = Macros.averageEstimates(ok.map((r) => r.data), ids);
+  } else {
+    const MAX = 5; let prev = ok;
+    for (let round = 2; round <= MAX; round++) {
+      const recon = await Promise.all(active
+        .filter((p) => prev.some((s) => s.providerId === p.id))
+        .map(async (p) => {
+          const s = getProviderSettings(p.id);
+          try { return { providerId: p.id, providerName: p.name, data: await p.callReconciliation(entry.food, entry.qty, entry.unit, s.apiKey, s.secondaryModel, prev, ids) }; }
+          catch { return { providerId: p.id, providerName: p.name, data: null }; }
+        }));
+      const rok = recon.filter((r) => r.data);
+      if (!rok.length) break;
+      prev = rok;
+      if (prev.length === 1) break; // only one provider left — no point reconciling with itself
+      if (Macros.spread(rok.map((r) => r.data), ids) <= getSpreadThreshold()) break;
     }
-
-    if (data.verdict === "reconciled") {
-      html += `<div class="verdict verdict-consensus">&#10003; Final values: average of Round ${data.round} reconciled estimates</div>`;
-    } else {
-      html += `<div class="verdict verdict-warning">&#9888; Spread still above threshold after ${data.round} rounds — using last round average</div>`;
-    }
-  } else if (data.verdict === "recon_failed") {
-    html += `<div class="verdict verdict-warning">&#9888; Round 1 spread: ${data.spread.toFixed(1)}% (exceeds ${data.threshold}% threshold)</div>`;
-    html += '<div class="verdict-detail">Reconciliation with secondary models failed. Falling back to previous round average.</div>';
+    flat = Macros.averageEstimates(prev.map((r) => r.data), ids);
   }
-
-  // Failed providers
-  if (data.failed && data.failed.length > 0) {
-    for (const f of data.failed) {
-      html += `<div class="verdict verdict-warning">&#9888; ${escapeHtml(f.providerName)} failed: ${escapeHtml(f.error)}</div>`;
-    }
-  }
-
-  // Final values row.
-  // Single-item estimates store `data.final`; batch estimates store a per-item
-  // `data.finalItems` array (shared across every entry from that batch) and no `final`.
-  if (data.final) {
-    html += '<div class="final-values-row">';
-    html += `<span class="final-label">Final:</span> `;
-    html += `Cal ${renderNum(data.final.calories_lower, 1)}&ndash;${renderNum(data.final.calories_upper, 1)} kcal | `;
-    html += `Pro ${renderNum(data.final.protein_lower, 1)}&ndash;${renderNum(data.final.protein_upper, 1)} g`;
-    html += '</div>';
-  } else if (Array.isArray(data.finalItems)) {
-    html += '<div class="final-values-row">';
-    html += `<span class="final-label">Final (per item):</span> `;
-    html += data.finalItems
-      .map((it) => `Cal ${renderNum(it.calories_lower, 1)}&ndash;${renderNum(it.calories_upper, 1)} / Pro ${renderNum(it.protein_lower, 1)}&ndash;${renderNum(it.protein_upper, 1)}`)
-      .join(' &middot; ');
-    html += '</div>';
-  }
-
-  html += '</div>';
-  container.innerHTML = html;
+  return Macros.parseMacros(flat, ids); // {id:{low,high}}
 }
 
 // --- Settings UI ---
@@ -1666,6 +1380,38 @@ function renderProviderSettings() {
   valContainer.innerHTML = valHtml;
 }
 
+function renderMacroSettings() {
+  const c = document.getElementById("macro-settings");
+  if (!c) return;
+  const enabled = new Set(getEnabledMacros());
+  const fmt = getValueFormat();
+  const mode = getEstimationMode();
+  let html = '<div class="settings-card"><h2>Macros &amp; estimation</h2>';
+  html += '<h3 class="provider-name">Macros to track</h3><div class="macro-toggle-list">';
+  for (const m of Macros.CATALOG) {
+    const checked = enabled.has(m.id) ? "checked" : "";
+    const lock = m.locked ? "disabled" : "";
+    html += `<label class="macro-toggle"><input type="checkbox" data-macro="${escapeHtml(m.id)}" ${checked} ${lock}> ${escapeHtml(m.label)} <span class="macro-unit">(${escapeHtml(m.unit)})</span></label>`;
+  }
+  html += "</div>";
+  html += `<div class="form-row"><label>Value format</label><select id="set-value-format">
+    <option value="single" ${fmt === "single" ? "selected" : ""}>Single value</option>
+    <option value="range" ${fmt === "range" ? "selected" : ""}>Low–high range</option></select></div>`;
+  html += `<div class="form-row"><label>Estimation</label><select id="set-estimation-mode">
+    <option value="reconcile" ${mode === "reconcile" ? "selected" : ""}>Dual-AI cross-check (accurate)</option>
+    <option value="single" ${mode === "single" ? "selected" : ""}>Single fast call</option></select></div>`;
+  html += "</div>";
+  c.innerHTML = html;
+
+  c.querySelectorAll("input[data-macro]").forEach((cb) => cb.addEventListener("change", () => {
+    const ids = [...c.querySelectorAll("input[data-macro]:checked")].map((x) => x.dataset.macro);
+    setEnabledMacros(ids);
+    renderFoodTable();
+  }));
+  c.querySelector("#set-value-format").addEventListener("change", (e) => { setValueFormat(e.target.value); renderFoodTable(); });
+  c.querySelector("#set-estimation-mode").addEventListener("change", (e) => setEstimationMode(e.target.value));
+}
+
 window.saveProviderKeyUI = function (providerId) {
   const input = document.getElementById(`key-${providerId}`);
   if (input) {
@@ -1685,6 +1431,7 @@ window.saveSpreadThresholdUI = function (val) {
 window.saveProviderModeUI = function (providerId, mode) {
   saveProviderMode(providerId, mode);
   renderProviderSettings();
+  renderMacroSettings();
 };
 
 // ============================================================
@@ -1961,13 +1708,9 @@ function buildRangeData(foodEntries, dayEntries, profile, startDate, endDate) {
   const dates = Object.keys(foodByDate).sort();
   const numDays = dates.length || 1;
 
-  let totalCalLow = 0, totalCalHigh = 0, totalProLow = 0, totalProHigh = 0;
-  filteredFood.forEach(f => {
-    totalCalLow += Number(f.calLow) || 0;
-    totalCalHigh += Number(f.calHigh) || 0;
-    totalProLow += Number(f.proLow) || 0;
-    totalProHigh += Number(f.proHigh) || 0;
-  });
+  const _calTotal = Macros.sumMacro(filteredFood, "calories");
+  const _proTotal = Macros.sumMacro(filteredFood, "protein");
+  let totalCalLow = _calTotal.low, totalCalHigh = _calTotal.high, totalProLow = _proTotal.low, totalProHigh = _proTotal.high;
 
   // Per-day calorie context (TDEE varies by activity)
   const dailyContext = {};
@@ -2069,8 +1812,9 @@ function buildAssessmentPrompt(data) {
     for (const date of ctxDates) {
       const ctx = data.dailyContext[date];
       const dayFoods = data.foodByDate[date] || [];
-      const eatLow = dayFoods.reduce((s, f) => s + (Number(f.calLow) || 0), 0);
-      const eatHigh = dayFoods.reduce((s, f) => s + (Number(f.calHigh) || 0), 0);
+      const _eat = Macros.sumMacro(dayFoods, "calories");
+      const eatLow = _eat.low;
+      const eatHigh = _eat.high;
       prompt += `  ${date}: Activity="${ctx.activity}" | TDEE=${ctx.tdee} | Deficit=${ctx.deficit} | Target=${ctx.calorieTarget} | Eaten=${Math.round(eatLow)}-${Math.round(eatHigh)} kcal\n`;
     }
   }
@@ -2096,7 +1840,10 @@ function buildAssessmentPrompt(data) {
     prompt += `\n${date}:\n`;
     const items = data.foodByDate[date];
     for (const item of items) {
-      prompt += `  ${item.time} - ${item.food}, ${item.qty} ${item.unit} (${item.calLow}-${item.calHigh} cal, ${item.proLow}-${item.proHigh}g protein)\n`;
+      const _c = Macros.getMacro(item, "calories"), _p = Macros.getMacro(item, "protein");
+      const calStr = _c ? `${_c.low}-${_c.high}` : "?";
+      const proStr = _p ? `${_p.low}-${_p.high}` : "?";
+      prompt += `  ${item.time} - ${item.food}, ${item.qty} ${item.unit} (${calStr} cal, ${proStr}g protein)\n`;
     }
   }
 
@@ -2616,8 +2363,9 @@ function renderAssessmentDataSummary(data) {
     for (const date of ctxDates) {
       const ctx = data.dailyContext[date];
       const dayFoods = data.foodByDate[date] || [];
-      const eatLow = Math.round(dayFoods.reduce((s, f) => s + (Number(f.calLow) || 0), 0));
-      const eatHigh = Math.round(dayFoods.reduce((s, f) => s + (Number(f.calHigh) || 0), 0));
+      const _eat = Macros.sumMacro(dayFoods, "calories");
+      const eatLow = Math.round(_eat.low);
+      const eatHigh = Math.round(_eat.high);
 
       // vs Target: how close to the deficit goal (small numbers = on track)
       const vtLow = eatLow - ctx.calorieTarget;
@@ -3241,418 +2989,15 @@ function renderAssessmentHistory() {
 // BATCH ADD FEATURE
 // ============================================================
 
-const SYSTEM_PROMPT_BATCH_ESTIMATE = `You are a precise nutrition database assistant. You base estimates on USDA FoodData Central, nutrition labels, and established food composition databases. Be consistent and deterministic — the same food and quantity must always produce the same numbers.
-
-You will receive a numbered list of food items. For EACH item, identify the food, reference the database/source, calculate per-unit values, then scale to the given quantity.
-
-You MUST respond with ONLY a JSON object (no markdown fences, no extra text) in this exact format:
-{
-  "reasoning": "<step-by-step for each item: identify food, cite source, per-unit values, scale to quantity>",
-  "items": [
-    { "food": "<echo back food name>", "calories_lower": <number>, "calories_upper": <number>, "protein_lower": <number>, "protein_upper": <number> },
-    ...
-  ]
-}
-Items MUST be in the same order as the input list. The items array length MUST match the number of input items.`;
-
-const SYSTEM_PROMPT_BATCH_RECONCILE = `You are a precise nutrition database assistant performing a reconciliation review. Two AI models estimated nutrition for multiple food items but disagreed. You must analyze both sets of estimates, identify which is more accurate based on USDA FoodData Central and established databases, explain your reasoning, and provide corrected values for ALL items.
-
-You MUST respond with ONLY a JSON object (no markdown fences, no extra text) in this exact format:
-{
-  "reasoning": "<analyze each prior estimate set, identify which is closer to database values and why, explain any corrections>",
-  "items": [
-    { "food": "<echo back food name>", "calories_lower": <number>, "calories_upper": <number>, "protein_lower": <number>, "protein_upper": <number> },
-    ...
-  ]
-}
-Items MUST be in the same order as the input list. The items array length MUST match the number of input items.`;
-
-function buildBatchEstimatePrompt(items) {
-  let numbered = items.map((item, i) =>
-    `${i + 1}. Food: ${item.food} | Quantity: ${item.qty} ${item.unit}`
-  ).join("\n");
-
-  return `Estimate the nutritional content of each food item below:
-
-${numbered}
-
-For each item, identify the food, reference USDA/nutrition databases, calculate per-unit values, then scale to the given quantity.`;
-}
-
-function buildBatchReconciliationPrompt(items, round1Results) {
-  let numbered = items.map((item, i) =>
-    `${i + 1}. Food: ${item.food} | Quantity: ${item.qty} ${item.unit}`
-  ).join("\n");
-
-  let estimateLines = round1Results.map((r) => {
-    let lines = `${r.providerName} estimated:\n`;
-    lines += r.data.items.map((item, i) =>
-      `  ${i + 1}. ${item.food}: calories ${item.calories_lower}-${item.calories_upper} kcal, protein ${item.protein_lower}-${item.protein_upper} g`
-    ).join("\n");
-    if (r.data.reasoning) lines += `\n  Reasoning: ${r.data.reasoning}`;
-    return lines;
-  }).join("\n\n");
-
-  return `Two AI models estimated the nutrition for these food items but disagreed. Review both estimates and their reasoning, then provide corrected final answers for ALL items.
-
-Food items:
-${numbered}
-
---- Previous estimates ---
-${estimateLines}
-
-Instructions:
-1. Compare both estimates against USDA FoodData Central or known nutrition data
-2. Identify which estimate is more accurate for each item and explain why
-3. If a model made an error (wrong serving size, wrong food variant, etc.), call it out
-4. Provide your corrected final values for ALL items with reasoning`;
-}
-
-function parseBatchAIResponse(content, expectedCount) {
-  const cleaned = content.trim().replace(/```json?\s*/g, "").replace(/```/g, "").trim();
-  let parsed;
-  try {
-    parsed = JSON.parse(cleaned);
-  } catch (e) {
-    throw new Error(`Invalid JSON from AI (response may have been truncated): ${e.message}`);
-  }
-
-  if (!parsed.items || !Array.isArray(parsed.items)) {
-    throw new Error("Response missing 'items' array");
-  }
-  if (parsed.items.length !== expectedCount) {
-    throw new Error(`Expected ${expectedCount} items but got ${parsed.items.length}`);
-  }
-
-  for (let i = 0; i < parsed.items.length; i++) {
-    const item = parsed.items[i];
-    if (item.calories_lower == null || item.calories_upper == null ||
-        item.protein_lower == null || item.protein_upper == null) {
-      throw new Error(`Item ${i + 1} missing required nutrition fields`);
-    }
-  }
-
-  return {
-    reasoning: parsed.reasoning || null,
-    items: parsed.items.map(item => ({
-      food: item.food || "",
-      calories_lower: item.calories_lower,
-      calories_upper: item.calories_upper,
-      protein_lower: item.protein_lower,
-      protein_upper: item.protein_upper,
-    })),
-  };
-}
-
-function setBatchEstimateStatus(msg, isError = false) {
-  const el = document.getElementById("batch-estimate-status");
-  el.textContent = msg;
-  el.className = "estimate-status" + (isError ? " error" : "");
-}
-
-let _batchValidationData = null;
-
-async function estimateBatchNutrition() {
-  _batchValidationData = null;
-
-  // Collect items from rows
-  const rows = document.querySelectorAll("#batch-items .batch-item-row");
-  const items = [];
-  for (const row of rows) {
-    const food = row.querySelector(".batch-food").value.trim();
-    const qty = row.querySelector(".batch-qty").value;
-    const unit = row.querySelector(".batch-unit").value.trim();
-    if (food && qty && unit) {
-      items.push({ food, qty: parseFloat(qty), unit });
-    }
-  }
-
-  if (items.length === 0) {
-    setBatchEstimateStatus("Enter at least one food item with quantity and unit.", true);
-    return;
-  }
-
-  // Check all rows are filled
-  for (const row of rows) {
-    const food = row.querySelector(".batch-food").value.trim();
-    const qty = row.querySelector(".batch-qty").value;
-    const unit = row.querySelector(".batch-unit").value.trim();
-    if ((food || qty || unit) && !(food && qty && unit)) {
-      setBatchEstimateStatus("Fill in all fields for each row, or clear empty rows.", true);
-      return;
-    }
-  }
-
-  // Get active providers with API keys (food estimation always uses API)
-  const activeProviders = PROVIDERS.filter((p) => {
-    const settings = getProviderSettings(p.id);
-    return settings.apiKey.length > 0;
-  });
-
-  if (activeProviders.length === 0) {
-    setBatchEstimateStatus("Configure at least one AI provider API key in the Calorie Target tab.", true);
-    return;
-  }
-
-  const btn = document.getElementById("batch-estimate-btn");
-  btn.disabled = true;
-  setBatchEstimateStatus("Estimating all items...");
-  document.getElementById("batch-results").innerHTML = "";
-  document.getElementById("batch-save").disabled = true;
-
-  const maxTokens = Math.max(1500, items.length * 300);
-
-  try {
-    // --- Round 1: All providers in parallel with primary models ---
-    const batchPrompt = buildBatchEstimatePrompt(items);
-
-    const round1Promises = activeProviders.map(async (provider) => {
-      const settings = getProviderSettings(provider.id);
-      try {
-        const data = await callProviderBatch(provider, settings.apiKey, settings.primaryModel, SYSTEM_PROMPT_BATCH_ESTIMATE, batchPrompt, maxTokens, items.length);
-        return { providerId: provider.id, providerName: provider.name, data, error: null };
-      } catch (err) {
-        return { providerId: provider.id, providerName: provider.name, data: null, error: err.message };
-      }
-    });
-
-    const round1Results = await Promise.all(round1Promises);
-    const successful = round1Results.filter((r) => r.data !== null);
-    const failed = round1Results.filter((r) => r.error !== null);
-
-    if (successful.length === 0) {
-      const errMsgs = failed.map((f) => `${f.providerName}: ${f.error}`).join("; ");
-      setBatchEstimateStatus(`All providers failed: ${errMsgs}`, true);
-      btn.disabled = false;
-      return;
-    }
-
-    // Single provider — use directly
-    if (successful.length === 1) {
-      const finalItems = successful[0].data.items;
-      _batchValidationData = {
-        round: 1,
-        round1: successful,
-        failed,
-        finalItems,
-        spread: 0,
-        verdict: "single",
-        warning: failed.length > 0
-          ? `${failed[0].providerName} failed. Using ${successful[0].providerName} only.`
-          : `Only ${successful[0].providerName} configured. No cross-validation.`,
-      };
-      renderBatchResults(items, finalItems, _batchValidationData);
-      setBatchEstimateStatus("Done!");
-      btn.disabled = false;
-      return;
-    }
-
-    // Multiple providers — check per-item spread, take worst
-    let worstSpread = 0;
-    for (let i = 0; i < items.length; i++) {
-      const perItemResults = successful.map((r) => r.data.items[i]);
-      const spread = calcSpread(perItemResults);
-      if (spread > worstSpread) worstSpread = spread;
-    }
-
-    const threshold = getSpreadThreshold();
-
-    if (worstSpread <= threshold) {
-      // Consensus — average per-item
-      const finalItems = items.map((_, i) => {
-        const perItem = successful.map((r) => r.data.items[i]);
-        return averageResults(perItem);
-      });
-      _batchValidationData = {
-        round: 1,
-        round1: successful,
-        failed,
-        finalItems,
-        spread: worstSpread,
-        threshold,
-        verdict: "consensus",
-      };
-      renderBatchResults(items, finalItems, _batchValidationData);
-      setBatchEstimateStatus("Done!");
-      btn.disabled = false;
-      return;
-    }
-
-    // --- Reconciliation loop: keep going until spread is within threshold (max 5 rounds) ---
-    const MAX_BATCH_ROUNDS = 5;
-    const batchReconRounds = [];
-    let prevBatchResults = successful;
-    let batchConverged = false;
-
-    for (let roundNum = 2; roundNum <= MAX_BATCH_ROUNDS; roundNum++) {
-      setBatchEstimateStatus(`Providers disagreed — reconciling (round ${roundNum})...`);
-
-      const reconPrompt = buildBatchReconciliationPrompt(items, prevBatchResults);
-      const reconPromises = activeProviders
-        .filter((p) => prevBatchResults.some((s) => s.providerId === p.id))
-        .map(async (provider) => {
-          const settings = getProviderSettings(provider.id);
-          try {
-            const data = await callProviderBatch(provider, settings.apiKey, settings.secondaryModel, SYSTEM_PROMPT_BATCH_RECONCILE, reconPrompt, maxTokens + 300, items.length);
-            return { providerId: provider.id, providerName: provider.name, model: settings.secondaryModel, data, error: null };
-          } catch (err) {
-            return { providerId: provider.id, providerName: provider.name, model: settings.secondaryModel, data: null, error: err.message };
-          }
-        });
-
-      const reconResults = await Promise.all(reconPromises);
-      const reconSuccessful = reconResults.filter((r) => r.data !== null);
-
-      if (reconSuccessful.length === 0) {
-        // This round failed — fall back to previous best
-        const finalItems = items.map((_, i) => {
-          const perItem = prevBatchResults.map((r) => r.data.items[i]);
-          return averageResults(perItem);
-        });
-        _batchValidationData = {
-          round: roundNum - 1,
-          round1: successful,
-          reconRounds: batchReconRounds,
-          failed,
-          finalItems,
-          spread: worstSpread,
-          threshold,
-          verdict: "recon_failed",
-        };
-        renderBatchResults(items, finalItems, _batchValidationData);
-        setBatchEstimateStatus(`Round ${roundNum} failed — using round ${roundNum - 1} average.`, true);
-        btn.disabled = false;
-        return;
-      }
-
-      let reconWorstSpread = 0;
-      for (let i = 0; i < items.length; i++) {
-        const perItem = reconSuccessful.map((r) => r.data.items[i]);
-        const s = calcSpread(perItem);
-        if (s > reconWorstSpread) reconWorstSpread = s;
-      }
-      batchReconRounds.push({ roundNum, results: reconSuccessful, spread: reconWorstSpread });
-
-      if (reconWorstSpread <= threshold) {
-        batchConverged = true;
-        const finalItems = items.map((_, i) => {
-          const perItem = reconSuccessful.map((r) => r.data.items[i]);
-          return averageResults(perItem);
-        });
-        _batchValidationData = {
-          round: roundNum,
-          round1: successful,
-          reconRounds: batchReconRounds,
-          failed,
-          finalItems,
-          spread: worstSpread,
-          threshold,
-          verdict: "reconciled",
-        };
-        renderBatchResults(items, finalItems, _batchValidationData);
-        setBatchEstimateStatus("Done!");
-        break;
-      }
-
-      prevBatchResults = reconSuccessful;
-    }
-
-    if (!batchConverged) {
-      const lastRound = batchReconRounds[batchReconRounds.length - 1];
-      const finalItems = items.map((_, i) => {
-        const perItem = lastRound.results.map((r) => r.data.items[i]);
-        return averageResults(perItem);
-      });
-      _batchValidationData = {
-        round: MAX_BATCH_ROUNDS,
-        round1: successful,
-        reconRounds: batchReconRounds,
-        failed,
-        finalItems,
-        spread: worstSpread,
-        threshold,
-        verdict: "max_rounds",
-      };
-      renderBatchResults(items, finalItems, _batchValidationData);
-      setBatchEstimateStatus(`Spread still ${lastRound.spread.toFixed(1)}% after ${MAX_BATCH_ROUNDS} rounds — using last average.`, true);
-    }
-  } catch (err) {
-    setBatchEstimateStatus(err.message, true);
-  } finally {
-    btn.disabled = false;
-  }
-}
-
-async function callProviderBatch(provider, apiKey, model, systemPrompt, userPrompt, maxTokens, expectedCount) {
-  if (provider.id === "openai") {
-    const res = await fetch("https://api.openai.com/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        model,
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: userPrompt },
-        ],
-        ...openaiModelParams(model, maxTokens),
-      }),
-    });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.error?.message || `OpenAI API error ${res.status}`);
-    }
-    const data = await res.json();
-    return parseBatchAIResponse(extractOpenAIContent(data), expectedCount);
-  } else if (provider.id === "anthropic") {
-    const res = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": apiKey,
-        "anthropic-version": "2023-06-01",
-        "anthropic-dangerous-direct-browser-access": "true",
-      },
-      body: JSON.stringify({
-        model,
-        max_tokens: maxTokens,
-        messages: [
-          { role: "user", content: userPrompt },
-        ],
-        system: systemPrompt,
-        temperature: 0,
-      }),
-    });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.error?.message || `Claude API error ${res.status}`);
-    }
-    const data = await res.json();
-    return parseBatchAIResponse(data.content[0].text, expectedCount);
-  }
-  throw new Error(`Unknown provider: ${provider.id}`);
-}
-
 // --- Batch Modal Functions ---
 
 function openBatchModal() {
   const modal = document.getElementById("batch-modal");
   document.getElementById("batch-date").value = new Date().toISOString().slice(0, 10);
-  const now = new Date();
-  document.getElementById("batch-time").value =
-    now.getHours().toString().padStart(2, "0") + ":" + now.getMinutes().toString().padStart(2, "0");
-
+  document.getElementById("batch-time").value = new Date().toTimeString().slice(0, 5);
   const container = document.getElementById("batch-items");
   container.innerHTML = "";
   for (let i = 0; i < 3; i++) addBatchRow();
-
-  document.getElementById("batch-results").innerHTML = "";
-  document.getElementById("batch-save").disabled = true;
-  setBatchEstimateStatus("");
-  _batchValidationData = null;
-
   populateBatchSuggestions();
   modal.classList.remove("hidden");
 }
@@ -3704,182 +3049,27 @@ function closeBatchModal() {
   document.getElementById("batch-modal").classList.add("hidden");
 }
 
-function renderBatchResults(inputItems, finalItems, validationData) {
-  const container = document.getElementById("batch-results");
-  let html = '';
-
-  // Validation panel
-  html += '<div class="validation-panel">';
-  html += '<div class="validation-header">AI Thought Process</div>';
-
-  // Round 1
-  html += '<div class="round-label">Round 1 &mdash; Initial estimates (fast models)</div>';
-  for (const r of validationData.round1) {
-    html += `<div style="font-size:0.78rem;font-weight:600;color:var(--text-dim);margin:6px 0 4px;">${escapeHtml(r.providerName)}</div>`;
-    html += '<table class="validation-table"><thead><tr>';
-    html += '<th>Food</th><th>Cal &#8595;</th><th>Cal &#8593;</th><th>Pro &#8595;</th><th>Pro &#8593;</th>';
-    html += '</tr></thead><tbody>';
-    for (const item of r.data.items) {
-      html += `<tr>
-        <td>${escapeHtml(item.food)}</td>
-        <td class="num">${renderNum(item.calories_lower, 1)}</td>
-        <td class="num">${renderNum(item.calories_upper, 1)}</td>
-        <td class="num">${renderNum(item.protein_lower, 1)}</td>
-        <td class="num">${renderNum(item.protein_upper, 1)}</td>
-      </tr>`;
-    }
-    html += '</tbody></table>';
-    html += renderReasoning(r.providerName, r.data.reasoning);
-  }
-
-  // Verdict
-  if (validationData.verdict === "single") {
-    html += `<div class="verdict verdict-warning">&#9888; ${escapeHtml(validationData.warning)}</div>`;
-  } else if (validationData.verdict === "consensus") {
-    html += `<div class="verdict verdict-consensus">&#10003; Consensus reached (worst spread: ${validationData.spread.toFixed(1)}%, within ${validationData.threshold}% threshold)</div>`;
-  } else if ((validationData.verdict === "reconciled" || validationData.verdict === "max_rounds") && validationData.reconRounds) {
-    html += `<div class="verdict verdict-escalated">&#9888; Round 1 worst spread: ${validationData.spread.toFixed(1)}% (exceeds ${validationData.threshold}% threshold)</div>`;
-    html += '<div class="verdict-detail">Escalated to secondary models for reconciliation.</div>';
-
-    for (const rnd of validationData.reconRounds) {
-      html += `<div class="round-label round-label-r2">Round ${rnd.roundNum} &mdash; Reconciliation (secondary models)</div>`;
-      for (const r of rnd.results) {
-        html += `<div style="font-size:0.78rem;font-weight:600;color:var(--text-dim);margin:6px 0 4px;">${escapeHtml(r.providerName)} (R${rnd.roundNum})</div>`;
-        html += '<table class="validation-table"><thead><tr>';
-        html += '<th>Food</th><th>Cal &#8595;</th><th>Cal &#8593;</th><th>Pro &#8595;</th><th>Pro &#8593;</th>';
-        html += '</tr></thead><tbody>';
-        for (const item of r.data.items) {
-          html += `<tr>
-            <td>${escapeHtml(item.food)}</td>
-            <td class="num">${renderNum(item.calories_lower, 1)}</td>
-            <td class="num">${renderNum(item.calories_upper, 1)}</td>
-            <td class="num">${renderNum(item.protein_lower, 1)}</td>
-            <td class="num">${renderNum(item.protein_upper, 1)}</td>
-          </tr>`;
-        }
-        html += '</tbody></table>';
-        html += renderReasoning(`${r.providerName} (R${rnd.roundNum})`, r.data.reasoning);
-      }
-
-      const prevSpread = rnd.roundNum === 2 ? validationData.spread : validationData.reconRounds[validationData.reconRounds.indexOf(rnd) - 1].spread;
-      html += `<div class="spread-summary">`;
-      html += `Worst spread: <span class="spread-r1">${prevSpread.toFixed(1)}%</span> &#8594; <span class="spread-r2">${rnd.spread.toFixed(1)}%</span>`;
-      if (rnd.spread < prevSpread) {
-        html += ` <span class="spread-improved">(&#8595;${(prevSpread - rnd.spread).toFixed(1)}% reduction)</span>`;
-      }
-      html += '</div>';
-    }
-
-    if (validationData.verdict === "reconciled") {
-      html += `<div class="verdict verdict-consensus">&#10003; Final values: average of Round ${validationData.round} reconciled estimates</div>`;
-    } else {
-      html += `<div class="verdict verdict-warning">&#9888; Spread still above threshold after ${validationData.round} rounds — using last round average</div>`;
-    }
-  } else if (validationData.verdict === "recon_failed") {
-    html += `<div class="verdict verdict-warning">&#9888; Worst spread: ${validationData.spread.toFixed(1)}% (exceeds ${validationData.threshold}% threshold)</div>`;
-    html += '<div class="verdict-detail">Reconciliation failed. Falling back to previous round average.</div>';
-  }
-
-  if (validationData.failed && validationData.failed.length > 0) {
-    for (const f of validationData.failed) {
-      html += `<div class="verdict verdict-warning">&#9888; ${escapeHtml(f.providerName)} failed: ${escapeHtml(f.error)}</div>`;
-    }
-  }
-
-  html += '</div>'; // end validation-panel
-
-  // Editable results table
-  html += '<div class="table-wrapper" style="margin-top:12px;"><table><thead><tr>';
-  html += '<th>Food</th><th>Qty</th><th>Unit</th><th>Cal (low)</th><th>Cal (high)</th><th>Pro (low)</th><th>Pro (high)</th>';
-  html += '</tr></thead><tbody>';
-
-  let totalCalLow = 0, totalCalHigh = 0, totalProLow = 0, totalProHigh = 0;
-  for (let i = 0; i < inputItems.length; i++) {
-    const inp = inputItems[i];
-    const fin = finalItems[i];
-    totalCalLow += fin.calories_lower;
-    totalCalHigh += fin.calories_upper;
-    totalProLow += fin.protein_lower;
-    totalProHigh += fin.protein_upper;
-    html += `<tr data-batch-idx="${i}">
-      <td>${escapeHtml(inp.food)}</td>
-      <td class="num">${inp.qty}</td>
-      <td>${escapeHtml(inp.unit)}</td>
-      <td><input type="number" class="batch-res-cal-low" step="any" value="${renderNum(fin.calories_lower, 1)}"></td>
-      <td><input type="number" class="batch-res-cal-high" step="any" value="${renderNum(fin.calories_upper, 1)}"></td>
-      <td><input type="number" class="batch-res-pro-low" step="any" value="${renderNum(fin.protein_lower, 1)}"></td>
-      <td><input type="number" class="batch-res-pro-high" step="any" value="${renderNum(fin.protein_upper, 1)}"></td>
-    </tr>`;
-  }
-
-  // Totals row
-  html += `<tr class="daily-total">
-    <td colspan="3">Total</td>
-    <td class="num">${renderNum(totalCalLow, 1)}</td>
-    <td class="num">${renderNum(totalCalHigh, 1)}</td>
-    <td class="num">${renderNum(totalProLow, 1)}</td>
-    <td class="num">${renderNum(totalProHigh, 1)}</td>
-  </tr>`;
-
-  html += '</tbody></table></div>';
-  container.innerHTML = html;
-  document.getElementById("batch-save").disabled = false;
-}
-
 function saveBatchFoods() {
   const date = document.getElementById("batch-date").value;
   const time = document.getElementById("batch-time").value;
-  if (!date || !time) {
-    setBatchEstimateStatus("Date and time are required.", true);
-    return;
-  }
-
-  const resultRows = document.querySelectorAll("#batch-results table tbody tr[data-batch-idx]");
-  if (resultRows.length === 0) return;
-
+  if (!date || !time) { alert("Date and time are required."); return; }
   const entries = loadFoodEntries();
-  const maxId = entries.length ? Math.max(...entries.map((e) => e.id)) : 0;
-
-  const inputRows = document.querySelectorAll("#batch-items .batch-item-row");
-  const inputItems = [];
-  for (const row of inputRows) {
+  let maxId = entries.length ? Math.max(...entries.map((e) => e.id)) : 0;
+  const created = [];
+  document.querySelectorAll("#batch-items .batch-item-row").forEach((row) => {
     const food = row.querySelector(".batch-food").value.trim();
     const qty = row.querySelector(".batch-qty").value;
     const unit = row.querySelector(".batch-unit").value.trim();
-    if (food && qty && unit) inputItems.push({ food, qty: parseFloat(qty), unit });
-  }
-
-  resultRows.forEach((row, i) => {
-    const idx = parseInt(row.dataset.batchIdx);
-    const inp = inputItems[idx];
-    if (!inp) return;
-
-    const entry = {
-      id: maxId + 1 + i,
-      date,
-      time,
-      food: inp.food,
-      qty: inp.qty,
-      unit: inp.unit,
-      calLow: parseFloat(row.querySelector(".batch-res-cal-low").value) || 0,
-      calHigh: parseFloat(row.querySelector(".batch-res-cal-high").value) || 0,
-      proLow: parseFloat(row.querySelector(".batch-res-pro-low").value) || 0,
-      proHigh: parseFloat(row.querySelector(".batch-res-pro-high").value) || 0,
-    };
-
-    if (_batchValidationData) {
-      entry.aiThoughtProcess = _batchValidationData;
-    }
-
-    entries.push(entry);
+    if (!food || !qty || !unit) return;
+    const entry = { id: ++maxId, date, time, food, qty: parseFloat(qty), unit, macros: {}, estimateStatus: "pending" };
+    entries.push(entry); created.push(entry);
   });
-
+  if (!created.length) { alert("Add at least one food (name, quantity, and unit)."); return; }
   saveFoodEntries(entries);
   ensureDayExists(date);
-  _batchValidationData = null;
   closeBatchModal();
-  renderFoodTable();
-  renderCalorieTracker();
+  renderFoodTable(); renderCalorieTracker();
+  created.forEach((e) => enqueueEstimate(e.id));
 }
 
 // ============================================================
@@ -3895,6 +3085,9 @@ document.addEventListener("DOMContentLoaded", async () => {
     initFromLocalStorage();
   }
   document.body.classList.remove('loading');
+
+  // Resume any estimates left pending from a previous session
+  resumePendingEstimates();
 
   // Tab switching (top tabs + bottom nav share one activator)
   document.querySelectorAll(".tab, .bottom-nav-item").forEach((el) => {
@@ -3928,6 +3121,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   // Provider settings
   renderProviderSettings();
+  renderMacroSettings();
 
   // Migrate old API key if present
   const oldKey = localStorage.getItem("nt_openai_key");
@@ -3935,15 +3129,12 @@ document.addEventListener("DOMContentLoaded", async () => {
     localStorage.setItem("nt_key_openai", oldKey);
     localStorage.removeItem("nt_openai_key");
     renderProviderSettings();
+    renderMacroSettings();
   }
-
-  // Estimate button
-  document.getElementById("estimate-btn").addEventListener("click", estimateNutrition);
 
   // Batch modal
   document.getElementById("batch-add-btn").addEventListener("click", openBatchModal);
   document.getElementById("batch-add-row").addEventListener("click", addBatchRow);
-  document.getElementById("batch-estimate-btn").addEventListener("click", estimateBatchNutrition);
   document.getElementById("batch-save").addEventListener("click", saveBatchFoods);
   document.getElementById("batch-cancel").addEventListener("click", closeBatchModal);
   document.querySelector("#batch-modal .modal-overlay").addEventListener("click", closeBatchModal);
@@ -3993,42 +3184,14 @@ document.addEventListener("DOMContentLoaded", async () => {
     }
   });
 
-  // Auto-fill calories when selecting a previously used food, with proportional scaling
-  function scaleFromMatch() {
-    const foodName = document.getElementById("food-name").value;
-    const qty = parseFloat(document.getElementById("food-qty").value);
-    const unit = document.getElementById("food-unit").value.trim();
-    if (!foodName || !unit || !qty) return;
-
-    const entries = loadFoodEntries();
-    const match = entries.findLast((e) => e.food === foodName && e.unit === unit);
-    if (match && match.qty > 0) {
-      const ratio = qty / match.qty;
-      document.getElementById("food-cal-low").value = parseFloat((match.calLow * ratio).toFixed(2));
-      document.getElementById("food-cal-high").value = parseFloat((match.calHigh * ratio).toFixed(2));
-      document.getElementById("food-protein-low").value = parseFloat((match.proLow * ratio).toFixed(2));
-      document.getElementById("food-protein-high").value = parseFloat((match.proHigh * ratio).toFixed(2));
-    } else {
-      // No match for this unit — clear nutrition fields
-      document.getElementById("food-cal-low").value = "";
-      document.getElementById("food-cal-high").value = "";
-      document.getElementById("food-protein-low").value = "";
-      document.getElementById("food-protein-high").value = "";
-    }
-  }
-
   document.getElementById("food-name").addEventListener("change", function () {
     const entries = loadFoodEntries();
     const match = entries.findLast((e) => e.food === this.value);
     if (match) {
       document.getElementById("food-unit").value = match.unit;
       document.getElementById("food-qty").value = match.qty;
-      scaleFromMatch();
     }
   });
-
-  document.getElementById("food-qty").addEventListener("input", scaleFromMatch);
-  document.getElementById("food-unit").addEventListener("change", scaleFromMatch);
 
   // Initial render
   renderFoodTable();
