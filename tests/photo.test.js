@@ -34,3 +34,16 @@ test("parseVisionResponse returns empty items on bad shape; throws on non-JSON",
   assert.deepEqual(P.parseVisionResponse('{"foo":1}', ["calories"]).items, []);
   assert.throws(() => P.parseVisionResponse("not json", ["calories"]));
 });
+
+test("itemsToEntries builds entries with unique ids, qty 1, portion as unit, done status", () => {
+  const items = [
+    { food: "Sloppy joe", portion: "1 sandwich", macros: { calories: { low: 480, high: 560 } } },
+    { food: "Fries", portion: "1 cup", macros: { calories: { low: 340, high: 390 } } },
+  ];
+  const out = P.itemsToEntries(items, "2026-06-04", "12:30", 10);
+  assert.equal(out.length, 2);
+  assert.deepEqual({ id: out[0].id, qty: out[0].qty, unit: out[0].unit, food: out[0].food, status: out[0].estimateStatus, date: out[0].date, time: out[0].time },
+    { id: 10, qty: 1, unit: "1 sandwich", food: "Sloppy joe", status: "done", date: "2026-06-04", time: "12:30" });
+  assert.equal(out[1].id, 11);
+  assert.deepEqual(out[0].macros.calories, { low: 480, high: 560 });
+});
