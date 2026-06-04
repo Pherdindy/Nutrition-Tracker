@@ -796,20 +796,34 @@ async function runEstimateQueue() {
   try {
     while (_estimateQueue.length) {
       const id = _estimateQueue.shift();
-      const entries = loadFoodEntries();
-      const entry = entries.find((e) => e.id === id);
+      const snapshot = loadFoodEntries();
+      const entry = snapshot.find((e) => e.id === id);
       if (!entry || entry.estimateStatus !== "pending") continue;
       const ids = Macros.blankEnabled(entry, getEnabledMacros());
-      if (!ids.length) { entry.estimateStatus = "manual"; saveFoodEntries(entries); continue; }
-      try {
-        const filled = await estimateEntry(entry, ids);
-        if (!entry.macros) entry.macros = {};
-        for (const mid of ids) if (filled[mid]) entry.macros[mid] = filled[mid];
-        entry.estimateStatus = "done";
-      } catch (err) {
-        entry.estimateStatus = (err && err.message === "no-api-key") ? "manual" : "error";
+      if (!ids.length) {
+        const fresh = loadFoodEntries();
+        const t = fresh.find((e) => e.id === id);
+        if (t) { t.estimateStatus = "manual"; saveFoodEntries(fresh); }
+        continue;
       }
-      saveFoodEntries(entries);
+      let filled = null, noKey = false;
+      try {
+        filled = await estimateEntry(entry, ids);
+      } catch (err) {
+        noKey = err && err.message === "no-api-key";
+      }
+      // Reload fresh AFTER the await so a concurrent user edit isn't overwritten.
+      const fresh = loadFoodEntries();
+      const t = fresh.find((e) => e.id === id);
+      if (!t) continue; // entry deleted while estimate was in flight
+      if (filled) {
+        if (!t.macros) t.macros = {};
+        for (const mid of ids) if (filled[mid]) t.macros[mid] = filled[mid];
+        t.estimateStatus = ids.every((mid) => filled[mid]) ? "done" : "error";
+      } else {
+        t.estimateStatus = noKey ? "manual" : "error";
+      }
+      saveFoodEntries(fresh);
       renderFoodTable(); renderCalorieTracker();
     }
   } finally { _estimateRunning = false; }
@@ -1299,6 +1313,7 @@ async function estimateEntry(entry, ids) {
       const rok = recon.filter((r) => r.data);
       if (!rok.length) break;
       prev = rok;
+      if (prev.length === 1) break; // only one provider left — no point reconciling with itself
       if (Macros.spread(rok.map((r) => r.data), ids) <= getSpreadThreshold()) break;
     }
     flat = Macros.averageEstimates(prev.map((r) => r.data), ids);
