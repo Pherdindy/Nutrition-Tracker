@@ -593,25 +593,21 @@ function renderCalorieTracker() {
   // Sort by date desc
   days.sort((a, b) => (a.date < b.date ? 1 : -1));
 
+  const deficit = getDeficit();
   let html = "";
   for (const day of days) {
-    const bmr = calcBMR(day.weight, profile.height, day.age);
+    const bmr = calcBMR(day.weight, profile.height, profile.age);
     const tdee = calcTDEE(bmr, day.activity);
-    const target = tdee - day.deficit;
+    const target = tdee - deficit;
     const totals = getDailyFoodTotals(day.date, food);
-    const surpLow = totals.calLow - target;
-    const surpHigh = totals.calHigh - target;
-    const proSurpLow = totals.proLow - day.proteinTargetLow;
-    const proSurpHigh = totals.proHigh - day.proteinTargetHigh;
-
+    const surpLow = totals.calLow - target, surpHigh = totals.calHigh - target;
+    const proSurpLow = totals.proLow - profile.proteinLow, proSurpHigh = totals.proHigh - profile.proteinHigh;
     html += `<tr class="day-summary">
       <td>${formatDate(day.date)}</td>
-      <td class="num">${day.age}</td>
       <td class="num">${day.weight}</td>
       <td class="num">${renderNum(bmr, 1)}</td>
       <td>${escapeHtml(day.activity)}</td>
       <td class="num">${renderNum(tdee, 1)}</td>
-      <td class="num">${day.deficit}</td>
       <td class="num">${renderNum(target, 0)}</td>
       <td class="num">${renderNum(totals.calLow, 1)}</td>
       <td class="num">${renderNum(totals.calHigh, 1)}</td>
@@ -619,21 +615,17 @@ function renderCalorieTracker() {
       <td class="num ${surplusClass(surpHigh)}">${renderNum(surpHigh, 1)}</td>
       <td class="num">${renderNum(totals.proLow, 1)}</td>
       <td class="num">${renderNum(totals.proHigh, 1)}</td>
-      <td class="num">${day.proteinTargetLow}</td>
-      <td class="num">${day.proteinTargetHigh}</td>
       <td class="num ${surplusClass(-proSurpLow)}">${renderNum(proSurpLow, 1)}</td>
       <td class="num ${surplusClass(-proSurpHigh)}">${renderNum(proSurpHigh, 1)}</td>
-      <td>
-        <div class="actions">
-          <button class="btn-icon" onclick="editDay(${day.id})" title="Edit">&#9998;</button>
-          <button class="btn-icon delete" onclick="deleteDay(${day.id})" title="Delete">&#10005;</button>
-        </div>
-      </td>
+      <td><div class="actions">
+        <button class="btn-icon" onclick="editDay(${day.id})" title="Edit">&#9998;</button>
+        <button class="btn-icon delete" onclick="deleteDay(${day.id})" title="Delete">&#10005;</button>
+      </div></td>
     </tr>`;
   }
 
   if (!days.length) {
-    html = `<tr><td colspan="19" style="text-align:center;color:var(--text-dim);padding:32px;">No daily entries yet. Click "+ Add Day" to start.</td></tr>`;
+    html = `<tr><td colspan="15" style="text-align:center;color:var(--text-dim);padding:32px;">Log food to start tracking days.</td></tr>`;
   }
 
   tbody.innerHTML = html;
