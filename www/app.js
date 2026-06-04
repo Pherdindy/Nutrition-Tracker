@@ -4016,4 +4016,10 @@ document.addEventListener("DOMContentLoaded", async () => {
   renderFoodTable();
   renderCalorieTracker();
   renderCalorieTarget();
+
+  // Native status bar styling (no-op in a plain browser)
+  if (window.Capacitor && Capacitor.Plugins && Capacitor.Plugins.StatusBar) {
+    Capacitor.Plugins.StatusBar.setBackgroundColor({ color: "#16324f" }).catch(() => {});
+    Capacitor.Plugins.StatusBar.setStyle({ style: "DARK" }).catch(() => {});
+  }
 });

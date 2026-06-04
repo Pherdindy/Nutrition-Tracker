@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <rect width="1024" height="1024" rx="180" fill="#16324f"/>
+  <text x="512" y="470" font-family="Arial, sans-serif" font-size="300" font-weight="800"
+        fill="#2bb673" text-anchor="middle">LM</text>
+  <text x="512" y="700" font-family="Arial, sans-serif" font-size="120" font-weight="600"
+        fill="#ffffff" text-anchor="middle">Lazy</text>
+  <text x="512" y="830" font-family="Arial, sans-serif" font-size="120" font-weight="600"
+        fill="#ffffff" text-anchor="middle">Macros</text>
+</svg>
