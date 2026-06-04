@@ -663,9 +663,9 @@ function renderFoodMacroFields(entry) {
     if (fmt === "range") {
       html += `<div class="form-row-pair">
         <div class="form-row"><label>${escapeHtml(m.label)} lower (${escapeHtml(m.unit)})</label>
-          <input type="number" step="any" data-macro-low="${escapeHtml(id)}" value="${v ? v.low : ""}"></div>
+          <input type="number" step="any" data-macro-low="${escapeHtml(id)}" value="${v ? Math.round(v.low * 10) / 10 : ""}"></div>
         <div class="form-row"><label>${escapeHtml(m.label)} upper (${escapeHtml(m.unit)})</label>
-          <input type="number" step="any" data-macro-high="${escapeHtml(id)}" value="${v ? v.high : ""}"></div>
+          <input type="number" step="any" data-macro-high="${escapeHtml(id)}" value="${v ? Math.round(v.high * 10) / 10 : ""}"></div>
       </div>`;
     } else {
       html += `<div class="form-row"><label>${escapeHtml(m.label)} (${escapeHtml(m.unit)})</label>
@@ -729,14 +729,21 @@ function ensureDayExists(date) {
 function readMacroInputs() {
   const fmt = getValueFormat();
   const macros = {};
-  document.querySelectorAll("#food-macro-fields [data-macro-single]").forEach((el) => {
-    if (el.value !== "") { const n = parseFloat(el.value); macros[el.dataset.macroSingle] = { low: n, high: n }; }
-  });
   if (fmt === "range") {
     document.querySelectorAll("#food-macro-fields [data-macro-low]").forEach((lo) => {
       const id = lo.dataset.macroLow;
       const hi = document.querySelector(`#food-macro-fields [data-macro-high="${id}"]`);
-      if (lo.value !== "" && hi && hi.value !== "") macros[id] = { low: parseFloat(lo.value), high: parseFloat(hi.value) };
+      if (lo.value === "" || !hi || hi.value === "") return;
+      const low = parseFloat(lo.value), high = parseFloat(hi.value);
+      if (isNaN(low) || isNaN(high)) return;
+      macros[id] = { low, high };
+    });
+  } else {
+    document.querySelectorAll("#food-macro-fields [data-macro-single]").forEach((el) => {
+      if (el.value === "") return;
+      const n = parseFloat(el.value);
+      if (isNaN(n)) return;
+      macros[el.dataset.macroSingle] = { low: n, high: n };
     });
   }
   return macros;
@@ -760,7 +767,9 @@ function saveFood(e) {
   let saved;
   if (id) {
     const idx = entries.findIndex((x) => x.id === parseInt(id));
-    if (idx !== -1) { saved = { ...entries[idx], ...base }; entries[idx] = saved; }
+    if (idx === -1) { console.warn("saveFood: entry not found for id", id); return; }
+    saved = { ...entries[idx], ...base };
+    entries[idx] = saved;
   } else {
     const maxId = entries.length ? Math.max(...entries.map((x) => x.id)) : 0;
     saved = { ...base, id: maxId + 1 };
