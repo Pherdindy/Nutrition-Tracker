@@ -674,9 +674,16 @@ function openFoodModal(entry) {
   document.getElementById("validation-results").innerHTML = "";
   setEstimateStatus("");
 
-  // Show saved thought process if editing an entry that has one
+  // Show saved thought process if editing an entry that has one.
+  // Never let a malformed/legacy thought-process shape block the modal from
+  // opening — displaying it is secondary to being able to edit the entry.
   if (entry && entry.aiThoughtProcess) {
-    renderValidationResults(entry.aiThoughtProcess);
+    try {
+      renderValidationResults(entry.aiThoughtProcess);
+    } catch (err) {
+      console.error("Failed to render saved AI thought process:", err);
+      document.getElementById("validation-results").innerHTML = "";
+    }
   }
 
   modal.classList.remove("hidden");
@@ -1561,12 +1568,23 @@ function renderValidationResults(data) {
     }
   }
 
-  // Final values row
-  html += '<div class="final-values-row">';
-  html += `<span class="final-label">Final:</span> `;
-  html += `Cal ${renderNum(data.final.calories_lower, 1)}&ndash;${renderNum(data.final.calories_upper, 1)} kcal | `;
-  html += `Pro ${renderNum(data.final.protein_lower, 1)}&ndash;${renderNum(data.final.protein_upper, 1)} g`;
-  html += '</div>';
+  // Final values row.
+  // Single-item estimates store `data.final`; batch estimates store a per-item
+  // `data.finalItems` array (shared across every entry from that batch) and no `final`.
+  if (data.final) {
+    html += '<div class="final-values-row">';
+    html += `<span class="final-label">Final:</span> `;
+    html += `Cal ${renderNum(data.final.calories_lower, 1)}&ndash;${renderNum(data.final.calories_upper, 1)} kcal | `;
+    html += `Pro ${renderNum(data.final.protein_lower, 1)}&ndash;${renderNum(data.final.protein_upper, 1)} g`;
+    html += '</div>';
+  } else if (Array.isArray(data.finalItems)) {
+    html += '<div class="final-values-row">';
+    html += `<span class="final-label">Final (per item):</span> `;
+    html += data.finalItems
+      .map((it) => `Cal ${renderNum(it.calories_lower, 1)}&ndash;${renderNum(it.calories_upper, 1)} / Pro ${renderNum(it.protein_lower, 1)}&ndash;${renderNum(it.protein_upper, 1)}`)
+      .join(' &middot; ');
+    html += '</div>';
+  }
 
   html += '</div>';
   container.innerHTML = html;
