@@ -1387,6 +1387,74 @@ async function capturePhoto() {
   }
 }
 
+// --- Photo capture modal ---
+
+let _photoImage = null, _photoHistory = null, _photoItems = [];
+
+function setPhotoStatus(msg, isErr) {
+  const el = document.getElementById("photo-status");
+  if (el) { el.textContent = msg || ""; el.classList.toggle("error", !!isErr); }
+}
+function openPhotoModal() {
+  _photoItems = [];
+  document.getElementById("photo-items").innerHTML = "";
+  document.getElementById("photo-correct").classList.add("hidden");
+  document.getElementById("photo-correct-text").value = "";
+  document.getElementById("photo-confirm").disabled = true;
+  setPhotoStatus("");
+  document.getElementById("photo-modal").classList.remove("hidden");
+}
+function closePhotoModal() {
+  _photoImage = null; _photoHistory = null; _photoItems = [];
+  document.getElementById("photo-modal").classList.add("hidden");
+}
+function renderPhotoItems() {
+  const fmt = getValueFormat();
+  const host = document.getElementById("photo-items");
+  if (!_photoItems.length) { host.innerHTML = `<p class="cards-empty">No foods detected. Add a correction or cancel.</p>`; document.getElementById("photo-confirm").disabled = true; return; }
+  host.innerHTML = _photoItems.map((it, i) => `
+    <div class="photo-item" data-idx="${i}">
+      <input class="photo-item-food" data-idx="${i}" value="${escapeHtml(it.food)}">
+      <input class="photo-item-portion" data-idx="${i}" value="${escapeHtml(it.portion)}">
+      <div class="photo-item-macros">${getEnabledMacros().map((id) => `${escapeHtml(Macros.byId(id).label)} ${Macros.formatMacro(Macros.getMacro(it, id), fmt)}`).join(" · ")}</div>
+    </div>`).join("");
+  document.getElementById("photo-confirm").disabled = false;
+  host.querySelectorAll(".photo-item-food").forEach((el) => el.addEventListener("input", (e) => { _photoItems[+e.target.dataset.idx].food = e.target.value; }));
+  host.querySelectorAll(".photo-item-portion").forEach((el) => el.addEventListener("input", (e) => { _photoItems[+e.target.dataset.idx].portion = e.target.value; }));
+}
+async function runPhotoEstimate() {
+  setPhotoStatus("Reading photo…");
+  document.getElementById("photo-confirm").disabled = true;
+  try {
+    const { items } = await estimatePhoto(_photoImage, _photoHistory);
+    _photoItems = items;
+    setPhotoStatus(items.length ? "" : "No foods detected.");
+    renderPhotoItems();
+  } catch (e) {
+    setPhotoStatus(e.message === "no-api-key" ? "No vision provider key — add one in Targets." : "Couldn't read that photo — try again or add manually.", true);
+  }
+}
+async function startPhotoCapture() {
+  if (!getVisionProvider()) { alert("Add an AI provider API key in Targets to use photo capture."); return; }
+  const image = await capturePhoto();
+  if (!image) return;
+  _photoImage = image; _photoHistory = null;
+  openPhotoModal();
+  await runPhotoEstimate();
+}
+function confirmPhotoItems() {
+  const entries = loadFoodEntries();
+  const maxId = entries.length ? Math.max(...entries.map((e) => e.id)) : 0;
+  const now = new Date();
+  const date = now.toISOString().slice(0, 10), time = now.toTimeString().slice(0, 5);
+  const created = PhotoEstimate.itemsToEntries(_photoItems, date, time, maxId + 1);
+  if (!created.length) return;
+  saveFoodEntries([...entries, ...created]);
+  ensureDayExists(date);
+  closePhotoModal();
+  renderFoodTable(); renderCalorieTracker();
+}
+
 // --- Settings UI ---
 
 function renderProviderSettings() {
@@ -3230,6 +3298,22 @@ document.addEventListener("DOMContentLoaded", async () => {
   document.getElementById("batch-save").addEventListener("click", saveBatchFoods);
   document.getElementById("batch-cancel").addEventListener("click", closeBatchModal);
   document.querySelector("#batch-modal .modal-overlay").addEventListener("click", closeBatchModal);
+
+  // Photo capture modal
+  document.getElementById("photo-add-btn")?.addEventListener("click", startPhotoCapture);
+  document.getElementById("photo-fab")?.addEventListener("click", startPhotoCapture);
+  document.getElementById("photo-cancel").addEventListener("click", closePhotoModal);
+  document.querySelector("#photo-modal .modal-overlay").addEventListener("click", closePhotoModal);
+  document.getElementById("photo-confirm").addEventListener("click", confirmPhotoItems);
+  document.getElementById("photo-correct-toggle").addEventListener("click", () => document.getElementById("photo-correct").classList.toggle("hidden"));
+  document.getElementById("photo-correct-submit").addEventListener("click", () => {
+    const t = document.getElementById("photo-correct-text").value.trim();
+    if (!t) return;
+    _photoHistory = { priorItems: _photoItems, correction: t };
+    document.getElementById("photo-correct-text").value = "";
+    document.getElementById("photo-correct").classList.add("hidden");
+    runPhotoEstimate();
+  });
 
   // Diet Assessment
   document.getElementById("run-assessment-btn").addEventListener("click", runDietAssessment);
