@@ -652,54 +652,40 @@ function renderCalorieTarget() {
 // FOOD CRUD
 // ============================================================
 
+function renderFoodMacroFields(entry) {
+  const host = document.getElementById("food-macro-fields");
+  if (!host) return;
+  const fmt = getValueFormat();
+  let html = "";
+  for (const id of getEnabledMacros()) {
+    const m = Macros.byId(id);
+    const v = entry ? Macros.getMacro(entry, id) : null;
+    if (fmt === "range") {
+      html += `<div class="form-row-pair">
+        <div class="form-row"><label>${escapeHtml(m.label)} lower (${escapeHtml(m.unit)})</label>
+          <input type="number" step="any" data-macro-low="${escapeHtml(id)}" value="${v ? v.low : ""}"></div>
+        <div class="form-row"><label>${escapeHtml(m.label)} upper (${escapeHtml(m.unit)})</label>
+          <input type="number" step="any" data-macro-high="${escapeHtml(id)}" value="${v ? v.high : ""}"></div>
+      </div>`;
+    } else {
+      html += `<div class="form-row"><label>${escapeHtml(m.label)} (${escapeHtml(m.unit)})</label>
+        <input type="number" step="any" data-macro-single="${escapeHtml(id)}" value="${v != null ? Macros.midpoint(v) : ""}"></div>`;
+    }
+  }
+  host.innerHTML = html;
+}
+
 function openFoodModal(entry) {
   const modal = document.getElementById("food-modal");
-  const title = document.getElementById("food-modal-title");
-
-  if (entry) {
-    title.textContent = "Edit Food Entry";
-    document.getElementById("food-id").value = entry.id;
-    document.getElementById("food-date").value = entry.date;
-    document.getElementById("food-time").value = entry.time;
-    document.getElementById("food-name").value = entry.food;
-    document.getElementById("food-qty").value = entry.qty;
-    document.getElementById("food-unit").value = entry.unit;
-    document.getElementById("food-cal-low").value = entry.calLow;
-    document.getElementById("food-cal-high").value = entry.calHigh;
-    document.getElementById("food-protein-low").value = entry.proLow;
-    document.getElementById("food-protein-high").value = entry.proHigh;
-    // Restore saved thought process
-    if (entry.aiThoughtProcess) {
-      _lastValidationData = entry.aiThoughtProcess;
-    }
-  } else {
-    title.textContent = "Add Food Entry";
-    document.getElementById("food-form").reset();
-    document.getElementById("food-id").value = "";
-    // Default date to today
-    document.getElementById("food-date").value = new Date().toISOString().slice(0, 10);
-    // Default time to now
-    const now = new Date();
-    document.getElementById("food-time").value =
-      now.getHours().toString().padStart(2, "0") + ":" + now.getMinutes().toString().padStart(2, "0");
-  }
-
+  document.getElementById("food-modal-title").textContent = entry ? "Edit Food Entry" : "Add Food Entry";
+  document.getElementById("food-id").value = entry ? entry.id : "";
+  document.getElementById("food-date").value = entry ? entry.date : new Date().toISOString().slice(0, 10);
+  document.getElementById("food-time").value = entry ? entry.time : new Date().toTimeString().slice(0, 5);
+  document.getElementById("food-name").value = entry ? entry.food : "";
+  document.getElementById("food-qty").value = entry ? entry.qty : "";
+  document.getElementById("food-unit").value = entry ? entry.unit : "";
   populateFoodSuggestions();
-  document.getElementById("validation-results").innerHTML = "";
-  setEstimateStatus("");
-
-  // Show saved thought process if editing an entry that has one.
-  // Never let a malformed/legacy thought-process shape block the modal from
-  // opening — displaying it is secondary to being able to edit the entry.
-  if (entry && entry.aiThoughtProcess) {
-    try {
-      renderValidationResults(entry.aiThoughtProcess);
-    } catch (err) {
-      console.error("Failed to render saved AI thought process:", err);
-      document.getElementById("validation-results").innerHTML = "";
-    }
-  }
-
+  renderFoodMacroFields(entry);
   modal.classList.remove("hidden");
 }
 
@@ -740,56 +726,55 @@ function ensureDayExists(date) {
   saveDayEntries(days);
 }
 
+function readMacroInputs() {
+  const fmt = getValueFormat();
+  const macros = {};
+  document.querySelectorAll("#food-macro-fields [data-macro-single]").forEach((el) => {
+    if (el.value !== "") { const n = parseFloat(el.value); macros[el.dataset.macroSingle] = { low: n, high: n }; }
+  });
+  if (fmt === "range") {
+    document.querySelectorAll("#food-macro-fields [data-macro-low]").forEach((lo) => {
+      const id = lo.dataset.macroLow;
+      const hi = document.querySelector(`#food-macro-fields [data-macro-high="${id}"]`);
+      if (lo.value !== "" && hi && hi.value !== "") macros[id] = { low: parseFloat(lo.value), high: parseFloat(hi.value) };
+    });
+  }
+  return macros;
+}
+
 function saveFood(e) {
   e.preventDefault();
   const entries = loadFoodEntries();
   const id = document.getElementById("food-id").value;
-
-  const entry = {
+  const base = {
     date: document.getElementById("food-date").value,
     time: document.getElementById("food-time").value,
     food: document.getElementById("food-name").value,
     qty: parseFloat(document.getElementById("food-qty").value),
     unit: document.getElementById("food-unit").value,
-    calLow: parseFloat(document.getElementById("food-cal-low").value),
-    calHigh: parseFloat(document.getElementById("food-cal-high").value),
-    proLow: parseFloat(document.getElementById("food-protein-low").value),
-    proHigh: parseFloat(document.getElementById("food-protein-high").value),
+    macros: readMacroInputs(),
   };
+  const blanks = Macros.blankEnabled(base, getEnabledMacros());
+  base.estimateStatus = blanks.length ? "pending" : "manual";
 
-  // Attach AI thought process if available
-  if (_lastValidationData) {
-    entry.aiThoughtProcess = _lastValidationData;
-    _lastValidationData = null;
-  }
-
-  // Preserve existing thought process if no new estimation was run
-  if (!entry.aiThoughtProcess && id) {
-    const existing = entries.find((e) => e.id === parseInt(id));
-    if (existing && existing.aiThoughtProcess) {
-      entry.aiThoughtProcess = existing.aiThoughtProcess;
-    }
-  }
-
+  let saved;
   if (id) {
-    // Edit
-    const idx = entries.findIndex((e) => e.id === parseInt(id));
-    if (idx !== -1) {
-      entries[idx] = { ...entries[idx], ...entry };
-    }
+    const idx = entries.findIndex((x) => x.id === parseInt(id));
+    if (idx !== -1) { saved = { ...entries[idx], ...base }; entries[idx] = saved; }
   } else {
-    // Add
-    const maxId = entries.length ? Math.max(...entries.map((e) => e.id)) : 0;
-    entry.id = maxId + 1;
-    entries.push(entry);
+    const maxId = entries.length ? Math.max(...entries.map((x) => x.id)) : 0;
+    saved = { ...base, id: maxId + 1 };
+    entries.push(saved);
   }
-
   saveFoodEntries(entries);
-  ensureDayExists(entry.date);
+  ensureDayExists(base.date);
   closeFoodModal();
   renderFoodTable();
   renderCalorieTracker();
+  if (saved && saved.estimateStatus === "pending") enqueueEstimate(saved.id);
 }
+
+function enqueueEstimate(id) { /* implemented in Phase 5 (background estimation) */ }
 
 window.editFood = function (id) {
   const entries = loadFoodEntries();
@@ -4012,9 +3997,6 @@ document.addEventListener("DOMContentLoaded", async () => {
     renderMacroSettings();
   }
 
-  // Estimate button
-  document.getElementById("estimate-btn").addEventListener("click", estimateNutrition);
-
   // Batch modal
   document.getElementById("batch-add-btn").addEventListener("click", openBatchModal);
   document.getElementById("batch-add-row").addEventListener("click", addBatchRow);
@@ -4068,42 +4050,14 @@ document.addEventListener("DOMContentLoaded", async () => {
     }
   });
 
-  // Auto-fill calories when selecting a previously used food, with proportional scaling
-  function scaleFromMatch() {
-    const foodName = document.getElementById("food-name").value;
-    const qty = parseFloat(document.getElementById("food-qty").value);
-    const unit = document.getElementById("food-unit").value.trim();
-    if (!foodName || !unit || !qty) return;
-
-    const entries = loadFoodEntries();
-    const match = entries.findLast((e) => e.food === foodName && e.unit === unit);
-    if (match && match.qty > 0) {
-      const ratio = qty / match.qty;
-      document.getElementById("food-cal-low").value = parseFloat((match.calLow * ratio).toFixed(2));
-      document.getElementById("food-cal-high").value = parseFloat((match.calHigh * ratio).toFixed(2));
-      document.getElementById("food-protein-low").value = parseFloat((match.proLow * ratio).toFixed(2));
-      document.getElementById("food-protein-high").value = parseFloat((match.proHigh * ratio).toFixed(2));
-    } else {
-      // No match for this unit — clear nutrition fields
-      document.getElementById("food-cal-low").value = "";
-      document.getElementById("food-cal-high").value = "";
-      document.getElementById("food-protein-low").value = "";
-      document.getElementById("food-protein-high").value = "";
-    }
-  }
-
   document.getElementById("food-name").addEventListener("change", function () {
     const entries = loadFoodEntries();
     const match = entries.findLast((e) => e.food === this.value);
     if (match) {
       document.getElementById("food-unit").value = match.unit;
       document.getElementById("food-qty").value = match.qty;
-      scaleFromMatch();
     }
   });
-
-  document.getElementById("food-qty").addEventListener("input", scaleFromMatch);
-  document.getElementById("food-unit").addEventListener("change", scaleFromMatch);
 
   // Initial render
   renderFoodTable();
