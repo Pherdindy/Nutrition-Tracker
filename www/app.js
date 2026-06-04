@@ -10,6 +10,15 @@ MOBILE_MQ.addEventListener("change", () => {
   _responsiveRenderers.forEach((fn) => { try { fn(); } catch (e) { console.error(e); } });
 });
 
+function activateTab(tabId) {
+  document.querySelectorAll(".tab").forEach((t) =>
+    t.classList.toggle("active", t.dataset.tab === tabId));
+  document.querySelectorAll(".bottom-nav-item").forEach((b) =>
+    b.classList.toggle("active", b.dataset.tab === tabId));
+  document.querySelectorAll(".tab-content").forEach((c) =>
+    c.classList.toggle("active", c.id === tabId));
+}
+
 // ============================================================
 // DATA LAYER — Supabase with in-memory cache
 // ============================================================
@@ -3861,14 +3870,9 @@ document.addEventListener("DOMContentLoaded", async () => {
   }
   document.body.classList.remove('loading');
 
-  // Tab switching
-  document.querySelectorAll(".tab").forEach((tab) => {
-    tab.addEventListener("click", () => {
-      document.querySelectorAll(".tab").forEach((t) => t.classList.remove("active"));
-      document.querySelectorAll(".tab-content").forEach((c) => c.classList.remove("active"));
-      tab.classList.add("active");
-      document.getElementById(tab.dataset.tab).classList.add("active");
-    });
+  // Tab switching (top tabs + bottom nav share one activator)
+  document.querySelectorAll(".tab, .bottom-nav-item").forEach((el) => {
+    el.addEventListener("click", () => activateTab(el.dataset.tab));
   });
 
   // Food modal
