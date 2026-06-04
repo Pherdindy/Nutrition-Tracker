@@ -1,3 +1,15 @@
+// ---- Responsive helpers (Phase 1 mobile) ----
+const MOBILE_MQ = window.matchMedia("(max-width: 720px)");
+function isMobile() { return MOBILE_MQ.matches; }
+
+// Re-render whatever is currently on screen when the breakpoint flips
+// (desktop tables <-> mobile cards). Renderers register themselves here.
+const _responsiveRenderers = [];
+function onBreakpointChange(fn) { _responsiveRenderers.push(fn); }
+MOBILE_MQ.addEventListener("change", () => {
+  _responsiveRenderers.forEach((fn) => { try { fn(); } catch (e) { console.error(e); } });
+});
+
 // ============================================================
 // DATA LAYER — Supabase with in-memory cache
 // ============================================================

@@ -1609,3 +1609,19 @@ body.loading::after {
   font-size: 1.2rem; color: var(--text-dim);
   z-index: 9999;
 }
+
+/* ============================================================
+   PHASE 1 — MOBILE (<= 720px)
+   ============================================================ */
+
+/* Mobile-only / desktop-only visibility helpers */
+.mobile-only { display: none; }
+@media (max-width: 720px) {
+  .desktop-only { display: none !important; }
+  .mobile-only { display: block; }
+
+  body { -webkit-text-size-adjust: 100%; }
+  .app { padding: 0 0 72px 0; }          /* leave room for the bottom nav */
+  .table-wrapper { display: none; }       /* hide wide tables on phones */
+  .toolbar { flex-wrap: wrap; gap: 8px; padding: 12px; }
+}
