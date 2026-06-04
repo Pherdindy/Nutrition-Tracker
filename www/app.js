@@ -660,6 +660,9 @@ function renderCalorieTarget() {
   document.getElementById("profile-height").value = profile.height;
   document.getElementById("profile-protein-low").value = profile.proteinLow;
   document.getElementById("profile-protein-high").value = profile.proteinHigh;
+  document.getElementById("profile-age").value = profile.age != null ? profile.age : 32;
+  const _goalSel = document.getElementById("profile-goal");
+  if (_goalSel) _goalSel.innerHTML = Targets.GOALS.map((g) => `<option value="${escapeHtml(g.goal)}" ${profile.weightLossGoal === g.goal ? "selected" : ""}>${escapeHtml(g.goal)}</option>`).join("");
 }
 
 // ============================================================
@@ -972,8 +975,10 @@ function saveProfileForm(e) {
   e.preventDefault();
   const profile = {
     height: parseFloat(document.getElementById("profile-height").value),
+    age: parseInt(document.getElementById("profile-age").value),
     proteinLow: parseFloat(document.getElementById("profile-protein-low").value),
     proteinHigh: parseFloat(document.getElementById("profile-protein-high").value),
+    weightLossGoal: document.getElementById("profile-goal").value,
   };
   saveProfile(profile);
   renderCalorieTracker();
