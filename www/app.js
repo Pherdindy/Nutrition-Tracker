@@ -115,14 +115,21 @@ function saveFoodEntries(entries) {
   _cache.food = [...entries];
   localStorage.setItem("nt_food", JSON.stringify(entries));
   bgWrite(async () => {
-    // Delete all then re-insert (simple approach for full-array saves)
-    const { error: delErr } = await sb.from('food_entries').delete().gte('id', 0);
-    if (delErr) throw delErr;
-    if (entries.length > 0) {
-      const rows = entries.map(foodJsToRow);
-      const { error } = await sb.from('food_entries').upsert(rows);
+    // Upsert FIRST, then delete only rows that no longer exist. This is non-destructive
+    // on failure: if the upsert errors (e.g. a missing column), nothing is deleted, so the
+    // table is never emptied. (The old delete-all-then-insert wiped the table when the
+    // re-insert failed.)
+    if (entries.length === 0) {
+      const { error } = await sb.from('food_entries').delete().gte('id', 0);
       if (error) throw error;
+      return;
     }
+    const rows = entries.map(foodJsToRow);
+    const { error: upErr } = await sb.from('food_entries').upsert(rows);
+    if (upErr) throw upErr; // table untouched — no rows deleted
+    const ids = entries.map((e) => e.id);
+    const { error: delErr } = await sb.from('food_entries').delete().not('id', 'in', `(${ids.join(',')})`);
+    if (delErr) throw delErr;
   });
 }
 
