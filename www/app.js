@@ -1178,7 +1178,11 @@ const PROVIDERS = [
         }),
       });
       if (!res.ok) { const err = await res.json().catch(() => ({})); throw new Error(err.error?.message || `Claude API error ${res.status}`); }
-      return (await res.json()).content[0].text;
+      const data = await res.json();
+      if (data.stop_reason === "max_tokens") throw new Error("Response truncated (token limit) — try a simpler photo");
+      const block = data.content && data.content[0];
+      if (!block || block.type !== "text") throw new Error("Empty or non-text response from Claude");
+      return block.text;
     },
   },
 ];
@@ -1372,6 +1376,7 @@ async function capturePhoto() {
     return null;
   }
   try {
+    // TODO: getPhoto is deprecated in @capacitor/camera v8; migrate to pickImages/pickMedia when upgrading to v9.
     const photo = await Capacitor.Plugins.Camera.getPhoto({
       quality: 70, resultType: "base64", source: "PROMPT", width: 1024, correctOrientation: true,
     });
@@ -1480,7 +1485,10 @@ function renderMacroSettings() {
     <option value="single" ${mode === "single" ? "selected" : ""}>Single fast call</option></select></div>`;
   const visionId = (getVisionProvider() || {}).id || "";
   html += `<div class="form-row"><label>Photo (vision) provider</label><select id="set-vision-provider">`;
-  html += PROVIDERS.map((p) => `<option value="${escapeHtml(p.id)}" ${p.id === visionId ? "selected" : ""}>${escapeHtml(p.name)}</option>`).join("");
+  html += PROVIDERS.map((p) => {
+    const hasKey = getProviderSettings(p.id).apiKey.length > 0;
+    return `<option value="${escapeHtml(p.id)}" ${p.id === visionId ? "selected" : ""}>${escapeHtml(p.name)}${hasKey ? "" : " (no key)"}</option>`;
+  }).join("");
   html += `</select></div>`;
   html += "</div>";
   c.innerHTML = html;
