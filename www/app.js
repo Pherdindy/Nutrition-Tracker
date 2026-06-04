@@ -57,8 +57,8 @@ function dayJsToRow(e) {
   // (no days-table schema change) and any reader that still expects them works. Reads ignore them.
   const p = (typeof loadProfile === "function") ? loadProfile() : {};
   return { id: e.id, date: e.date, weight: e.weight, activity: e.activity,
-    age: p.age != null ? p.age : 32, deficit: Targets.deficitForGoal(p.weightLossGoal),
-    protein_target_low: p.proteinLow != null ? p.proteinLow : 135, protein_target_high: p.proteinHigh != null ? p.proteinHigh : 150 };
+    age: p.age != null ? p.age : DEFAULT_PROFILE.age, deficit: Targets.deficitForGoal(p.weightLossGoal),
+    protein_target_low: p.proteinLow != null ? p.proteinLow : DEFAULT_PROFILE.proteinLow, protein_target_high: p.proteinHigh != null ? p.proteinHigh : DEFAULT_PROFILE.proteinHigh };
 }
 function profileRowToJs(r) {
   return { height: Number(r.height), age: r.age != null ? Number(r.age) : null, proteinLow: Number(r.protein_low), proteinHigh: Number(r.protein_high), weightLossGoal: r.weight_loss_goal || null };
@@ -140,7 +140,7 @@ function saveFoodEntries(entries) {
 }
 
 function loadDayEntries() {
-  if (_cache.ready && _cache.days) return _cache.days.map(Targets.migrateDay);
+  if (_cache.ready && _cache.days) return [..._cache.days];
   const saved = localStorage.getItem("nt_days");
   return saved ? JSON.parse(saved).map(Targets.migrateDay) : [];
 }
@@ -316,6 +316,7 @@ async function initFromSupabase() {
   // Populate cache from Supabase data
   _cache.food = foodRes.data.map(foodRowToJs);
   _cache.profile = hasProfileData ? profileRowToJs(profileRes.data) : { ...DEFAULT_PROFILE };
+  const _needSeed = _cache.profile.age == null || _cache.profile.weightLossGoal == null;
   _cache.profile = Targets.migrateProfile(_cache.profile, daysRes.data.map((r) => ({ age: r.age, deficit: r.deficit })));
   _cache.days = daysRes.data.map(dayRowToJs);
   _cache.assessments = (assessRes.data || []).map(r => r.data);
@@ -335,7 +336,7 @@ async function initFromSupabase() {
   localStorage.setItem("nt_assessments", JSON.stringify(_cache.assessments));
 
   _cache.ready = true;
-  saveProfile(_cache.profile); // persist any newly-seeded age/goal (idempotent)
+  if (_needSeed) saveProfile(_cache.profile); // persist only when age/goal were missing before seeding
   console.log('[Supabase] Loaded from cloud:', _cache.food.length, 'food entries,', _cache.days.length, 'days');
 }
 
@@ -357,13 +358,14 @@ function initFromLocalStorage() {
   const parsedDays = savedDays ? JSON.parse(savedDays) : [];
   const savedProfile = localStorage.getItem("nt_profile");
   _cache.profile = savedProfile ? JSON.parse(savedProfile) : { ...DEFAULT_PROFILE };
+  const _needSeed = _cache.profile.age == null || _cache.profile.weightLossGoal == null;
   _cache.profile = Targets.migrateProfile(_cache.profile, parsedDays);
   _cache.days = parsedDays.map(Targets.migrateDay);
   const savedAssessments = localStorage.getItem("nt_assessments");
   _cache.assessments = savedAssessments ? JSON.parse(savedAssessments) : [];
 
   _cache.ready = true;
-  saveProfile(_cache.profile);
+  if (_needSeed) saveProfile(_cache.profile); // persist only when age/goal were missing before seeding
   console.log('[localStorage] Loaded from local storage (offline fallback)');
 }
 
