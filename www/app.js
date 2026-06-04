@@ -50,17 +50,21 @@ function foodJsToRow(e) {
 }
 
 function dayRowToJs(r) {
-  return { id: r.id, date: r.date, age: r.age, weight: Number(r.weight), activity: r.activity, deficit: Number(r.deficit), proteinTargetLow: Number(r.protein_target_low), proteinTargetHigh: Number(r.protein_target_high) };
+  return Targets.migrateDay({ id: r.id, date: r.date, weight: Number(r.weight), activity: r.activity });
 }
 function dayJsToRow(e) {
-  return { id: e.id, date: e.date, age: e.age, weight: e.weight, activity: e.activity, deficit: e.deficit, protein_target_low: e.proteinTargetLow, protein_target_high: e.proteinTargetHigh };
+  // Keep legacy day columns populated from the current global profile so old rows stay valid
+  // (no days-table schema change) and any reader that still expects them works. Reads ignore them.
+  const p = (typeof loadProfile === "function") ? loadProfile() : {};
+  return { id: e.id, date: e.date, weight: e.weight, activity: e.activity,
+    age: p.age != null ? p.age : DEFAULT_PROFILE.age, deficit: Targets.deficitForGoal(p.weightLossGoal),
+    protein_target_low: p.proteinLow != null ? p.proteinLow : DEFAULT_PROFILE.proteinLow, protein_target_high: p.proteinHigh != null ? p.proteinHigh : DEFAULT_PROFILE.proteinHigh };
 }
-
 function profileRowToJs(r) {
-  return { height: Number(r.height), proteinLow: Number(r.protein_low), proteinHigh: Number(r.protein_high) };
+  return { height: Number(r.height), age: r.age != null ? Number(r.age) : null, proteinLow: Number(r.protein_low), proteinHigh: Number(r.protein_high), weightLossGoal: r.weight_loss_goal || null };
 }
 function profileJsToRow(p) {
-  return { id: 1, height: p.height, protein_low: p.proteinLow, protein_high: p.proteinHigh };
+  return { id: 1, height: p.height, age: p.age, protein_low: p.proteinLow, protein_high: p.proteinHigh, weight_loss_goal: p.weightLossGoal };
 }
 
 // ---- bgWrite: fire-and-forget async write to Supabase ----
@@ -86,7 +90,7 @@ const WEIGHT_LOSS_GOALS = [
   { goal: "1.00 kg/week", daily: 1100, weekly: 7700 },
 ];
 
-const DEFAULT_PROFILE = { height: 170.1, proteinLow: 135, proteinHigh: 150 };
+const DEFAULT_PROFILE = { height: 170.1, age: 32, proteinLow: 135, proteinHigh: 150, weightLossGoal: "0.50 kg/week" };
 
 // ---- Data functions (synchronous reads from cache, write-through to Supabase) ----
 
@@ -104,6 +108,8 @@ function saveProfile(profile) {
     if (error) throw error;
   });
 }
+
+function getDeficit() { return Targets.deficitForGoal(loadProfile().weightLossGoal); }
 
 function loadFoodEntries() {
   if (_cache.ready && _cache.food) return _cache.food.map(Macros.migrateEntry);
@@ -136,20 +142,24 @@ function saveFoodEntries(entries) {
 function loadDayEntries() {
   if (_cache.ready && _cache.days) return [..._cache.days];
   const saved = localStorage.getItem("nt_days");
-  return saved ? JSON.parse(saved) : [];
+  return saved ? JSON.parse(saved).map(Targets.migrateDay) : [];
 }
 
 function saveDayEntries(entries) {
   _cache.days = [...entries];
   localStorage.setItem("nt_days", JSON.stringify(entries));
   bgWrite(async () => {
-    const { error: delErr } = await sb.from('days').delete().gte('id', 0);
-    if (delErr) throw delErr;
-    if (entries.length > 0) {
-      const rows = entries.map(dayJsToRow);
-      const { error } = await sb.from('days').upsert(rows);
+    if (entries.length === 0) {
+      const { error } = await sb.from('days').delete().gte('id', 0);
       if (error) throw error;
+      return;
     }
+    const rows = entries.map(dayJsToRow);
+    const { error: upErr } = await sb.from('days').upsert(rows);
+    if (upErr) throw upErr; // table untouched — no rows deleted
+    const ids = entries.map((e) => e.id);
+    const { error: delErr } = await sb.from('days').delete().not('id', 'in', `(${ids.join(',')})`);
+    if (delErr) throw delErr;
   });
 }
 
@@ -305,8 +315,10 @@ async function initFromSupabase() {
 
   // Populate cache from Supabase data
   _cache.food = foodRes.data.map(foodRowToJs);
-  _cache.days = daysRes.data.map(dayRowToJs);
   _cache.profile = hasProfileData ? profileRowToJs(profileRes.data) : { ...DEFAULT_PROFILE };
+  const _needSeed = _cache.profile.age == null || _cache.profile.weightLossGoal == null;
+  _cache.profile = Targets.migrateProfile(_cache.profile, daysRes.data.map((r) => ({ age: r.age, deficit: r.deficit })));
+  _cache.days = daysRes.data.map(dayRowToJs);
   _cache.assessments = (assessRes.data || []).map(r => r.data);
 
   // Settings (key-value pairs)
@@ -324,6 +336,7 @@ async function initFromSupabase() {
   localStorage.setItem("nt_assessments", JSON.stringify(_cache.assessments));
 
   _cache.ready = true;
+  if (_needSeed) saveProfile(_cache.profile); // persist only when age/goal were missing before seeding
   console.log('[Supabase] Loaded from cloud:', _cache.food.length, 'food entries,', _cache.days.length, 'days');
 }
 
@@ -342,13 +355,17 @@ function initFromLocalStorage() {
   const savedFood = localStorage.getItem("nt_food");
   _cache.food = savedFood ? JSON.parse(savedFood).map(Macros.migrateEntry) : [];
   const savedDays = localStorage.getItem("nt_days");
-  _cache.days = savedDays ? JSON.parse(savedDays) : [];
+  const parsedDays = savedDays ? JSON.parse(savedDays) : [];
   const savedProfile = localStorage.getItem("nt_profile");
   _cache.profile = savedProfile ? JSON.parse(savedProfile) : { ...DEFAULT_PROFILE };
+  const _needSeed = _cache.profile.age == null || _cache.profile.weightLossGoal == null;
+  _cache.profile = Targets.migrateProfile(_cache.profile, parsedDays);
+  _cache.days = parsedDays.map(Targets.migrateDay);
   const savedAssessments = localStorage.getItem("nt_assessments");
   _cache.assessments = savedAssessments ? JSON.parse(savedAssessments) : [];
 
   _cache.ready = true;
+  if (_needSeed) saveProfile(_cache.profile); // persist only when age/goal were missing before seeding
   console.log('[localStorage] Loaded from local storage (offline fallback)');
 }
 
@@ -576,25 +593,21 @@ function renderCalorieTracker() {
   // Sort by date desc
   days.sort((a, b) => (a.date < b.date ? 1 : -1));
 
+  const deficit = getDeficit();
   let html = "";
   for (const day of days) {
-    const bmr = calcBMR(day.weight, profile.height, day.age);
+    const bmr = calcBMR(day.weight, profile.height, profile.age);
     const tdee = calcTDEE(bmr, day.activity);
-    const target = tdee - day.deficit;
+    const target = tdee - deficit;
     const totals = getDailyFoodTotals(day.date, food);
-    const surpLow = totals.calLow - target;
-    const surpHigh = totals.calHigh - target;
-    const proSurpLow = totals.proLow - day.proteinTargetLow;
-    const proSurpHigh = totals.proHigh - day.proteinTargetHigh;
-
+    const surpLow = totals.calLow - target, surpHigh = totals.calHigh - target;
+    const proSurpLow = totals.proLow - profile.proteinLow, proSurpHigh = totals.proHigh - profile.proteinHigh;
     html += `<tr class="day-summary">
       <td>${formatDate(day.date)}</td>
-      <td class="num">${day.age}</td>
       <td class="num">${day.weight}</td>
       <td class="num">${renderNum(bmr, 1)}</td>
       <td>${escapeHtml(day.activity)}</td>
       <td class="num">${renderNum(tdee, 1)}</td>
-      <td class="num">${day.deficit}</td>
       <td class="num">${renderNum(target, 0)}</td>
       <td class="num">${renderNum(totals.calLow, 1)}</td>
       <td class="num">${renderNum(totals.calHigh, 1)}</td>
@@ -602,21 +615,17 @@ function renderCalorieTracker() {
       <td class="num ${surplusClass(surpHigh)}">${renderNum(surpHigh, 1)}</td>
       <td class="num">${renderNum(totals.proLow, 1)}</td>
       <td class="num">${renderNum(totals.proHigh, 1)}</td>
-      <td class="num">${day.proteinTargetLow}</td>
-      <td class="num">${day.proteinTargetHigh}</td>
       <td class="num ${surplusClass(-proSurpLow)}">${renderNum(proSurpLow, 1)}</td>
       <td class="num ${surplusClass(-proSurpHigh)}">${renderNum(proSurpHigh, 1)}</td>
-      <td>
-        <div class="actions">
-          <button class="btn-icon" onclick="editDay(${day.id})" title="Edit">&#9998;</button>
-          <button class="btn-icon delete" onclick="deleteDay(${day.id})" title="Delete">&#10005;</button>
-        </div>
-      </td>
+      <td><div class="actions">
+        <button class="btn-icon" onclick="editDay(${day.id})" title="Edit">&#9998;</button>
+        <button class="btn-icon delete" onclick="deleteDay(${day.id})" title="Delete">&#10005;</button>
+      </div></td>
     </tr>`;
   }
 
   if (!days.length) {
-    html = `<tr><td colspan="19" style="text-align:center;color:var(--text-dim);padding:32px;">No daily entries yet. Click "+ Add Day" to start.</td></tr>`;
+    html = `<tr><td colspan="15" style="text-align:center;color:var(--text-dim);padding:32px;">Log food to start tracking days.</td></tr>`;
   }
 
   tbody.innerHTML = html;
@@ -643,6 +652,9 @@ function renderCalorieTarget() {
   document.getElementById("profile-height").value = profile.height;
   document.getElementById("profile-protein-low").value = profile.proteinLow;
   document.getElementById("profile-protein-high").value = profile.proteinHigh;
+  document.getElementById("profile-age").value = profile.age != null ? profile.age : 32;
+  const _goalSel = document.getElementById("profile-goal");
+  if (_goalSel) _goalSel.innerHTML = Targets.GOALS.map((g) => `<option value="${escapeHtml(g.goal)}" ${profile.weightLossGoal === g.goal ? "selected" : ""}>${escapeHtml(g.goal)}</option>`).join("");
 }
 
 // ============================================================
@@ -701,25 +713,10 @@ function closeFoodModal() {
 function ensureDayExists(date) {
   const days = loadDayEntries();
   if (days.some((d) => d.date === date)) return;
-
-  // Copy defaults from most recent existing day, or use fallback defaults
   const sorted = [...days].sort((a, b) => (a.date < b.date ? 1 : -1));
   const prev = sorted[0];
-  const profile = loadProfile();
-
   const maxId = days.length ? Math.max(...days.map((d) => d.id)) : 0;
-  const newDay = {
-    id: maxId + 1,
-    date,
-    age: prev ? prev.age : 32,
-    weight: prev ? prev.weight : 168,
-    activity: prev ? prev.activity : ACTIVITY_TYPES[0].label,
-    deficit: prev ? prev.deficit : 550,
-    proteinTargetLow: prev ? prev.proteinTargetLow : profile.proteinLow,
-    proteinTargetHigh: prev ? prev.proteinTargetHigh : profile.proteinHigh,
-  };
-
-  days.push(newDay);
+  days.push({ id: maxId + 1, date, weight: prev ? prev.weight : 168, activity: prev ? prev.activity : ACTIVITY_TYPES[0].label });
   saveDayEntries(days);
 }
 
@@ -858,38 +855,12 @@ function populateActivitySelect() {
 
 function openDayModal(entry) {
   const modal = document.getElementById("day-modal");
-  const title = document.getElementById("day-modal-title");
-  const profile = loadProfile();
-
+  document.getElementById("day-modal-title").textContent = "Edit Day";
   populateActivitySelect();
-
-  if (entry) {
-    title.textContent = "Edit Day";
-    document.getElementById("day-id").value = entry.id;
-    document.getElementById("day-date").value = entry.date;
-    document.getElementById("day-age").value = entry.age;
-    document.getElementById("day-weight").value = entry.weight;
-    document.getElementById("day-activity").value = entry.activity;
-    document.getElementById("day-deficit").value = entry.deficit;
-    document.getElementById("day-protein-target-low").value = entry.proteinTargetLow;
-    document.getElementById("day-protein-target-high").value = entry.proteinTargetHigh;
-  } else {
-    title.textContent = "Add Day";
-    document.getElementById("day-form").reset();
-    document.getElementById("day-id").value = "";
-    document.getElementById("day-date").value = new Date().toISOString().slice(0, 10);
-    document.getElementById("day-deficit").value = 550;
-    document.getElementById("day-protein-target-low").value = profile.proteinLow;
-    document.getElementById("day-protein-target-high").value = profile.proteinHigh;
-    // Default age/weight from last entry
-    const days = loadDayEntries();
-    if (days.length) {
-      days.sort((a, b) => (a.date < b.date ? 1 : -1));
-      document.getElementById("day-age").value = days[0].age;
-      document.getElementById("day-weight").value = days[0].weight;
-    }
-  }
-
+  document.getElementById("day-id").value = entry.id;
+  document.getElementById("day-date").value = entry.date;
+  document.getElementById("day-weight").value = entry.weight;
+  document.getElementById("day-activity").value = entry.activity;
   modal.classList.remove("hidden");
 }
 
@@ -901,33 +872,9 @@ function saveDay(e) {
   e.preventDefault();
   const entries = loadDayEntries();
   const id = document.getElementById("day-id").value;
-
-  const entry = {
-    date: document.getElementById("day-date").value,
-    age: parseInt(document.getElementById("day-age").value),
-    weight: parseFloat(document.getElementById("day-weight").value),
-    activity: document.getElementById("day-activity").value,
-    deficit: parseFloat(document.getElementById("day-deficit").value),
-    proteinTargetLow: parseFloat(document.getElementById("day-protein-target-low").value),
-    proteinTargetHigh: parseFloat(document.getElementById("day-protein-target-high").value),
-  };
-
-  if (id) {
-    const idx = entries.findIndex((e) => e.id === parseInt(id));
-    if (idx !== -1) {
-      entries[idx] = { ...entries[idx], ...entry };
-    }
-  } else {
-    // Check for duplicate date
-    if (entries.some((e) => e.date === entry.date)) {
-      alert("A day entry for this date already exists. Please edit the existing entry instead.");
-      return;
-    }
-    const maxId = entries.length ? Math.max(...entries.map((e) => e.id)) : 0;
-    entry.id = maxId + 1;
-    entries.push(entry);
-  }
-
+  const idx = entries.findIndex((x) => x.id === parseInt(id));
+  if (idx === -1) { console.warn("saveDay: day not found", id); return; }
+  entries[idx] = { ...entries[idx], weight: parseFloat(document.getElementById("day-weight").value), activity: document.getElementById("day-activity").value };
   saveDayEntries(entries);
   closeDayModal();
   renderCalorieTracker();
@@ -955,8 +902,10 @@ function saveProfileForm(e) {
   e.preventDefault();
   const profile = {
     height: parseFloat(document.getElementById("profile-height").value),
+    age: parseInt(document.getElementById("profile-age").value),
     proteinLow: parseFloat(document.getElementById("profile-protein-low").value),
     proteinHigh: parseFloat(document.getElementById("profile-protein-high").value),
+    weightLossGoal: document.getElementById("profile-goal").value,
   };
   saveProfile(profile);
   renderCalorieTracker();
@@ -1887,18 +1836,19 @@ function buildRangeData(foodEntries, dayEntries, profile, startDate, endDate) {
   let avgProTargetLow = null, avgProTargetHigh = null;
   if (filteredDays.length > 0) {
     let totalProTLow = 0, totalProTHigh = 0;
+    const deficit = getDeficit();
     filteredDays.forEach(day => {
-      const bmr = calcBMR(day.weight, profile.height, day.age);
+      const bmr = calcBMR(day.weight, profile.height, profile.age);
       const tdee = calcTDEE(bmr, day.activity);
-      const target = tdee - day.deficit;
+      const target = tdee - deficit;
       dailyContext[day.date] = {
         activity: day.activity,
         tdee: Math.round(tdee),
-        deficit: day.deficit,
+        deficit: deficit,
         calorieTarget: Math.round(target),
       };
-      totalProTLow += day.proteinTargetLow;
-      totalProTHigh += day.proteinTargetHigh;
+      totalProTLow += profile.proteinLow;
+      totalProTHigh += profile.proteinHigh;
     });
     avgProTargetLow = Math.round(totalProTLow / filteredDays.length);
     avgProTargetHigh = Math.round(totalProTHigh / filteredDays.length);
@@ -3273,7 +3223,6 @@ document.addEventListener("DOMContentLoaded", async () => {
   document.getElementById("food-form").addEventListener("submit", saveFood);
 
   // Day modal
-  document.getElementById("add-day-btn").addEventListener("click", () => openDayModal(null));
   document.getElementById("day-cancel").addEventListener("click", closeDayModal);
   document.querySelector("#day-modal .modal-overlay").addEventListener("click", closeDayModal);
   document.getElementById("day-form").addEventListener("submit", saveDay);
