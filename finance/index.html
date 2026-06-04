@@ -30,6 +30,10 @@
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.21 15.89A10 10 0 1 1 8 2.83"/><path d="M22 12A10 10 0 0 0 12 2v10z"/></svg>
           <span>Summary</span>
         </button>
+        <button class="nav-item" data-tab="weekly-snapshot">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+          <span>Weekly Snapshot</span>
+        </button>
         <button class="nav-item" data-tab="stocks">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/><polyline points="16 7 22 7 22 13"/></svg>
           <span>Stock Journal</span>
@@ -142,6 +146,18 @@
             </div>
           </div>
         </div>
+      </section>
+
+      <!-- WEEKLY SNAPSHOT TAB -->
+      <section id="weekly-snapshot" class="tab-content">
+        <div class="page-header">
+          <h1>Weekly Snapshot</h1>
+          <div class="filter-group">
+            <select id="snapshot-year-filter"></select>
+          </div>
+        </div>
+        <div id="snapshot-totals" class="month-totals-bar"></div>
+        <div id="snapshot-grid" class="snapshot-grid"></div>
       </section>
 
       <!-- STOCK JOURNAL TAB -->

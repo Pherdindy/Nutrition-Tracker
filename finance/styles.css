@@ -937,6 +937,135 @@ select {
   font-size: 0.75rem;
 }
 
+/* ========== WEEKLY SNAPSHOT ========== */
+
+.snapshot-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 20px;
+}
+
+.snap-month-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+}
+
+.snap-month-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  background: var(--surface2);
+  border-bottom: 1px solid var(--border);
+}
+
+.snap-month-name {
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--text);
+  margin: 0;
+}
+
+.snap-month-totals {
+  display: flex;
+  gap: 14px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.snap-weeks {
+  padding: 8px 12px;
+}
+
+.snap-week {
+  padding: 12px 8px;
+  border-bottom: 1px solid var(--border-light);
+}
+
+.snap-week:last-child {
+  border-bottom: none;
+}
+
+.snap-week-empty {
+  opacity: 0.45;
+}
+
+.snap-week-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+
+.snap-week-label {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.snap-week-range {
+  font-size: 0.75rem;
+  color: var(--text-dim);
+}
+
+.snap-week-amounts {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 6px;
+  font-size: 0.88rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.snap-week-bar {
+  width: 100%;
+  height: 5px;
+  background: var(--border-light);
+  border-radius: 3px;
+  overflow: hidden;
+  margin-bottom: 6px;
+}
+
+.snap-week-bar-fill {
+  height: 100%;
+  background: var(--primary);
+  border-radius: 3px;
+  transition: width 0.3s ease;
+}
+
+.snap-week-cats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 2px;
+}
+
+.snap-cat-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  background: var(--surface2);
+  border: 1px solid var(--border-light);
+  border-radius: 12px;
+  font-size: 0.72rem;
+}
+
+.snap-cat-name {
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+
+.snap-cat-amt {
+  color: var(--text);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
 /* ========== RESPONSIVE ========== */
 
 @media (max-width: 900px) {
@@ -996,5 +1125,9 @@ select {
   .summary-section-header {
     flex-direction: column;
     align-items: flex-start;
+  }
+
+  .snapshot-grid {
+    grid-template-columns: 1fr;
   }
 }

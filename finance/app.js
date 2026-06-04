@@ -687,6 +687,164 @@ function closeExpenseDetailModal() {
 }
 
 // ============================================================
+// RENDER — Weekly Snapshot Tab
+// ============================================================
+
+const snapshotYearFilter = document.getElementById('snapshot-year-filter');
+
+function populateSnapshotYearOptions() {
+  const years = getTransactionYears();
+  const prev = snapshotYearFilter.value || String(new Date().getFullYear());
+  snapshotYearFilter.innerHTML = years.map(y => `<option value="${y}">${y}</option>`).join('');
+  snapshotYearFilter.value = years.includes(Number(prev)) ? prev : String(years[0] || new Date().getFullYear());
+}
+
+snapshotYearFilter.addEventListener('change', render);
+
+function getWeeksInMonth(year, monthIndex) {
+  const weeks = [];
+  const firstDay = new Date(year, monthIndex, 1);
+  const lastDay = new Date(year, monthIndex + 1, 0);
+  const dow = firstDay.getDay(); // 0=Sun, 1=Mon, ...
+  // Days remaining in first partial week (Mon-Sun). If month starts on Mon, full 7 days.
+  const daysToSunday = dow === 0 ? 0 : 7 - dow;
+  // If the stub is less than 3 days, merge it into the first full week
+  let firstWeekEnd;
+  if (dow === 1 || daysToSunday >= 3) {
+    // Start is Mon or partial week is 3+ days — keep it as Week 1
+    firstWeekEnd = new Date(firstDay);
+    firstWeekEnd.setDate(firstWeekEnd.getDate() + daysToSunday);
+  } else {
+    // Stub is tiny (1-2 days) — extend through next Sunday
+    firstWeekEnd = new Date(firstDay);
+    firstWeekEnd.setDate(firstWeekEnd.getDate() + daysToSunday + 7);
+  }
+  if (firstWeekEnd > lastDay) firstWeekEnd = new Date(lastDay);
+
+  weeks.push({
+    startDate: formatInputDate(firstDay),
+    endDate: formatInputDate(firstWeekEnd),
+    displayStart: formatInputDate(firstDay),
+    displayEnd: formatInputDate(firstWeekEnd),
+  });
+
+  let weekStart = new Date(firstWeekEnd);
+  weekStart.setDate(weekStart.getDate() + 1);
+  while (weekStart <= lastDay) {
+    const weekEnd = new Date(weekStart);
+    weekEnd.setDate(weekEnd.getDate() + 6);
+    const clampedEnd = weekEnd > lastDay ? lastDay : new Date(weekEnd);
+    weeks.push({
+      startDate: formatInputDate(weekStart),
+      endDate: formatInputDate(clampedEnd),
+      displayStart: formatInputDate(weekStart),
+      displayEnd: formatInputDate(clampedEnd),
+    });
+    weekStart = new Date(clampedEnd);
+    weekStart.setDate(weekStart.getDate() + 1);
+  }
+  return weeks;
+}
+
+function renderWeeklySnapshot() {
+  populateSnapshotYearOptions();
+  const year = Number(snapshotYearFilter.value) || new Date().getFullYear();
+  const allTxns = loadTransactions();
+  const yearTxns = allTxns.filter(t => t.date && t.date.startsWith(String(year)));
+
+  let yearExpense = 0, yearIncome = 0;
+  yearTxns.forEach(t => {
+    const a = Number(t.amount);
+    if (t.type === 'income') yearIncome += a; else yearExpense += a;
+  });
+  const yearNet = yearIncome - yearExpense;
+
+  document.getElementById('snapshot-totals').innerHTML = `
+    <div class="total-card"><div class="total-label">Year Income</div><div class="total-value positive">${fmt(yearIncome)}</div></div>
+    <div class="total-card"><div class="total-label">Year Expenses</div><div class="total-value negative">${fmt(yearExpense)}</div></div>
+    <div class="total-card"><div class="total-label">Year Net</div><div class="total-value ${yearNet >= 0 ? 'positive' : 'negative'}">${yearNet >= 0 ? '+' : ''}${fmt(yearNet)}</div></div>`;
+
+  const monthNames = ['January', 'February', 'March', 'April', 'May', 'June',
+                       'July', 'August', 'September', 'October', 'November', 'December'];
+  const now = new Date();
+  const currentYear = now.getFullYear();
+  const currentMonthIdx = now.getMonth();
+
+  let html = '';
+  for (let m = 0; m < 12; m++) {
+    // Skip future months
+    if (year === currentYear && m > currentMonthIdx) continue;
+    // Skip months with no data (but always show current month)
+    const monthPrefix = `${year}-${String(m + 1).padStart(2, '0')}`;
+    const monthTxns = yearTxns.filter(t => t.date && t.date.startsWith(monthPrefix));
+    if (!monthTxns.length && !(year === currentYear && m === currentMonthIdx)) continue;
+
+    const monthExpense = monthTxns.filter(t => t.type === 'expense').reduce((s, t) => s + Number(t.amount), 0);
+    const monthIncome = monthTxns.filter(t => t.type === 'income').reduce((s, t) => s + Number(t.amount), 0);
+
+    const weeks = getWeeksInMonth(year, m);
+    let weeksHtml = '';
+    weeks.forEach((w, i) => {
+      const weekTxns = monthTxns.filter(t => t.date >= w.startDate && t.date <= w.endDate);
+      const wExpense = weekTxns.filter(t => t.type === 'expense').reduce((s, t) => s + Number(t.amount), 0);
+      const wIncome = weekTxns.filter(t => t.type === 'income').reduce((s, t) => s + Number(t.amount), 0);
+
+      // Build category breakdown for expenses
+      const catMap = {};
+      weekTxns.filter(t => t.type === 'expense').forEach(t => {
+        const cat = t.category || 'Other';
+        catMap[cat] = (catMap[cat] || 0) + Number(t.amount);
+      });
+      const catEntries = Object.entries(catMap).sort((a, b) => b[1] - a[1]);
+
+      const dStart = new Date(w.displayStart + 'T00:00:00');
+      const dEnd = new Date(w.displayEnd + 'T00:00:00');
+      const rangeLabel = `${dStart.toLocaleDateString('en-PH', { month: 'short', day: 'numeric' })} - ${dEnd.toLocaleDateString('en-PH', { month: 'short', day: 'numeric' })}`;
+
+      const barWidth = monthExpense > 0 ? Math.round(wExpense / monthExpense * 100) : 0;
+
+      let catBreakdown = '';
+      if (catEntries.length) {
+        catBreakdown = `<div class="snap-week-cats">${catEntries.map(([cat, amt]) =>
+          `<span class="snap-cat-chip"><span class="snap-cat-name">${escapeHtml(cat)}</span> <span class="snap-cat-amt">${fmt(amt)}</span></span>`
+        ).join('')}</div>`;
+      }
+
+      weeksHtml += `
+        <div class="snap-week${!wExpense && !wIncome ? ' snap-week-empty' : ''}">
+          <div class="snap-week-header">
+            <span class="snap-week-label">Week ${i + 1}</span>
+            <span class="snap-week-range">${rangeLabel}</span>
+          </div>
+          <div class="snap-week-amounts">
+            <span class="snap-week-expense negative">-${fmt(wExpense)}</span>
+            ${wIncome ? `<span class="snap-week-income positive">+${fmt(wIncome)}</span>` : ''}
+          </div>
+          <div class="snap-week-bar"><div class="snap-week-bar-fill" style="width:${barWidth}%"></div></div>
+          ${catBreakdown}
+        </div>`;
+    });
+
+    const mNet = monthIncome - monthExpense;
+    html += `
+      <div class="snap-month-card">
+        <div class="snap-month-header">
+          <h3 class="snap-month-name">${monthNames[m]}</h3>
+          <div class="snap-month-totals">
+            <span class="negative">-${fmt(monthExpense)}</span>
+            <span class="positive">+${fmt(monthIncome)}</span>
+            <span class="${mNet >= 0 ? 'positive' : 'negative'}">${mNet >= 0 ? '+' : ''}${fmt(mNet)}</span>
+          </div>
+        </div>
+        <div class="snap-weeks">${weeksHtml}</div>
+      </div>`;
+  }
+
+  if (!html) html = `<div class="empty-state"><div class="empty-state-icon">&#128197;</div>No transactions for ${year}</div>`;
+  document.getElementById('snapshot-grid').innerHTML = html;
+}
+
+// ============================================================
 // RENDER — Categories Tab
 // ============================================================
 
@@ -856,6 +1014,7 @@ manageCatsModal.querySelector('.modal-overlay').addEventListener('click', closeM
 function render() {
   renderTransactions();
   renderSummary();
+  renderWeeklySnapshot();
   renderStocks();
 }
 
