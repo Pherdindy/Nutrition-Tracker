@@ -1,6 +1,10 @@
-// Mobile renderers. Loaded after app.js; relies on app.js globals
-// (loadFoodEntries, getDailyFoodTotals, formatDate, formatTime, escapeHtml,
-//  renderNum, isMobile, editFood, deleteFood).
+// Mobile renderers. Loaded after app.js + assessment-view.js; relies on globals:
+//  renderFoodCards:        loadFoodEntries, getDailyFoodTotals, formatDate, formatTime,
+//                          escapeHtml, renderNum, isMobile, editFood, deleteFood
+//  renderDayCards:         loadDayEntries, loadProfile, loadFoodEntries, calcBMR, calcTDEE,
+//                          surplusClass, getDailyFoodTotals, formatDate, escapeHtml, renderNum,
+//                          isMobile, editDay, deleteDay
+//  renderAssessmentScorecard: window.AssessmentView, renderActionPlan, escapeHtml
 
 function renderFoodCards() {
   const host = document.getElementById("food-cards");

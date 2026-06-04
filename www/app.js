@@ -3017,7 +3017,7 @@ function renderAssessmentResults(result) {
     const best = (result.round2 && result.round2[0] && result.round2[0].data)
       || (result.round1 && result.round1[0] && result.round1[0].data)
       || null;
-    if (best) { renderAssessmentScorecard(best, result); return; }
+    if (best && typeof renderAssessmentScorecard === "function") { renderAssessmentScorecard(best, result); return; }
   }
 
   let html = '';
