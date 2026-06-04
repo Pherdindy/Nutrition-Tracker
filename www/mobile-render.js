@@ -5,6 +5,7 @@
 function renderFoodCards() {
   const host = document.getElementById("food-cards");
   if (!host) return;
+  if (!isMobile()) return; // cards only render on mobile; desktop uses the table
 
   const filterDate = document.getElementById("food-date-filter")?.value;
   let entries = loadFoodEntries();
@@ -17,7 +18,7 @@ function renderFoodCards() {
 
   let html = "";
   for (const date of dates) {
-    const totals = getDailyFoodTotals(date, loadFoodEntries());
+    const totals = getDailyFoodTotals(date, entries);
     html += `<div class="cards-day-header">
       <span>${formatDate(date)}</span>
       <span class="cards-day-total">${renderNum(totals.calLow, 0)}–${renderNum(totals.calHigh, 0)} cal</span>
@@ -46,12 +47,12 @@ function renderFoodCards() {
       editFood(Number(card.dataset.id));
     });
   });
-  // Overflow menu = delete (Phase 1: edit on tap, delete here)
+  // Overflow menu = delete (Phase 1: edit on tap, delete here).
+  // deleteFood() already shows its own confirm() — don't double-prompt.
   host.querySelectorAll(".card-menu-btn").forEach((btn) => {
     btn.addEventListener("click", (ev) => {
       ev.stopPropagation();
-      const id = Number(btn.dataset.id);
-      if (confirm("Delete this food entry?")) deleteFood(id);
+      deleteFood(Number(btn.dataset.id));
     });
   });
 }
