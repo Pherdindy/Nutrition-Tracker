@@ -76,14 +76,15 @@ function renderDayCards() {
   if (!isMobile()) return; // cards only render on mobile; desktop uses the table
 
   const profile = loadProfile();
+  const deficit = Targets.deficitForGoal(profile.weightLossGoal);
   const food = loadFoodEntries();
   const days = loadDayEntries().slice().sort((a, b) => (a.date < b.date ? 1 : -1));
 
   let html = "";
   for (const day of days) {
-    const bmr = calcBMR(day.weight, profile.height, day.age);
+    const bmr = calcBMR(day.weight, profile.height, profile.age);
     const tdee = calcTDEE(bmr, day.activity);
-    const target = tdee - day.deficit;
+    const target = tdee - deficit;
     const t = getDailyFoodTotals(day.date, food);
     const overLow = t.calLow - target, overHigh = t.calHigh - target;
     html += `<div class="day-card">
@@ -96,9 +97,8 @@ function renderDayCards() {
         <div class="food-card-row"><span>Weight</span><b>${day.weight} lb</b></div>
         <div class="food-card-row"><span>BMR / TDEE</span><b>${renderNum(bmr,0)} / ${renderNum(tdee,0)}</b></div>
         <div class="food-card-row"><span>Activity</span><b>${escapeHtml(day.activity)}</b></div>
-        <div class="food-card-row"><span>Deficit / Target</span><b>${day.deficit} / ${renderNum(target,0)}</b></div>
         <div class="food-card-row"><span>Cal +/-</span><b class="${surplusClass(overLow)}">${renderNum(overLow,0)} … ${renderNum(overHigh,0)}</b></div>
-        <div class="food-card-row"><span>Protein</span><b>${renderNum(t.proLow,0)}–${renderNum(t.proHigh,0)} g (target ${day.proteinTargetLow}–${day.proteinTargetHigh})</b></div>
+        <div class="food-card-row"><span>Protein</span><b>${renderNum(t.proLow,0)}–${renderNum(t.proHigh,0)} g (target ${profile.proteinLow}–${profile.proteinHigh})</b></div>
         <div class="day-card-actions">
           <button class="btn btn-secondary btn-sm" data-edit="${day.id}">Edit</button>
           <button class="btn btn-secondary btn-sm" data-del="${day.id}">Delete</button>
@@ -106,7 +106,7 @@ function renderDayCards() {
       </div>
     </div>`;
   }
-  if (!days.length) html = `<div class="cards-empty">No daily entries yet. Use + Add Day.</div>`;
+  if (!days.length) html = `<div class="cards-empty">No daily entries yet. Log food to start tracking days.</div>`;
   host.innerHTML = html;
 
   host.querySelectorAll(".day-card-head").forEach((h) => {
