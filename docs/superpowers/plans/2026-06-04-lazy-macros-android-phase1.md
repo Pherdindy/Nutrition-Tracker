@@ -858,6 +858,7 @@ function renderAssessmentScorecard(data, fullResult) {
   const container = document.getElementById("assessment-results");
   if (!container || !data) return;
   const AV = window.AssessmentView;
+  if (!AV) { container.innerHTML = '<p style="padding:16px;color:var(--text-dim)">Scorecard unavailable — assessment view module failed to load.</p>'; return; }
 
   const score = Number(data.overall_score) || 0;
   const pct = Math.max(0, Math.min(100, Math.round((score / 10) * 100)));
@@ -938,7 +939,7 @@ At the end of `www/styles.css`:
 ```css
 .score-card { padding: 16px; display: flex; flex-direction: column; gap: 12px; align-items: stretch; }
 .score-ring { width: 110px; height: 110px; border-radius: 50%; margin: 4px auto 0;
-  background: conic-gradient(#2bb673 calc(var(--pct) * 1%), #e6e8eb 0);
+  background: conic-gradient(#2bb673 calc(var(--pct) * 1%), var(--border, #2e3345) 0);
   display: flex; align-items: center; justify-content: center; }
 .score-ring-inner { width: 84px; height: 84px; border-radius: 50%; background: var(--card-bg,#fff);
   display: flex; flex-direction: column; align-items: center; justify-content: center; }
