@@ -47,3 +47,20 @@ test("itemsToEntries builds entries with unique ids, qty 1, portion as unit, don
   assert.equal(out[1].id, 11);
   assert.deepEqual(out[0].macros.calories, { low: 480, high: 560 });
 });
+
+test("parseVisionResponse skips null/non-object items instead of crashing", () => {
+  const out = P.parseVisionResponse('{"items":[null,5,{"food":"Rice","portion":"1 cup","calories_lower":200,"calories_upper":220}]}', ["calories"]);
+  assert.equal(out.items.length, 1);
+  assert.equal(out.items[0].food, "Rice");
+});
+
+test("parseVisionResponse strips a ```javascript fence", () => {
+  const out = P.parseVisionResponse('```javascript\n{"items":[{"food":"Egg","portion":"1 large"}]}\n```', ["calories"]);
+  assert.equal(out.items.length, 1);
+  assert.equal(out.items[0].food, "Egg");
+});
+
+test("itemsToEntries returns [] for null/undefined input", () => {
+  assert.deepEqual(P.itemsToEntries(null, "2026-06-04", "12:30", 1), []);
+  assert.deepEqual(P.itemsToEntries(undefined, "2026-06-04", "12:30", 1), []);
+});

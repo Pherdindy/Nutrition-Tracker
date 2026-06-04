@@ -30,17 +30,20 @@ Units: calories in kcal, sodium in mg, all other macros in grams. Give one objec
       t += "\n\nYour previous reading was:\n" + JSON.stringify(history.priorItems.map((i) => ({ food: i.food, portion: i.portion })));
     }
     if (history && history.correction) {
-      t += "\n\nThe user provided this correction — re-estimate the whole photo accordingly:\n" + history.correction;
+      t += "\n\nThe user provided this correction — re-estimate the whole photo accordingly:\n" + String(history.correction);
     }
     return t;
   }
 
   function parseVisionResponse(jsonText, macroIds) {
-    const cleaned = String(jsonText).trim().replace(/```json?\s*/g, "").replace(/```/g, "").trim();
+    // Strip markdown fences even though the prompt asks the model not to emit them — models often do anyway.
+    const cleaned = String(jsonText).trim().replace(/```[a-zA-Z]*\s*/g, "").replace(/```/g, "").trim();
     let parsed;
     try { parsed = JSON.parse(cleaned); }
     catch (e) { throw new Error("Could not parse photo result"); }
-    const raw = Array.isArray(parsed.items) ? parsed.items : [];
+    const raw = Array.isArray(parsed.items)
+      ? parsed.items.filter((it) => it !== null && typeof it === "object" && !Array.isArray(it))
+      : [];
     const items = raw.map((it) => ({
       food: String(it.food || "").trim() || "Unknown item",
       portion: String(it.portion || "").trim() || "1 serving",
