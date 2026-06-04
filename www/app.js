@@ -140,22 +140,26 @@ function saveFoodEntries(entries) {
 }
 
 function loadDayEntries() {
-  if (_cache.ready && _cache.days) return [..._cache.days];
+  if (_cache.ready && _cache.days) return _cache.days.map(Targets.migrateDay);
   const saved = localStorage.getItem("nt_days");
-  return saved ? JSON.parse(saved) : [];
+  return saved ? JSON.parse(saved).map(Targets.migrateDay) : [];
 }
 
 function saveDayEntries(entries) {
   _cache.days = [...entries];
   localStorage.setItem("nt_days", JSON.stringify(entries));
   bgWrite(async () => {
-    const { error: delErr } = await sb.from('days').delete().gte('id', 0);
-    if (delErr) throw delErr;
-    if (entries.length > 0) {
-      const rows = entries.map(dayJsToRow);
-      const { error } = await sb.from('days').upsert(rows);
+    if (entries.length === 0) {
+      const { error } = await sb.from('days').delete().gte('id', 0);
       if (error) throw error;
+      return;
     }
+    const rows = entries.map(dayJsToRow);
+    const { error: upErr } = await sb.from('days').upsert(rows);
+    if (upErr) throw upErr; // table untouched — no rows deleted
+    const ids = entries.map((e) => e.id);
+    const { error: delErr } = await sb.from('days').delete().not('id', 'in', `(${ids.join(',')})`);
+    if (delErr) throw delErr;
   });
 }
 
@@ -311,8 +315,9 @@ async function initFromSupabase() {
 
   // Populate cache from Supabase data
   _cache.food = foodRes.data.map(foodRowToJs);
-  _cache.days = daysRes.data.map(dayRowToJs);
   _cache.profile = hasProfileData ? profileRowToJs(profileRes.data) : { ...DEFAULT_PROFILE };
+  _cache.profile = Targets.migrateProfile(_cache.profile, daysRes.data.map((r) => ({ age: r.age, deficit: r.deficit })));
+  _cache.days = daysRes.data.map(dayRowToJs);
   _cache.assessments = (assessRes.data || []).map(r => r.data);
 
   // Settings (key-value pairs)
@@ -330,6 +335,7 @@ async function initFromSupabase() {
   localStorage.setItem("nt_assessments", JSON.stringify(_cache.assessments));
 
   _cache.ready = true;
+  saveProfile(_cache.profile); // persist any newly-seeded age/goal (idempotent)
   console.log('[Supabase] Loaded from cloud:', _cache.food.length, 'food entries,', _cache.days.length, 'days');
 }
 
@@ -348,13 +354,16 @@ function initFromLocalStorage() {
   const savedFood = localStorage.getItem("nt_food");
   _cache.food = savedFood ? JSON.parse(savedFood).map(Macros.migrateEntry) : [];
   const savedDays = localStorage.getItem("nt_days");
-  _cache.days = savedDays ? JSON.parse(savedDays) : [];
+  const parsedDays = savedDays ? JSON.parse(savedDays) : [];
   const savedProfile = localStorage.getItem("nt_profile");
   _cache.profile = savedProfile ? JSON.parse(savedProfile) : { ...DEFAULT_PROFILE };
+  _cache.profile = Targets.migrateProfile(_cache.profile, parsedDays);
+  _cache.days = parsedDays.map(Targets.migrateDay);
   const savedAssessments = localStorage.getItem("nt_assessments");
   _cache.assessments = savedAssessments ? JSON.parse(savedAssessments) : [];
 
   _cache.ready = true;
+  saveProfile(_cache.profile);
   console.log('[localStorage] Loaded from local storage (offline fallback)');
 }
 
