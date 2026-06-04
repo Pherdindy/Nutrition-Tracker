@@ -3475,245 +3475,6 @@ function parseBatchAIResponse(content, expectedCount) {
   };
 }
 
-function setBatchEstimateStatus(msg, isError = false) {
-  const el = document.getElementById("batch-estimate-status");
-  el.textContent = msg;
-  el.className = "estimate-status" + (isError ? " error" : "");
-}
-
-let _batchValidationData = null;
-
-async function estimateBatchNutrition() {
-  _batchValidationData = null;
-
-  // Collect items from rows
-  const rows = document.querySelectorAll("#batch-items .batch-item-row");
-  const items = [];
-  for (const row of rows) {
-    const food = row.querySelector(".batch-food").value.trim();
-    const qty = row.querySelector(".batch-qty").value;
-    const unit = row.querySelector(".batch-unit").value.trim();
-    if (food && qty && unit) {
-      items.push({ food, qty: parseFloat(qty), unit });
-    }
-  }
-
-  if (items.length === 0) {
-    setBatchEstimateStatus("Enter at least one food item with quantity and unit.", true);
-    return;
-  }
-
-  // Check all rows are filled
-  for (const row of rows) {
-    const food = row.querySelector(".batch-food").value.trim();
-    const qty = row.querySelector(".batch-qty").value;
-    const unit = row.querySelector(".batch-unit").value.trim();
-    if ((food || qty || unit) && !(food && qty && unit)) {
-      setBatchEstimateStatus("Fill in all fields for each row, or clear empty rows.", true);
-      return;
-    }
-  }
-
-  // Get active providers with API keys (food estimation always uses API)
-  const activeProviders = PROVIDERS.filter((p) => {
-    const settings = getProviderSettings(p.id);
-    return settings.apiKey.length > 0;
-  });
-
-  if (activeProviders.length === 0) {
-    setBatchEstimateStatus("Configure at least one AI provider API key in the Calorie Target tab.", true);
-    return;
-  }
-
-  const btn = document.getElementById("batch-estimate-btn");
-  btn.disabled = true;
-  setBatchEstimateStatus("Estimating all items...");
-  document.getElementById("batch-results").innerHTML = "";
-  document.getElementById("batch-save").disabled = true;
-
-  const maxTokens = Math.max(1500, items.length * 300);
-
-  try {
-    // --- Round 1: All providers in parallel with primary models ---
-    const batchPrompt = buildBatchEstimatePrompt(items);
-
-    const round1Promises = activeProviders.map(async (provider) => {
-      const settings = getProviderSettings(provider.id);
-      try {
-        const data = await callProviderBatch(provider, settings.apiKey, settings.primaryModel, SYSTEM_PROMPT_BATCH_ESTIMATE, batchPrompt, maxTokens, items.length);
-        return { providerId: provider.id, providerName: provider.name, data, error: null };
-      } catch (err) {
-        return { providerId: provider.id, providerName: provider.name, data: null, error: err.message };
-      }
-    });
-
-    const round1Results = await Promise.all(round1Promises);
-    const successful = round1Results.filter((r) => r.data !== null);
-    const failed = round1Results.filter((r) => r.error !== null);
-
-    if (successful.length === 0) {
-      const errMsgs = failed.map((f) => `${f.providerName}: ${f.error}`).join("; ");
-      setBatchEstimateStatus(`All providers failed: ${errMsgs}`, true);
-      btn.disabled = false;
-      return;
-    }
-
-    // Single provider — use directly
-    if (successful.length === 1) {
-      const finalItems = successful[0].data.items;
-      _batchValidationData = {
-        round: 1,
-        round1: successful,
-        failed,
-        finalItems,
-        spread: 0,
-        verdict: "single",
-        warning: failed.length > 0
-          ? `${failed[0].providerName} failed. Using ${successful[0].providerName} only.`
-          : `Only ${successful[0].providerName} configured. No cross-validation.`,
-      };
-      renderBatchResults(items, finalItems, _batchValidationData);
-      setBatchEstimateStatus("Done!");
-      btn.disabled = false;
-      return;
-    }
-
-    // Multiple providers — check per-item spread, take worst
-    let worstSpread = 0;
-    for (let i = 0; i < items.length; i++) {
-      const perItemResults = successful.map((r) => r.data.items[i]);
-      const spread = calcSpread(perItemResults);
-      if (spread > worstSpread) worstSpread = spread;
-    }
-
-    const threshold = getSpreadThreshold();
-
-    if (worstSpread <= threshold) {
-      // Consensus — average per-item
-      const finalItems = items.map((_, i) => {
-        const perItem = successful.map((r) => r.data.items[i]);
-        return averageResults(perItem);
-      });
-      _batchValidationData = {
-        round: 1,
-        round1: successful,
-        failed,
-        finalItems,
-        spread: worstSpread,
-        threshold,
-        verdict: "consensus",
-      };
-      renderBatchResults(items, finalItems, _batchValidationData);
-      setBatchEstimateStatus("Done!");
-      btn.disabled = false;
-      return;
-    }
-
-    // --- Reconciliation loop: keep going until spread is within threshold (max 5 rounds) ---
-    const MAX_BATCH_ROUNDS = 5;
-    const batchReconRounds = [];
-    let prevBatchResults = successful;
-    let batchConverged = false;
-
-    for (let roundNum = 2; roundNum <= MAX_BATCH_ROUNDS; roundNum++) {
-      setBatchEstimateStatus(`Providers disagreed — reconciling (round ${roundNum})...`);
-
-      const reconPrompt = buildBatchReconciliationPrompt(items, prevBatchResults);
-      const reconPromises = activeProviders
-        .filter((p) => prevBatchResults.some((s) => s.providerId === p.id))
-        .map(async (provider) => {
-          const settings = getProviderSettings(provider.id);
-          try {
-            const data = await callProviderBatch(provider, settings.apiKey, settings.secondaryModel, SYSTEM_PROMPT_BATCH_RECONCILE, reconPrompt, maxTokens + 300, items.length);
-            return { providerId: provider.id, providerName: provider.name, model: settings.secondaryModel, data, error: null };
-          } catch (err) {
-            return { providerId: provider.id, providerName: provider.name, model: settings.secondaryModel, data: null, error: err.message };
-          }
-        });
-
-      const reconResults = await Promise.all(reconPromises);
-      const reconSuccessful = reconResults.filter((r) => r.data !== null);
-
-      if (reconSuccessful.length === 0) {
-        // This round failed — fall back to previous best
-        const finalItems = items.map((_, i) => {
-          const perItem = prevBatchResults.map((r) => r.data.items[i]);
-          return averageResults(perItem);
-        });
-        _batchValidationData = {
-          round: roundNum - 1,
-          round1: successful,
-          reconRounds: batchReconRounds,
-          failed,
-          finalItems,
-          spread: worstSpread,
-          threshold,
-          verdict: "recon_failed",
-        };
-        renderBatchResults(items, finalItems, _batchValidationData);
-        setBatchEstimateStatus(`Round ${roundNum} failed — using round ${roundNum - 1} average.`, true);
-        btn.disabled = false;
-        return;
-      }
-
-      let reconWorstSpread = 0;
-      for (let i = 0; i < items.length; i++) {
-        const perItem = reconSuccessful.map((r) => r.data.items[i]);
-        const s = calcSpread(perItem);
-        if (s > reconWorstSpread) reconWorstSpread = s;
-      }
-      batchReconRounds.push({ roundNum, results: reconSuccessful, spread: reconWorstSpread });
-
-      if (reconWorstSpread <= threshold) {
-        batchConverged = true;
-        const finalItems = items.map((_, i) => {
-          const perItem = reconSuccessful.map((r) => r.data.items[i]);
-          return averageResults(perItem);
-        });
-        _batchValidationData = {
-          round: roundNum,
-          round1: successful,
-          reconRounds: batchReconRounds,
-          failed,
-          finalItems,
-          spread: worstSpread,
-          threshold,
-          verdict: "reconciled",
-        };
-        renderBatchResults(items, finalItems, _batchValidationData);
-        setBatchEstimateStatus("Done!");
-        break;
-      }
-
-      prevBatchResults = reconSuccessful;
-    }
-
-    if (!batchConverged) {
-      const lastRound = batchReconRounds[batchReconRounds.length - 1];
-      const finalItems = items.map((_, i) => {
-        const perItem = lastRound.results.map((r) => r.data.items[i]);
-        return averageResults(perItem);
-      });
-      _batchValidationData = {
-        round: MAX_BATCH_ROUNDS,
-        round1: successful,
-        reconRounds: batchReconRounds,
-        failed,
-        finalItems,
-        spread: worstSpread,
-        threshold,
-        verdict: "max_rounds",
-      };
-      renderBatchResults(items, finalItems, _batchValidationData);
-      setBatchEstimateStatus(`Spread still ${lastRound.spread.toFixed(1)}% after ${MAX_BATCH_ROUNDS} rounds — using last average.`, true);
-    }
-  } catch (err) {
-    setBatchEstimateStatus(err.message, true);
-  } finally {
-    btn.disabled = false;
-  }
-}
-
 async function callProviderBatch(provider, apiKey, model, systemPrompt, userPrompt, maxTokens, expectedCount) {
   if (provider.id === "openai") {
     const res = await fetch("https://api.openai.com/v1/chat/completions", {
@@ -3771,19 +3532,10 @@ async function callProviderBatch(provider, apiKey, model, systemPrompt, userProm
 function openBatchModal() {
   const modal = document.getElementById("batch-modal");
   document.getElementById("batch-date").value = new Date().toISOString().slice(0, 10);
-  const now = new Date();
-  document.getElementById("batch-time").value =
-    now.getHours().toString().padStart(2, "0") + ":" + now.getMinutes().toString().padStart(2, "0");
-
+  document.getElementById("batch-time").value = new Date().toTimeString().slice(0, 5);
   const container = document.getElementById("batch-items");
   container.innerHTML = "";
   for (let i = 0; i < 3; i++) addBatchRow();
-
-  document.getElementById("batch-results").innerHTML = "";
-  document.getElementById("batch-save").disabled = true;
-  setBatchEstimateStatus("");
-  _batchValidationData = null;
-
   populateBatchSuggestions();
   modal.classList.remove("hidden");
 }
@@ -3835,182 +3587,27 @@ function closeBatchModal() {
   document.getElementById("batch-modal").classList.add("hidden");
 }
 
-function renderBatchResults(inputItems, finalItems, validationData) {
-  const container = document.getElementById("batch-results");
-  let html = '';
-
-  // Validation panel
-  html += '<div class="validation-panel">';
-  html += '<div class="validation-header">AI Thought Process</div>';
-
-  // Round 1
-  html += '<div class="round-label">Round 1 &mdash; Initial estimates (fast models)</div>';
-  for (const r of validationData.round1) {
-    html += `<div style="font-size:0.78rem;font-weight:600;color:var(--text-dim);margin:6px 0 4px;">${escapeHtml(r.providerName)}</div>`;
-    html += '<table class="validation-table"><thead><tr>';
-    html += '<th>Food</th><th>Cal &#8595;</th><th>Cal &#8593;</th><th>Pro &#8595;</th><th>Pro &#8593;</th>';
-    html += '</tr></thead><tbody>';
-    for (const item of r.data.items) {
-      html += `<tr>
-        <td>${escapeHtml(item.food)}</td>
-        <td class="num">${renderNum(item.calories_lower, 1)}</td>
-        <td class="num">${renderNum(item.calories_upper, 1)}</td>
-        <td class="num">${renderNum(item.protein_lower, 1)}</td>
-        <td class="num">${renderNum(item.protein_upper, 1)}</td>
-      </tr>`;
-    }
-    html += '</tbody></table>';
-    html += renderReasoning(r.providerName, r.data.reasoning);
-  }
-
-  // Verdict
-  if (validationData.verdict === "single") {
-    html += `<div class="verdict verdict-warning">&#9888; ${escapeHtml(validationData.warning)}</div>`;
-  } else if (validationData.verdict === "consensus") {
-    html += `<div class="verdict verdict-consensus">&#10003; Consensus reached (worst spread: ${validationData.spread.toFixed(1)}%, within ${validationData.threshold}% threshold)</div>`;
-  } else if ((validationData.verdict === "reconciled" || validationData.verdict === "max_rounds") && validationData.reconRounds) {
-    html += `<div class="verdict verdict-escalated">&#9888; Round 1 worst spread: ${validationData.spread.toFixed(1)}% (exceeds ${validationData.threshold}% threshold)</div>`;
-    html += '<div class="verdict-detail">Escalated to secondary models for reconciliation.</div>';
-
-    for (const rnd of validationData.reconRounds) {
-      html += `<div class="round-label round-label-r2">Round ${rnd.roundNum} &mdash; Reconciliation (secondary models)</div>`;
-      for (const r of rnd.results) {
-        html += `<div style="font-size:0.78rem;font-weight:600;color:var(--text-dim);margin:6px 0 4px;">${escapeHtml(r.providerName)} (R${rnd.roundNum})</div>`;
-        html += '<table class="validation-table"><thead><tr>';
-        html += '<th>Food</th><th>Cal &#8595;</th><th>Cal &#8593;</th><th>Pro &#8595;</th><th>Pro &#8593;</th>';
-        html += '</tr></thead><tbody>';
-        for (const item of r.data.items) {
-          html += `<tr>
-            <td>${escapeHtml(item.food)}</td>
-            <td class="num">${renderNum(item.calories_lower, 1)}</td>
-            <td class="num">${renderNum(item.calories_upper, 1)}</td>
-            <td class="num">${renderNum(item.protein_lower, 1)}</td>
-            <td class="num">${renderNum(item.protein_upper, 1)}</td>
-          </tr>`;
-        }
-        html += '</tbody></table>';
-        html += renderReasoning(`${r.providerName} (R${rnd.roundNum})`, r.data.reasoning);
-      }
-
-      const prevSpread = rnd.roundNum === 2 ? validationData.spread : validationData.reconRounds[validationData.reconRounds.indexOf(rnd) - 1].spread;
-      html += `<div class="spread-summary">`;
-      html += `Worst spread: <span class="spread-r1">${prevSpread.toFixed(1)}%</span> &#8594; <span class="spread-r2">${rnd.spread.toFixed(1)}%</span>`;
-      if (rnd.spread < prevSpread) {
-        html += ` <span class="spread-improved">(&#8595;${(prevSpread - rnd.spread).toFixed(1)}% reduction)</span>`;
-      }
-      html += '</div>';
-    }
-
-    if (validationData.verdict === "reconciled") {
-      html += `<div class="verdict verdict-consensus">&#10003; Final values: average of Round ${validationData.round} reconciled estimates</div>`;
-    } else {
-      html += `<div class="verdict verdict-warning">&#9888; Spread still above threshold after ${validationData.round} rounds — using last round average</div>`;
-    }
-  } else if (validationData.verdict === "recon_failed") {
-    html += `<div class="verdict verdict-warning">&#9888; Worst spread: ${validationData.spread.toFixed(1)}% (exceeds ${validationData.threshold}% threshold)</div>`;
-    html += '<div class="verdict-detail">Reconciliation failed. Falling back to previous round average.</div>';
-  }
-
-  if (validationData.failed && validationData.failed.length > 0) {
-    for (const f of validationData.failed) {
-      html += `<div class="verdict verdict-warning">&#9888; ${escapeHtml(f.providerName)} failed: ${escapeHtml(f.error)}</div>`;
-    }
-  }
-
-  html += '</div>'; // end validation-panel
-
-  // Editable results table
-  html += '<div class="table-wrapper" style="margin-top:12px;"><table><thead><tr>';
-  html += '<th>Food</th><th>Qty</th><th>Unit</th><th>Cal (low)</th><th>Cal (high)</th><th>Pro (low)</th><th>Pro (high)</th>';
-  html += '</tr></thead><tbody>';
-
-  let totalCalLow = 0, totalCalHigh = 0, totalProLow = 0, totalProHigh = 0;
-  for (let i = 0; i < inputItems.length; i++) {
-    const inp = inputItems[i];
-    const fin = finalItems[i];
-    totalCalLow += fin.calories_lower;
-    totalCalHigh += fin.calories_upper;
-    totalProLow += fin.protein_lower;
-    totalProHigh += fin.protein_upper;
-    html += `<tr data-batch-idx="${i}">
-      <td>${escapeHtml(inp.food)}</td>
-      <td class="num">${inp.qty}</td>
-      <td>${escapeHtml(inp.unit)}</td>
-      <td><input type="number" class="batch-res-cal-low" step="any" value="${renderNum(fin.calories_lower, 1)}"></td>
-      <td><input type="number" class="batch-res-cal-high" step="any" value="${renderNum(fin.calories_upper, 1)}"></td>
-      <td><input type="number" class="batch-res-pro-low" step="any" value="${renderNum(fin.protein_lower, 1)}"></td>
-      <td><input type="number" class="batch-res-pro-high" step="any" value="${renderNum(fin.protein_upper, 1)}"></td>
-    </tr>`;
-  }
-
-  // Totals row
-  html += `<tr class="daily-total">
-    <td colspan="3">Total</td>
-    <td class="num">${renderNum(totalCalLow, 1)}</td>
-    <td class="num">${renderNum(totalCalHigh, 1)}</td>
-    <td class="num">${renderNum(totalProLow, 1)}</td>
-    <td class="num">${renderNum(totalProHigh, 1)}</td>
-  </tr>`;
-
-  html += '</tbody></table></div>';
-  container.innerHTML = html;
-  document.getElementById("batch-save").disabled = false;
-}
-
 function saveBatchFoods() {
   const date = document.getElementById("batch-date").value;
   const time = document.getElementById("batch-time").value;
-  if (!date || !time) {
-    setBatchEstimateStatus("Date and time are required.", true);
-    return;
-  }
-
-  const resultRows = document.querySelectorAll("#batch-results table tbody tr[data-batch-idx]");
-  if (resultRows.length === 0) return;
-
+  if (!date || !time) { alert("Date and time are required."); return; }
   const entries = loadFoodEntries();
-  const maxId = entries.length ? Math.max(...entries.map((e) => e.id)) : 0;
-
-  const inputRows = document.querySelectorAll("#batch-items .batch-item-row");
-  const inputItems = [];
-  for (const row of inputRows) {
+  let maxId = entries.length ? Math.max(...entries.map((e) => e.id)) : 0;
+  const created = [];
+  document.querySelectorAll("#batch-items .batch-item-row").forEach((row) => {
     const food = row.querySelector(".batch-food").value.trim();
     const qty = row.querySelector(".batch-qty").value;
     const unit = row.querySelector(".batch-unit").value.trim();
-    if (food && qty && unit) inputItems.push({ food, qty: parseFloat(qty), unit });
-  }
-
-  resultRows.forEach((row, i) => {
-    const idx = parseInt(row.dataset.batchIdx);
-    const inp = inputItems[idx];
-    if (!inp) return;
-
-    const entry = {
-      id: maxId + 1 + i,
-      date,
-      time,
-      food: inp.food,
-      qty: inp.qty,
-      unit: inp.unit,
-      calLow: parseFloat(row.querySelector(".batch-res-cal-low").value) || 0,
-      calHigh: parseFloat(row.querySelector(".batch-res-cal-high").value) || 0,
-      proLow: parseFloat(row.querySelector(".batch-res-pro-low").value) || 0,
-      proHigh: parseFloat(row.querySelector(".batch-res-pro-high").value) || 0,
-    };
-
-    if (_batchValidationData) {
-      entry.aiThoughtProcess = _batchValidationData;
-    }
-
-    entries.push(entry);
+    if (!food || !qty || !unit) return;
+    const entry = { id: ++maxId, date, time, food, qty: parseFloat(qty), unit, macros: {}, estimateStatus: "pending" };
+    entries.push(entry); created.push(entry);
   });
-
+  if (!created.length) { alert("Add at least one food (name, quantity, and unit)."); return; }
   saveFoodEntries(entries);
   ensureDayExists(date);
-  _batchValidationData = null;
   closeBatchModal();
-  renderFoodTable();
-  renderCalorieTracker();
+  renderFoodTable(); renderCalorieTracker();
+  created.forEach((e) => enqueueEstimate(e.id));
 }
 
 // ============================================================
@@ -4076,7 +3673,6 @@ document.addEventListener("DOMContentLoaded", async () => {
   // Batch modal
   document.getElementById("batch-add-btn").addEventListener("click", openBatchModal);
   document.getElementById("batch-add-row").addEventListener("click", addBatchRow);
-  document.getElementById("batch-estimate-btn").addEventListener("click", estimateBatchNutrition);
   document.getElementById("batch-save").addEventListener("click", saveBatchFoods);
   document.getElementById("batch-cancel").addEventListener("click", closeBatchModal);
   document.querySelector("#batch-modal .modal-overlay").addEventListener("click", closeBatchModal);
