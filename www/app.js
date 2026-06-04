@@ -783,7 +783,40 @@ function saveFood(e) {
   if (saved && saved.estimateStatus === "pending") enqueueEstimate(saved.id);
 }
 
-function enqueueEstimate(id) { /* implemented in Phase 5 (background estimation) */ }
+const _estimateQueue = [];
+let _estimateRunning = false;
+
+function enqueueEstimate(entryId) {
+  if (!_estimateQueue.includes(entryId)) _estimateQueue.push(entryId);
+  runEstimateQueue();
+}
+async function runEstimateQueue() {
+  if (_estimateRunning) return;
+  _estimateRunning = true;
+  try {
+    while (_estimateQueue.length) {
+      const id = _estimateQueue.shift();
+      const entries = loadFoodEntries();
+      const entry = entries.find((e) => e.id === id);
+      if (!entry || entry.estimateStatus !== "pending") continue;
+      const ids = Macros.blankEnabled(entry, getEnabledMacros());
+      if (!ids.length) { entry.estimateStatus = "manual"; saveFoodEntries(entries); continue; }
+      try {
+        const filled = await estimateEntry(entry, ids);
+        if (!entry.macros) entry.macros = {};
+        for (const mid of ids) if (filled[mid]) entry.macros[mid] = filled[mid];
+        entry.estimateStatus = "done";
+      } catch (err) {
+        entry.estimateStatus = (err && err.message === "no-api-key") ? "manual" : "error";
+      }
+      saveFoodEntries(entries);
+      renderFoodTable(); renderCalorieTracker();
+    }
+  } finally { _estimateRunning = false; }
+}
+function resumePendingEstimates() {
+  loadFoodEntries().filter((e) => e.estimateStatus === "pending").forEach((e) => enqueueEstimate(e.id));
+}
 
 window.editFood = function (id) {
   const entries = loadFoodEntries();
@@ -3988,6 +4021,9 @@ document.addEventListener("DOMContentLoaded", async () => {
     initFromLocalStorage();
   }
   document.body.classList.remove('loading');
+
+  // Resume any estimates left pending from a previous session
+  resumePendingEstimates();
 
   // Tab switching (top tabs + bottom nav share one activator)
   document.querySelectorAll(".tab, .bottom-nav-item").forEach((el) => {
