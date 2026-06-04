@@ -1717,7 +1717,7 @@ function renderMacroSettings() {
   for (const m of Macros.CATALOG) {
     const checked = enabled.has(m.id) ? "checked" : "";
     const lock = m.locked ? "disabled" : "";
-    html += `<label class="macro-toggle"><input type="checkbox" data-macro="${m.id}" ${checked} ${lock}> ${escapeHtml(m.label)} <span class="macro-unit">(${m.unit})</span></label>`;
+    html += `<label class="macro-toggle"><input type="checkbox" data-macro="${escapeHtml(m.id)}" ${checked} ${lock}> ${escapeHtml(m.label)} <span class="macro-unit">(${escapeHtml(m.unit)})</span></label>`;
   }
   html += "</div>";
   html += `<div class="form-row"><label>Value format</label><select id="set-value-format">
