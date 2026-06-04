@@ -32,10 +32,21 @@ const _cache = { food: null, days: null, profile: null, assessments: null, setti
 // ---- Mappers: snake_case DB ↔ camelCase JS ----
 
 function foodRowToJs(r) {
-  return { id: r.id, date: r.date, time: r.time, food: r.food, qty: Number(r.qty), unit: r.unit, calLow: Number(r.cal_low), calHigh: Number(r.cal_high), proLow: Number(r.pro_low), proHigh: Number(r.pro_high), aiThoughtProcess: r.ai_thought_process || null };
+  const base = { id: r.id, date: r.date, time: r.time, food: r.food, qty: Number(r.qty), unit: r.unit,
+    estimateStatus: r.estimate_status || null };
+  if (r.macros) { base.macros = r.macros; return base; }
+  // legacy fallback: build macros from cal/pro columns
+  base.calLow = Number(r.cal_low); base.calHigh = Number(r.cal_high);
+  base.proLow = Number(r.pro_low); base.proHigh = Number(r.pro_high);
+  return Macros.migrateEntry(base);
 }
 function foodJsToRow(e) {
-  return { id: e.id, date: e.date, time: e.time, food: e.food, qty: e.qty, unit: e.unit, cal_low: e.calLow, cal_high: e.calHigh, pro_low: e.proLow, pro_high: e.proHigh, ai_thought_process: e.aiThoughtProcess || null };
+  const cal = Macros.getMacro(e, "calories") || { low: null, high: null };
+  const pro = Macros.getMacro(e, "protein") || { low: null, high: null };
+  return { id: e.id, date: e.date, time: e.time, food: e.food, qty: e.qty, unit: e.unit,
+    macros: e.macros || {}, estimate_status: e.estimateStatus || null,
+    cal_low: cal.low, cal_high: cal.high, pro_low: pro.low, pro_high: pro.high,
+    ai_thought_process: null };
 }
 
 function dayRowToJs(r) {
@@ -95,9 +106,9 @@ function saveProfile(profile) {
 }
 
 function loadFoodEntries() {
-  if (_cache.ready && _cache.food) return [..._cache.food];
+  if (_cache.ready && _cache.food) return _cache.food.map(Macros.migrateEntry);
   const saved = localStorage.getItem("nt_food");
-  return saved ? JSON.parse(saved) : [];
+  return saved ? JSON.parse(saved).map(Macros.migrateEntry) : [];
 }
 
 function saveFoodEntries(entries) {
@@ -322,7 +333,7 @@ function initFromLocalStorage() {
   }
 
   const savedFood = localStorage.getItem("nt_food");
-  _cache.food = savedFood ? JSON.parse(savedFood) : [];
+  _cache.food = savedFood ? JSON.parse(savedFood).map(Macros.migrateEntry) : [];
   const savedDays = localStorage.getItem("nt_days");
   _cache.days = savedDays ? JSON.parse(savedDays) : [];
   const savedProfile = localStorage.getItem("nt_profile");
@@ -442,11 +453,12 @@ function calcTDEE(bmr, activityLabel) {
 
 function getDailyFoodTotals(date, foodEntries) {
   const dayFoods = foodEntries.filter((f) => f.date === date);
+  const cal = Macros.sumMacro(dayFoods, "calories");
+  const pro = Macros.sumMacro(dayFoods, "protein");
   return {
-    calLow: dayFoods.reduce((s, f) => s + (Number(f.calLow) || 0), 0),
-    calHigh: dayFoods.reduce((s, f) => s + (Number(f.calHigh) || 0), 0),
-    proLow: dayFoods.reduce((s, f) => s + (Number(f.proLow) || 0), 0),
-    proHigh: dayFoods.reduce((s, f) => s + (Number(f.proHigh) || 0), 0),
+    calLow: cal.low, calHigh: cal.high,
+    proLow: pro.low, proHigh: pro.high,
+    macro: (id) => Macros.sumMacro(dayFoods, id),
   };
 }
 
