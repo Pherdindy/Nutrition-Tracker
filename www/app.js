@@ -1529,6 +1529,11 @@ function renderMacroSettings() {
     return `<option value="${escapeHtml(p.id)}" ${p.id === visionId ? "selected" : ""}>${escapeHtml(p.name)}${hasKey ? "" : " (no key)"}</option>`;
   }).join("");
   html += `</select></div>`;
+  const _theme = getTheme();
+  html += `<div class="form-row"><label>Theme</label><select id="set-theme">
+    <option value="dark" ${_theme === "dark" ? "selected" : ""}>Dark</option>
+    <option value="light" ${_theme === "light" ? "selected" : ""}>Light</option>
+    <option value="system" ${_theme === "system" ? "selected" : ""}>System</option></select></div>`;
   html += "</div>";
   c.innerHTML = html;
 
@@ -1541,6 +1546,8 @@ function renderMacroSettings() {
   c.querySelector("#set-estimation-mode").addEventListener("change", (e) => setEstimationMode(e.target.value));
   const vp = c.querySelector("#set-vision-provider");
   if (vp) vp.addEventListener("change", (e) => setVisionProvider(e.target.value));
+  const _ts = c.querySelector("#set-theme");
+  if (_ts) _ts.addEventListener("change", (e) => { setTheme(e.target.value); applyTheme(); });
 }
 
 window.saveProviderKeyUI = function (providerId) {
