@@ -1267,6 +1267,18 @@ function getVisionProvider() {
   return withKeys.find((p) => p.id === pref) || withKeys[0] || null;
 }
 function setVisionProvider(id) { setSetting("vision_provider", id); }
+function getTheme() { const t = getSetting("theme", "dark"); return (t === "light" || t === "system") ? t : "dark"; }
+function setTheme(t) { setSetting("theme", (t === "light" || t === "system") ? t : "dark"); }
+function applyTheme() {
+  const prefersLight = !!(window.matchMedia && matchMedia("(prefers-color-scheme: light)").matches);
+  const eff = Theme.resolveTheme(getTheme(), prefersLight);
+  document.documentElement.setAttribute("data-theme", eff);
+  if (window.Capacitor && Capacitor.Plugins && Capacitor.Plugins.StatusBar) {
+    const sb = Theme.statusBarFor(eff);
+    Capacitor.Plugins.StatusBar.setBackgroundColor({ color: sb.color }).catch(() => {});
+    Capacitor.Plugins.StatusBar.setStyle({ style: sb.style }).catch(() => {});
+  }
+}
 
 // --- Macro-aware estimation engine ---
 
@@ -3333,9 +3345,9 @@ document.addEventListener("DOMContentLoaded", async () => {
   renderCalorieTracker();
   renderCalorieTarget();
 
-  // Native status bar styling (no-op in a plain browser)
-  if (window.Capacitor && Capacitor.Plugins && Capacitor.Plugins.StatusBar) {
-    Capacitor.Plugins.StatusBar.setBackgroundColor({ color: "#16324f" }).catch(() => {});
-    Capacitor.Plugins.StatusBar.setStyle({ style: "DARK" }).catch(() => {});
+  // Apply the saved theme (sets data-theme + native status bar) and track OS light/dark changes
+  applyTheme();
+  if (window.matchMedia) {
+    matchMedia("(prefers-color-scheme: light)").addEventListener("change", () => { if (getTheme() === "system") applyTheme(); });
   }
 });
