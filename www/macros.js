@@ -125,6 +125,13 @@
     return (ids || []).map((id) => '  "' + id + '_lower": <number>,\n  "' + id + '_upper": <number>').join(",\n");
   }
 
+  function needsReestimate(orig, upd) {
+    if (!orig) return true;
+    return String(orig.food) !== String(upd.food)
+      || Number(orig.qty) !== Number(upd.qty)
+      || String(orig.unit) !== String(upd.unit);
+  }
+
   return {
     CATALOG,
     byId,
@@ -143,5 +150,6 @@
     spread,
     averageEstimates,
     promptFields,
+    needsReestimate,
   };
 });
