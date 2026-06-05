@@ -661,28 +661,8 @@ function renderCalorieTarget() {
 // FOOD CRUD
 // ============================================================
 
-function renderFoodMacroFields(entry) {
-  const host = document.getElementById("food-macro-fields");
-  if (!host) return;
-  const fmt = getValueFormat();
-  let html = "";
-  for (const id of getEnabledMacros()) {
-    const m = Macros.byId(id);
-    const v = entry ? Macros.getMacro(entry, id) : null;
-    if (fmt === "range") {
-      html += `<div class="form-row-pair">
-        <div class="form-row"><label>${escapeHtml(m.label)} lower (${escapeHtml(m.unit)})</label>
-          <input type="number" step="any" data-macro-low="${escapeHtml(id)}" value="${v ? Math.round(v.low * 10) / 10 : ""}"></div>
-        <div class="form-row"><label>${escapeHtml(m.label)} upper (${escapeHtml(m.unit)})</label>
-          <input type="number" step="any" data-macro-high="${escapeHtml(id)}" value="${v ? Math.round(v.high * 10) / 10 : ""}"></div>
-      </div>`;
-    } else {
-      html += `<div class="form-row"><label>${escapeHtml(m.label)} (${escapeHtml(m.unit)})</label>
-        <input type="number" step="any" data-macro-single="${escapeHtml(id)}" value="${v != null ? Macros.midpoint(v) : ""}"></div>`;
-    }
-  }
-  host.innerHTML = html;
-}
+
+let _foodEditOriginal = null;
 
 function openFoodModal(entry) {
   const modal = document.getElementById("food-modal");
@@ -694,7 +674,7 @@ function openFoodModal(entry) {
   document.getElementById("food-qty").value = entry ? entry.qty : "";
   document.getElementById("food-unit").value = entry ? entry.unit : "";
   populateFoodSuggestions();
-  renderFoodMacroFields(entry);
+  _foodEditOriginal = entry ? { food: entry.food, qty: entry.qty, unit: entry.unit } : null;
   modal.classList.remove("hidden");
 }
 
@@ -720,28 +700,6 @@ function ensureDayExists(date) {
   saveDayEntries(days);
 }
 
-function readMacroInputs() {
-  const fmt = getValueFormat();
-  const macros = {};
-  if (fmt === "range") {
-    document.querySelectorAll("#food-macro-fields [data-macro-low]").forEach((lo) => {
-      const id = lo.dataset.macroLow;
-      const hi = document.querySelector(`#food-macro-fields [data-macro-high="${id}"]`);
-      if (lo.value === "" || !hi || hi.value === "") return;
-      const low = parseFloat(lo.value), high = parseFloat(hi.value);
-      if (isNaN(low) || isNaN(high)) return;
-      macros[id] = { low, high };
-    });
-  } else {
-    document.querySelectorAll("#food-macro-fields [data-macro-single]").forEach((el) => {
-      if (el.value === "") return;
-      const n = parseFloat(el.value);
-      if (isNaN(n)) return;
-      macros[el.dataset.macroSingle] = { low: n, high: n };
-    });
-  }
-  return macros;
-}
 
 function saveFood(e) {
   e.preventDefault();
@@ -753,21 +711,17 @@ function saveFood(e) {
     food: document.getElementById("food-name").value,
     qty: parseFloat(document.getElementById("food-qty").value),
     unit: document.getElementById("food-unit").value,
-    macros: readMacroInputs(),
   };
-  const blanks = Macros.blankEnabled(base, getEnabledMacros());
-  base.estimateStatus = blanks.length ? "pending" : "manual";
-
   let saved;
   if (id) {
     const idx = entries.findIndex((x) => x.id === parseInt(id));
     if (idx === -1) { console.warn("saveFood: entry not found for id", id); return; }
-    // base.macros fully replaces prior macros: cleared fields re-estimate; macros for now-disabled types intentionally drop.
     saved = { ...entries[idx], ...base };
+    if (Macros.needsReestimate(_foodEditOriginal, base)) { saved.macros = {}; saved.estimateStatus = "pending"; }
     entries[idx] = saved;
   } else {
     const maxId = entries.length ? Math.max(...entries.map((x) => x.id)) : 0;
-    saved = { ...base, id: maxId + 1 };
+    saved = { ...base, id: maxId + 1, macros: {}, estimateStatus: "pending" };
     entries.push(saved);
   }
   saveFoodEntries(entries);
