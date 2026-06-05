@@ -1267,6 +1267,18 @@ function getVisionProvider() {
   return withKeys.find((p) => p.id === pref) || withKeys[0] || null;
 }
 function setVisionProvider(id) { setSetting("vision_provider", id); }
+function getTheme() { const t = getSetting("theme", "dark"); return (t === "light" || t === "system") ? t : "dark"; }
+function setTheme(t) { setSetting("theme", (t === "light" || t === "system") ? t : "dark"); }
+function applyTheme() {
+  const prefersLight = !!(window.matchMedia && matchMedia("(prefers-color-scheme: light)").matches);
+  const eff = Theme.resolveTheme(getTheme(), prefersLight);
+  document.documentElement.setAttribute("data-theme", eff);
+  if (window.Capacitor && Capacitor.Plugins && Capacitor.Plugins.StatusBar) {
+    const bar = Theme.statusBarFor(eff);
+    Capacitor.Plugins.StatusBar.setBackgroundColor({ color: bar.color }).catch(() => {});
+    Capacitor.Plugins.StatusBar.setStyle({ style: bar.style }).catch(() => {});
+  }
+}
 
 // --- Macro-aware estimation engine ---
 
@@ -1517,6 +1529,11 @@ function renderMacroSettings() {
     return `<option value="${escapeHtml(p.id)}" ${p.id === visionId ? "selected" : ""}>${escapeHtml(p.name)}${hasKey ? "" : " (no key)"}</option>`;
   }).join("");
   html += `</select></div>`;
+  const _theme = getTheme();
+  html += `<div class="form-row"><label>Theme</label><select id="set-theme">
+    <option value="dark" ${_theme === "dark" ? "selected" : ""}>Dark</option>
+    <option value="light" ${_theme === "light" ? "selected" : ""}>Light</option>
+    <option value="system" ${_theme === "system" ? "selected" : ""}>System</option></select></div>`;
   html += "</div>";
   c.innerHTML = html;
 
@@ -1529,6 +1546,8 @@ function renderMacroSettings() {
   c.querySelector("#set-estimation-mode").addEventListener("change", (e) => setEstimationMode(e.target.value));
   const vp = c.querySelector("#set-vision-provider");
   if (vp) vp.addEventListener("change", (e) => setVisionProvider(e.target.value));
+  const _ts = c.querySelector("#set-theme");
+  if (_ts) _ts.addEventListener("change", (e) => { setTheme(e.target.value); applyTheme(); });
 }
 
 window.saveProviderKeyUI = function (providerId) {
@@ -3333,9 +3352,9 @@ document.addEventListener("DOMContentLoaded", async () => {
   renderCalorieTracker();
   renderCalorieTarget();
 
-  // Native status bar styling (no-op in a plain browser)
-  if (window.Capacitor && Capacitor.Plugins && Capacitor.Plugins.StatusBar) {
-    Capacitor.Plugins.StatusBar.setBackgroundColor({ color: "#16324f" }).catch(() => {});
-    Capacitor.Plugins.StatusBar.setStyle({ style: "DARK" }).catch(() => {});
+  // Apply the saved theme (sets data-theme + native status bar) and track OS light/dark changes
+  applyTheme();
+  if (window.matchMedia) {
+    matchMedia("(prefers-color-scheme: light)").addEventListener("change", () => { if (getTheme() === "system") applyTheme(); });
   }
 });

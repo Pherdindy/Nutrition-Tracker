@@ -5,6 +5,17 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Calorie and Activity Tracker</title>
   <link rel="stylesheet" href="styles.css">
+  <script>
+    (function () {
+      try {
+        var t = localStorage.getItem("nt_theme") || "dark";
+        var eff = t === "light" ? "light"
+          : t === "system" ? (window.matchMedia && matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark")
+          : "dark";
+        document.documentElement.setAttribute("data-theme", eff);
+      } catch (e) {}
+    })();
+  </script>
 </head>
 <body>
   <div class="app">
@@ -23,7 +34,7 @@
       <div class="toolbar">
         <button id="add-food-btn" class="btn btn-primary">+ Add Food</button>
         <button id="batch-add-btn" class="btn btn-secondary">+ Batch Add</button>
-        <button id="photo-add-btn" class="btn btn-secondary">📷 Snap</button>
+        <button id="photo-add-btn" class="btn btn-secondary"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px"><path d="M3 7h3l2-2h8l2 2h3v12H3z"/><circle cx="12" cy="13" r="3.5"/></svg>Snap</button>
         <div class="filter-group">
           <label for="food-date-filter">Filter by date:</label>
           <input type="date" id="food-date-filter">
@@ -37,8 +48,8 @@
         </table>
       </div>
       <div id="food-cards" class="cards-list mobile-only"></div>
-      <button id="food-fab" class="fab mobile-only" aria-label="Add food">&#43;</button>
-      <button id="photo-fab" class="fab fab-secondary mobile-only" aria-label="Snap a photo">📷</button>
+      <button id="food-fab" class="fab mobile-only" aria-label="Add food"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></button>
+      <button id="photo-fab" class="fab fab-secondary mobile-only" aria-label="Snap a photo"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7h3l2-2h8l2 2h3v12H3z"/><circle cx="12" cy="13" r="3.5"/></svg></button>
     </section>
 
     <!-- CALORIE TRACKER TAB -->
@@ -296,6 +307,7 @@
   <script src="macros.js"></script>
   <script src="photo.js"></script>
   <script src="targets.js"></script>
+  <script src="theme.js"></script>
   <script src="app.js"></script>
   <script src="assessment-view.js"></script>
   <script src="mobile-render.js"></script>
