@@ -665,7 +665,7 @@ function renderCalorieTarget() {
 let _foodEditOriginal = null;
 
 function showFoodPane(name) {
-  document.querySelectorAll("#food-modal .modal-tab").forEach((t) => t.classList.toggle("active", t.dataset.pane === name));
+  document.querySelectorAll("#food-modal-tabs .modal-tab").forEach((t) => t.classList.toggle("active", t.dataset.pane === name));
   document.querySelectorAll("#food-modal .modal-pane").forEach((p) => p.classList.toggle("hidden", p.dataset.pane !== name));
 }
 
@@ -3099,7 +3099,7 @@ function renderAssessmentHistory() {
 // BATCH ADD FEATURE
 // ============================================================
 
-// --- Batch Modal Functions ---
+// --- Batch Pane Functions ---
 
 
 function populateBatchSuggestions() {

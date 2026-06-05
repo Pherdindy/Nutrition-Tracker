@@ -1766,3 +1766,5 @@ body.loading::after {
 .modal-tabs { display: flex; gap: 4px; margin-bottom: 14px; border-bottom: 1px solid var(--border); }
 .modal-tab { background: none; border: none; color: var(--text-dim); padding: 8px 14px; cursor: pointer; font-size: .9rem; border-bottom: 2px solid transparent; margin-bottom: -1px; }
 .modal-tab.active { color: var(--primary); border-bottom-color: var(--primary); }
+
+.hidden { display: none !important; }
