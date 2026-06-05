@@ -1274,9 +1274,9 @@ function applyTheme() {
   const eff = Theme.resolveTheme(getTheme(), prefersLight);
   document.documentElement.setAttribute("data-theme", eff);
   if (window.Capacitor && Capacitor.Plugins && Capacitor.Plugins.StatusBar) {
-    const sb = Theme.statusBarFor(eff);
-    Capacitor.Plugins.StatusBar.setBackgroundColor({ color: sb.color }).catch(() => {});
-    Capacitor.Plugins.StatusBar.setStyle({ style: sb.style }).catch(() => {});
+    const bar = Theme.statusBarFor(eff);
+    Capacitor.Plugins.StatusBar.setBackgroundColor({ color: bar.color }).catch(() => {});
+    Capacitor.Plugins.StatusBar.setStyle({ style: bar.style }).catch(() => {});
   }
 }
 
