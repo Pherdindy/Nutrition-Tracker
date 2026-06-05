@@ -1762,3 +1762,7 @@ body.loading::after {
 .photo-item-portion { display: block; width: 100%; font-size: .85rem; color: var(--text-dim); margin-bottom: 4px; }
 .photo-item-macros { font-size: .8rem; color: var(--text-dim); }
 .fab-secondary { right: 80px; }
+
+.modal-tabs { display: flex; gap: 4px; margin-bottom: 14px; border-bottom: 1px solid var(--border); }
+.modal-tab { background: none; border: none; color: var(--text-dim); padding: 8px 14px; cursor: pointer; font-size: .9rem; border-bottom: 2px solid transparent; margin-bottom: -1px; }
+.modal-tab.active { color: var(--primary); border-bottom-color: var(--primary); }

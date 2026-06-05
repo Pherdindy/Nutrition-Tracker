@@ -664,6 +664,11 @@ function renderCalorieTarget() {
 
 let _foodEditOriginal = null;
 
+function showFoodPane(name) {
+  document.querySelectorAll("#food-modal .modal-tab").forEach((t) => t.classList.toggle("active", t.dataset.pane === name));
+  document.querySelectorAll("#food-modal .modal-pane").forEach((p) => p.classList.toggle("hidden", p.dataset.pane !== name));
+}
+
 function openFoodModal(entry) {
   const modal = document.getElementById("food-modal");
   document.getElementById("food-modal-title").textContent = entry ? "Edit Food Entry" : "Add Food Entry";
@@ -675,6 +680,18 @@ function openFoodModal(entry) {
   document.getElementById("food-unit").value = entry ? entry.unit : "";
   populateFoodSuggestions();
   _foodEditOriginal = entry ? { food: entry.food, qty: entry.qty, unit: entry.unit } : null;
+  const tabs = document.getElementById("food-modal-tabs");
+  if (entry) {
+    tabs.classList.add("hidden");
+  } else {
+    tabs.classList.remove("hidden");
+    document.getElementById("batch-date").value = new Date().toISOString().slice(0, 10);
+    document.getElementById("batch-time").value = new Date().toTimeString().slice(0, 5);
+    document.getElementById("batch-items").innerHTML = "";
+    for (let i = 0; i < 3; i++) addBatchRow();
+    populateBatchSuggestions();
+  }
+  showFoodPane("single");
   modal.classList.remove("hidden");
 }
 
@@ -3084,16 +3101,6 @@ function renderAssessmentHistory() {
 
 // --- Batch Modal Functions ---
 
-function openBatchModal() {
-  const modal = document.getElementById("batch-modal");
-  document.getElementById("batch-date").value = new Date().toISOString().slice(0, 10);
-  document.getElementById("batch-time").value = new Date().toTimeString().slice(0, 5);
-  const container = document.getElementById("batch-items");
-  container.innerHTML = "";
-  for (let i = 0; i < 3; i++) addBatchRow();
-  populateBatchSuggestions();
-  modal.classList.remove("hidden");
-}
 
 function populateBatchSuggestions() {
   const entries = loadFoodEntries();
@@ -3105,7 +3112,7 @@ function populateBatchSuggestions() {
   if (!foodDl) {
     foodDl = document.createElement("datalist");
     foodDl.id = "batch-food-suggestions";
-    document.getElementById("batch-modal").appendChild(foodDl);
+    document.getElementById("food-modal").appendChild(foodDl);
   }
   foodDl.innerHTML = foods.map((f) => `<option value="${escapeHtml(f)}">`).join("");
 
@@ -3113,7 +3120,7 @@ function populateBatchSuggestions() {
   if (!unitDl) {
     unitDl = document.createElement("datalist");
     unitDl.id = "batch-unit-suggestions";
-    document.getElementById("batch-modal").appendChild(unitDl);
+    document.getElementById("food-modal").appendChild(unitDl);
   }
   unitDl.innerHTML = units.map((u) => `<option value="${escapeHtml(u)}">`).join("");
 }
@@ -3138,9 +3145,6 @@ function removeBatchRow(row) {
   row.remove();
 }
 
-function closeBatchModal() {
-  document.getElementById("batch-modal").classList.add("hidden");
-}
 
 function saveBatchFoods() {
   const date = document.getElementById("batch-date").value;
@@ -3160,7 +3164,7 @@ function saveBatchFoods() {
   if (!created.length) { alert("Add at least one food (name, quantity, and unit)."); return; }
   saveFoodEntries(entries);
   ensureDayExists(date);
-  closeBatchModal();
+  closeFoodModal();
   renderFoodTable(); renderCalorieTracker();
   created.forEach((e) => enqueueEstimate(e.id));
 }
@@ -3224,15 +3228,13 @@ document.addEventListener("DOMContentLoaded", async () => {
     renderMacroSettings();
   }
 
-  // Batch modal
-  document.getElementById("batch-add-btn").addEventListener("click", openBatchModal);
+  // Batch pane (inside unified food modal)
   document.getElementById("batch-add-row").addEventListener("click", addBatchRow);
   document.getElementById("batch-save").addEventListener("click", saveBatchFoods);
-  document.getElementById("batch-cancel").addEventListener("click", closeBatchModal);
-  document.querySelector("#batch-modal .modal-overlay").addEventListener("click", closeBatchModal);
+  document.getElementById("batch-cancel").addEventListener("click", closeFoodModal);
+  document.querySelectorAll("#food-modal-tabs .modal-tab").forEach((t) => t.addEventListener("click", () => showFoodPane(t.dataset.pane)));
 
   // Photo capture modal
-  document.getElementById("photo-add-btn")?.addEventListener("click", startPhotoCapture);
   document.getElementById("photo-fab")?.addEventListener("click", startPhotoCapture);
   document.getElementById("photo-cancel").addEventListener("click", closePhotoModal);
   document.querySelector("#photo-modal .modal-overlay").addEventListener("click", closePhotoModal);
