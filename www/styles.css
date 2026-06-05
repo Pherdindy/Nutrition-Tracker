@@ -18,8 +18,26 @@
   --red: #f87171;
   --yellow: #fbbf24;
   --orange: #fb923c;
+  --fab-bg: #2bb673;
   --radius: 8px;
   --font: 'Segoe UI', system-ui, -apple-system, sans-serif;
+}
+
+[data-theme="light"] {
+  --bg: #f6f7fb;
+  --surface: #ffffff;
+  --surface2: #eef1f6;
+  --card-bg: #ffffff;
+  --border: #dfe3ec;
+  --text: #1c1f2a;
+  --text-dim: #5d6478;
+  --primary: #2f6fed;
+  --primary-hover: #2257c9;
+  --green: #1f9d63;
+  --red: #d64545;
+  --yellow: #c98a00;
+  --orange: #d2691e;
+  --fab-bg: #1f9d63;
 }
 
 body {
@@ -1666,13 +1684,14 @@ body.loading::after {
 .cards-empty { text-align: center; color: var(--text-dim, #6b7480); padding: 40px 16px; }
 /* .fab base: no display property — .mobile-only { display:none } keeps it hidden on desktop */
 .fab { position: fixed; right: 16px; bottom: 84px; z-index: 60; width: 56px; height: 56px;
-  border-radius: 50%; border: none; background: #2bb673; color: #fff; font-size: 28px;
-  box-shadow: 0 4px 12px rgba(0,0,0,.3); cursor: pointer; }
+  border-radius: 50%; border: none; background: var(--fab-bg); color: #fff;
+  box-shadow: 0 4px 12px rgba(0,0,0,.3); cursor: pointer; align-items: center; justify-content: center; }
+.fab svg { width: 24px; height: 24px; display: block; }
 
 /* Mobile: turn on display for cards-list and fab */
 @media (max-width: 720px) {
   .cards-list { display: flex; }
-  .fab { display: block; }
+  .fab { display: flex; }
 }
 
 .day-card { background: var(--card-bg, #fff); border-radius: 12px; box-shadow: 0 1px 4px rgba(0,0,0,.10); overflow: hidden; }
