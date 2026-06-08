@@ -127,3 +127,12 @@ test("promptFields exact format for a single macro", () => {
   assert.equal(M.promptFields(["calories"]),
     '  "calories_lower": <number>,\n  "calories_upper": <number>');
 });
+
+test("needsReestimate true iff food/qty/unit changed (not date/time)", () => {
+  const o = { food: "Oat", qty: 100, unit: "g" };
+  assert.equal(M.needsReestimate(o, { food: "Oat", qty: 100, unit: "g" }), false);
+  assert.equal(M.needsReestimate(o, { food: "Oat", qty: 150, unit: "g" }), true);   // qty
+  assert.equal(M.needsReestimate(o, { food: "Oat", qty: 100, unit: "cup" }), true);  // unit
+  assert.equal(M.needsReestimate(o, { food: "Oats", qty: 100, unit: "g" }), true);   // food
+  assert.equal(M.needsReestimate(null, { food: "Oat", qty: 100, unit: "g" }), true); // no original (add)
+});

@@ -32,9 +32,7 @@
     <!-- FOOD EATEN TAB -->
     <section id="food-eaten" class="tab-content active">
       <div class="toolbar">
-        <button id="add-food-btn" class="btn btn-primary">+ Add Food</button>
-        <button id="batch-add-btn" class="btn btn-secondary">+ Batch Add</button>
-        <button id="photo-add-btn" class="btn btn-secondary"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px"><path d="M3 7h3l2-2h8l2 2h3v12H3z"/><circle cx="12" cy="13" r="3.5"/></svg>Snap</button>
+        <button id="add-food-btn" class="btn btn-primary desktop-only">+ Add Food</button>
         <div class="filter-group">
           <label for="food-date-filter">Filter by date:</label>
           <input type="date" id="food-date-filter">
@@ -189,39 +187,36 @@
     <!-- FOOD MODAL -->
     <div id="food-modal" class="modal hidden">
       <div class="modal-overlay"></div>
-      <div class="modal-content">
+      <div class="modal-content modal-wide">
         <h2 id="food-modal-title">Add Food Entry</h2>
-        <form id="food-form">
+        <div class="modal-tabs" id="food-modal-tabs">
+          <button type="button" class="modal-tab active" data-pane="single">Single</button>
+          <button type="button" class="modal-tab" data-pane="batch">Batch</button>
+        </div>
+        <form id="food-form" class="modal-pane" data-pane="single">
           <input type="hidden" id="food-id">
-          <div class="form-row">
-            <label for="food-date">Date</label>
-            <input type="date" id="food-date" required>
-          </div>
-          <div class="form-row">
-            <label for="food-time">Time</label>
-            <input type="time" id="food-time" required>
-          </div>
-          <div class="form-row">
-            <label for="food-name">Food</label>
-            <input type="text" id="food-name" required autocomplete="off" list="food-suggestions">
-            <datalist id="food-suggestions"></datalist>
-          </div>
-          <div class="form-row">
-            <label for="food-qty">Quantity</label>
-            <input type="number" id="food-qty" step="any" required>
-          </div>
-          <div class="form-row">
-            <label for="food-unit">Unit of measure</label>
-            <input type="text" id="food-unit" required autocomplete="off" list="unit-suggestions">
-            <datalist id="unit-suggestions"></datalist>
-          </div>
-          <div id="food-macro-fields"></div>
-          <p class="modal-hint">Leave macros blank — we'll estimate them automatically after you save.</p>
+          <div class="form-row"><label for="food-date">Date</label><input type="date" id="food-date" required></div>
+          <div class="form-row"><label for="food-time">Time</label><input type="time" id="food-time" required></div>
+          <div class="form-row"><label for="food-name">Food</label><input type="text" id="food-name" required autocomplete="off" list="food-suggestions"><datalist id="food-suggestions"></datalist></div>
+          <div class="form-row"><label for="food-qty">Quantity</label><input type="number" id="food-qty" step="any" required></div>
+          <div class="form-row"><label for="food-unit">Unit of measure</label><input type="text" id="food-unit" required autocomplete="off" list="unit-suggestions"><datalist id="unit-suggestions"></datalist></div>
           <div class="modal-actions">
             <button type="button" class="btn btn-secondary" id="food-cancel">Cancel</button>
             <button type="submit" class="btn btn-primary">Save</button>
           </div>
         </form>
+        <div class="modal-pane hidden" data-pane="batch">
+          <div class="form-row-pair">
+            <div class="form-row"><label for="batch-date">Date</label><input type="date" id="batch-date" required></div>
+            <div class="form-row"><label for="batch-time">Time</label><input type="time" id="batch-time" required></div>
+          </div>
+          <div id="batch-items"></div>
+          <button type="button" id="batch-add-row" class="btn btn-secondary btn-sm">+ Add Row</button>
+          <div class="modal-actions">
+            <button type="button" class="btn btn-secondary" id="batch-cancel">Cancel</button>
+            <button type="button" class="btn btn-primary" id="batch-save">Save All</button>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -260,29 +255,6 @@
       </div>
     </div>
 
-    <!-- BATCH ADD MODAL -->
-    <div id="batch-modal" class="modal hidden">
-      <div class="modal-overlay"></div>
-      <div class="modal-content modal-wide">
-        <h2>Batch Add Foods</h2>
-        <div class="form-row-pair">
-          <div class="form-row">
-            <label for="batch-date">Date</label>
-            <input type="date" id="batch-date" required>
-          </div>
-          <div class="form-row">
-            <label for="batch-time">Time</label>
-            <input type="time" id="batch-time" required>
-          </div>
-        </div>
-        <div id="batch-items"></div>
-        <button type="button" id="batch-add-row" class="btn btn-secondary btn-sm">+ Add Row</button>
-        <div class="modal-actions">
-          <button type="button" class="btn btn-secondary" id="batch-cancel">Cancel</button>
-          <button type="button" class="btn btn-primary" id="batch-save">Save All</button>
-        </div>
-      </div>
-    </div>
     <!-- PHOTO MODAL -->
     <div id="photo-modal" class="modal hidden">
       <div class="modal-overlay"></div>
