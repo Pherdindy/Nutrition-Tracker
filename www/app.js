@@ -3177,7 +3177,107 @@ function saveBatchFoods() {
 // EVENT LISTENERS & INIT
 // ============================================================
 
-document.addEventListener("DOMContentLoaded", async () => {
+// ============================================================
+// AUTH GATE — sign-in required before the app starts
+// ============================================================
+
+let _authUser = null;
+function setAuthUser(user) { _authUser = user || null; }
+function currentUid() { return _authUser ? _authUser.id : null; }
+
+function showAuthView(show) {
+  document.getElementById("auth-view").classList.toggle("hidden", !show);
+}
+
+function setAuthError(err) {
+  document.getElementById("auth-error").textContent = err ? AuthView.authErrorMessage(err) : "";
+}
+
+function isNativeApp() {
+  return !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform());
+}
+
+async function signInWithGoogle() {
+  setAuthError(null);
+  try {
+    if (isNativeApp()) {
+      // Native: open the OAuth URL in the in-app browser; the deep-link
+      // listener below completes the session with exchangeCodeForSession.
+      const { data, error } = await sb.auth.signInWithOAuth({
+        provider: "google",
+        options: { redirectTo: "com.lazymacros.app://auth-callback", skipBrowserRedirect: true },
+      });
+      if (error) throw error;
+      await window.Capacitor.Plugins.Browser.open({ url: data.url });
+    } else {
+      // Plain browser (dev): normal redirect round-trip; detectSessionInUrl
+      // picks up the ?code= on return.
+      const { error } = await sb.auth.signInWithOAuth({
+        provider: "google",
+        options: { redirectTo: window.location.origin },
+      });
+      if (error) throw error;
+    }
+  } catch (err) {
+    console.error("[Auth] Google sign-in failed:", err);
+    setAuthError(err);
+  }
+}
+
+async function sendOtp() {
+  setAuthError(null);
+  const email = document.getElementById("auth-email").value.trim();
+  if (!AuthView.validEmail(email)) { setAuthError({ message: "Enter a valid email address" }); return; }
+  const { error } = await sb.auth.signInWithOtp({ email });
+  if (error) { setAuthError(error); return; }
+  document.getElementById("auth-otp-row").classList.remove("hidden");
+}
+
+async function verifyOtp() {
+  setAuthError(null);
+  const email = document.getElementById("auth-email").value.trim();
+  const token = document.getElementById("auth-otp").value.trim();
+  if (!AuthView.validOtp(token)) { setAuthError({ message: "Enter the 6-digit code" }); return; }
+  const { error } = await sb.auth.verifyOtp({ email, token, type: "email" });
+  if (error) setAuthError(error);
+  // Success path: onAuthStateChange fires and starts the app.
+}
+
+function wireAuthUi() {
+  document.getElementById("auth-google").addEventListener("click", signInWithGoogle);
+  document.getElementById("auth-send-otp").addEventListener("click", sendOtp);
+  document.getElementById("auth-verify-otp").addEventListener("click", verifyOtp);
+  // Enter-key ergonomics (review ride-along): Enter in the email field sends
+  // the code; Enter in the OTP field verifies it.
+  document.getElementById("auth-email").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); sendOtp(); } });
+  document.getElementById("auth-otp").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); verifyOtp(); } });
+
+  if (isNativeApp() && window.Capacitor.Plugins.App) {
+    // Deep-link return from the OAuth browser (native only).
+    window.Capacitor.Plugins.App.addListener("appUrlOpen", async ({ url }) => {
+      if (!url || !url.startsWith("com.lazymacros.app://auth-callback")) return;
+      try { await window.Capacitor.Plugins.Browser.close(); } catch (e) { /* browser may already be closed */ }
+      const code = new URL(url).searchParams.get("code");
+      if (!code) return;
+      const { error } = await sb.auth.exchangeCodeForSession(code);
+      if (error) { console.error("[Auth] Code exchange failed:", error); setAuthError(error); }
+      // Success: onAuthStateChange starts the app.
+    });
+    // Supabase-recommended Capacitor pattern (review ride-along): the JS
+    // refresh timer suspends while backgrounded — pause/resume it explicitly.
+    window.Capacitor.Plugins.App.addListener("appStateChange", ({ isActive }) => {
+      if (isActive) sb.auth.startAutoRefresh(); else sb.auth.stopAutoRefresh();
+    });
+  }
+}
+
+let _appStarted = false;
+
+function maybeShowOnboarding() {} // replaced in the onboarding task
+
+async function startApp() {
+  if (_appStarted) return;
+  _appStarted = true;
   document.body.classList.add('loading');
   try {
     await initFromSupabase();
@@ -3186,6 +3286,8 @@ document.addEventListener("DOMContentLoaded", async () => {
     initFromLocalStorage();
   }
   document.body.classList.remove('loading');
+
+  maybeShowOnboarding();
 
   // Resume any estimates left pending from a previous session
   resumePendingEstimates();
@@ -3317,4 +3419,20 @@ document.addEventListener("DOMContentLoaded", async () => {
   if (window.matchMedia) {
     matchMedia("(prefers-color-scheme: light)").addEventListener("change", () => { if (getTheme() === "system") applyTheme(); });
   }
+}
+
+document.addEventListener("DOMContentLoaded", async () => {
+  wireAuthUi();
+  const { data: { session } } = await sb.auth.getSession();
+  setAuthUser(session ? session.user : null);
+  if (session) {
+    await startApp();
+  } else {
+    showAuthView(true);
+  }
+  // Fires on OTP verify, OAuth code exchange, and sign-out.
+  sb.auth.onAuthStateChange(async (_event, s) => {
+    setAuthUser(s ? s.user : null);
+    if (s) { showAuthView(false); await startApp(); }
+  });
 });
