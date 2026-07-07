@@ -1424,9 +1424,16 @@ function renderAccountSettings() {
 }
 
 async function signOut() {
-  clearUserCache();          // wipe this user's offline cache before identity flips
-  await sb.auth.signOut();   // clears the persisted session
-  location.reload();         // relaunch -> gate shows the sign-in view
+  _estimateQueue.length = 0;   // stop in-flight estimate follow-ups from re-writing the cache
+  clearUserCache();            // wipe this user's offline cache before identity flips
+  try {
+    await sb.auth.signOut();   // clears the persisted session (locally even if the server revoke fails)
+  } catch (e) {
+    console.error("[Auth] signOut:", e);
+  } finally {
+    clearUserCache();          // re-clear: catch writes that raced the network call
+    location.reload();         // relaunch -> gate shows the sign-in view
+  }
 }
 
 function renderProviderSettings() {
