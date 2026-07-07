@@ -87,6 +87,8 @@ function renderDayCards() {
     const target = tdee - deficit;
     const t = getDailyFoodTotals(day.date, food);
     const overLow = t.calLow - target, overHigh = t.calHigh - target;
+    const calDisp = Targets.calDeltaDisplay(overLow, overHigh);
+    const proDisp = Targets.proteinStatusDisplay(t.proLow, t.proHigh, profile.proteinLow, profile.proteinHigh);
     html += `<div class="day-card">
       <button class="day-card-head" data-id="${day.id}">
         <span class="day-card-date">${formatDate(day.date)}</span>
@@ -97,8 +99,8 @@ function renderDayCards() {
         <div class="food-card-row"><span>Weight</span><b>${day.weight} lb</b></div>
         <div class="food-card-row"><span>BMR / TDEE</span><b>${renderNum(bmr,0)} / ${renderNum(tdee,0)}</b></div>
         <div class="food-card-row"><span>Activity</span><b>${escapeHtml(day.activity)}</b></div>
-        <div class="food-card-row"><span>Cal +/-</span><b class="${surplusClass(overLow)}">${renderNum(overLow,0)} … ${renderNum(overHigh,0)}</b></div>
-        <div class="food-card-row"><span>Protein</span><b>${renderNum(t.proLow,0)}–${renderNum(t.proHigh,0)} g (target ${profile.proteinLow}–${profile.proteinHigh})</b></div>
+        <div class="food-card-row"><span>Cal +/-</span><b class="tone-${calDisp.tone}">${calDisp.text ? escapeHtml(calDisp.text) : `${renderNum(overLow,0)} … ${renderNum(overHigh,0)}`}</b></div>
+        <div class="food-card-row"><span>Protein</span><b class="tone-${proDisp.tone}">${proDisp.text ? escapeHtml((proDisp.icon + " " + proDisp.text).trim()) : `${renderNum(t.proLow,0)}–${renderNum(t.proHigh,0)} g (target ${profile.proteinLow}–${profile.proteinHigh})`}</b></div>
         <div class="day-card-actions">
           <button class="btn btn-secondary btn-sm" data-edit="${day.id}">Edit</button>
           <button class="btn btn-secondary btn-sm" data-del="${day.id}">Delete</button>

@@ -118,3 +118,8 @@ test("calDeltaDisplay: exact ±50 band edges are neutral", () => {
   assert.deepEqual(T.calDeltaDisplay(-50, -50), { text: "on target", tone: "neutral", icon: "" });
   assert.deepEqual(T.calDeltaDisplay(50, 50), { text: "on target", tone: "neutral", icon: "" });
 });
+
+test("proteinStatusDisplay: reversed intake arguments are normalized", () => {
+  assert.deepEqual(T.proteinStatusDisplay(147, 136, 135, 150),
+    { text: "136–147 g (target 135–150)", tone: "good", icon: "✓" });
+});

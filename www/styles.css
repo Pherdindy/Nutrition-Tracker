@@ -249,6 +249,12 @@ tbody tr:last-child td {
   color: var(--text-dim);
 }
 
+/* Day-card display tones (Targets.calDeltaDisplay / proteinStatusDisplay) */
+.tone-good { color: var(--green); }
+.tone-bad { color: var(--red); }
+.tone-warn { color: var(--yellow); }
+.tone-neutral { color: var(--text-dim); }
+
 /* Actions cell */
 .actions {
   display: flex;
