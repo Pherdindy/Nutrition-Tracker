@@ -275,45 +275,46 @@
       </div>
     </div>
 
-    <!-- AUTH VIEW (sign-in gate) -->
-    <div id="auth-view" class="auth-view hidden">
-      <div class="auth-card">
-        <h1>Lazy Macros</h1>
-        <p class="auth-sub">Sign in to sync your nutrition data</p>
-        <button id="auth-google" class="btn btn-primary auth-btn">Continue with Google</button>
-        <div class="auth-divider"><span>or</span></div>
-        <div class="form-row">
-          <label for="auth-email">Email</label>
-          <input type="email" id="auth-email" autocomplete="email" placeholder="you@example.com">
-        </div>
-        <button id="auth-send-otp" class="btn btn-secondary auth-btn">Email me a code</button>
-        <div id="auth-otp-row" class="hidden">
-          <div class="form-row">
-            <label for="auth-otp">6-digit code</label>
-            <input type="text" id="auth-otp" inputmode="numeric" maxlength="6" autocomplete="one-time-code">
-          </div>
-          <button id="auth-verify-otp" class="btn btn-primary auth-btn">Verify code</button>
-        </div>
-        <p id="auth-error" class="auth-error"></p>
-      </div>
-    </div>
+  </div>
 
-    <!-- ONBOARDING VIEW (first-run profile setup) -->
-    <div id="onboarding-view" class="auth-view hidden">
-      <div class="auth-card">
-        <h1>Welcome!</h1>
-        <p class="auth-sub">A few details so we can compute your targets</p>
-        <form id="onboarding-form">
-          <div class="form-row"><label for="ob-height">Height (cm)</label><input type="number" id="ob-height" step="0.1" required></div>
-          <div class="form-row"><label for="ob-age">Age</label><input type="number" id="ob-age" min="10" max="120" required></div>
-          <div class="form-row"><label for="ob-weight">Current weight (lbs)</label><input type="number" id="ob-weight" step="any" required></div>
-          <div class="form-row"><label for="ob-activity">Today's activity</label><select id="ob-activity" required></select></div>
-          <div class="form-row"><label for="ob-goal">Weight-loss goal</label><select id="ob-goal" required></select></div>
-          <div class="form-row"><label for="ob-protein-low">Protein target lower (g)</label><input type="number" id="ob-protein-low" required></div>
-          <div class="form-row"><label for="ob-protein-high">Protein target upper (g)</label><input type="number" id="ob-protein-high" required></div>
-          <button type="submit" class="btn btn-primary auth-btn">Start tracking</button>
-        </form>
+  <!-- AUTH VIEW (sign-in gate) -->
+  <div id="auth-view" class="auth-view hidden">
+    <div class="auth-card">
+      <h1>Lazy Macros</h1>
+      <p class="auth-sub">Sign in to sync your nutrition data</p>
+      <button type="button" id="auth-google" class="btn btn-primary auth-btn">Continue with Google</button>
+      <div class="auth-divider"><span>or</span></div>
+      <div class="form-row">
+        <label for="auth-email">Email</label>
+        <input type="email" id="auth-email" autocomplete="email" placeholder="you@example.com">
       </div>
+      <button type="button" id="auth-send-otp" class="btn btn-secondary auth-btn">Email me a code</button>
+      <div id="auth-otp-row" class="hidden">
+        <div class="form-row">
+          <label for="auth-otp">6-digit code</label>
+          <input type="text" id="auth-otp" inputmode="numeric" maxlength="6" autocomplete="one-time-code">
+        </div>
+        <button type="button" id="auth-verify-otp" class="btn btn-primary auth-btn">Verify code</button>
+      </div>
+      <p id="auth-error" class="auth-error" role="alert"></p>
+    </div>
+  </div>
+
+  <!-- ONBOARDING VIEW (first-run profile setup) -->
+  <div id="onboarding-view" class="auth-view hidden">
+    <div class="auth-card">
+      <h1>Welcome!</h1>
+      <p class="auth-sub">A few details so we can compute your targets</p>
+      <form id="onboarding-form">
+        <div class="form-row"><label for="ob-height">Height (cm)</label><input type="number" id="ob-height" step="any" min="1" required></div>
+        <div class="form-row"><label for="ob-age">Age</label><input type="number" id="ob-age" min="10" max="120" required></div>
+        <div class="form-row"><label for="ob-weight">Current weight (lbs)</label><input type="number" id="ob-weight" step="any" min="1" required></div>
+        <div class="form-row"><label for="ob-activity">Today's activity</label><select id="ob-activity" required></select></div>
+        <div class="form-row"><label for="ob-goal">Weight-loss goal</label><select id="ob-goal" required></select></div>
+        <div class="form-row"><label for="ob-protein-low">Protein target lower (g)</label><input type="number" id="ob-protein-low" min="1" required></div>
+        <div class="form-row"><label for="ob-protein-high">Protein target upper (g)</label><input type="number" id="ob-protein-high" min="1" required></div>
+        <button type="submit" class="btn btn-primary auth-btn">Start tracking</button>
+      </form>
     </div>
   </div>
   <script src="vendor/supabase.min.js"></script>

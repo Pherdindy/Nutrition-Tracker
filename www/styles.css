@@ -1790,6 +1790,7 @@ body.loading::after {
 .auth-card {
   width: 100%;
   max-width: 360px;
+  margin: auto;
   background: var(--card-bg);
   border: 1px solid var(--border);
   border-radius: 12px;
@@ -1812,3 +1813,9 @@ body.loading::after {
   border-top: 1px solid var(--border);
 }
 .auth-error { color: var(--red); font-size: 0.85rem; min-height: 1.2em; margin: 12px 0 0; }
+@media (max-width: 720px) {
+  .auth-card .btn, .auth-card input, .auth-card select {
+    min-height: 44px;
+    font-size: 16px;
+  }
+}
