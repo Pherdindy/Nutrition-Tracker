@@ -710,6 +710,8 @@ git commit -m "feat(auth): onboarding flow, per-user profile upsert, remove seed
 
 - [ ] **Step 1: Owner signs in once** (Task 5/7 smoke tests already did this). Find the owner's user id: Supabase dashboard → Authentication → Users → copy the UUID for robertmessi123456@gmail.com.
 
+- [ ] **Step 1b (added by Task 7 review): check the `days`/`food_entries` id column types** before running the migration: `select pg_typeof(id) from days limit 1; select pg_typeof(id) from food_entries limit 1;` — if either is `integer` (int4), onboarding/new-entry ids from `Date.now()` (~1.75e12) overflow and every insert fails silently in bgWrite. If int4, add to the migration: `alter table days alter column id type bigint; alter table food_entries alter column id type bigint;` (run BEFORE the PK changes).
+
 - [ ] **Step 2: Write the SQL file** (`<OWNER_UID>` is replaced by the user before running — it is a run-time parameter, not a placeholder to implement):
 
 ```sql
