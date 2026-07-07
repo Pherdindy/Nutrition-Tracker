@@ -3,7 +3,7 @@
 //                          escapeHtml, renderNum, isMobile, editFood, deleteFood,
 //                          getEnabledMacros, getValueFormat, Macros
 //  renderDayCards:         loadDayEntries, loadProfile, loadFoodEntries, calcBMR, calcTDEE,
-//                          surplusClass, getDailyFoodTotals, formatDate, escapeHtml, renderNum,
+//                          Targets, getDailyFoodTotals, formatDate, escapeHtml, renderNum,
 //                          isMobile, editDay, deleteDay
 //  renderAssessmentScorecard: window.AssessmentView, renderActionPlan, escapeHtml
 
