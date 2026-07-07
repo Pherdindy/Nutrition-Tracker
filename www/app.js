@@ -68,7 +68,8 @@ function profileRowToJs(r) {
   return { height: Number(r.height), age: r.age != null ? Number(r.age) : null, proteinLow: Number(r.protein_low), proteinHigh: Number(r.protein_high), weightLossGoal: r.weight_loss_goal || null };
 }
 function profileJsToRow(p) {
-  return { id: 1, height: p.height, age: p.age, protein_low: p.proteinLow, protein_high: p.proteinHigh, weight_loss_goal: p.weightLossGoal };
+  // No id: the profile table keys on user_id (filled by its auth.uid() default).
+  return { height: p.height, age: p.age, protein_low: p.proteinLow, protein_high: p.proteinHigh, weight_loss_goal: p.weightLossGoal };
 }
 
 // ---- bgWrite: fire-and-forget async write to Supabase ----
@@ -116,7 +117,7 @@ function saveProfile(profile) {
   _cache.profile = { ...profile };
   lsSet("profile", JSON.stringify(profile));
   bgWrite(async () => {
-    const { error } = await sb.from('profile').upsert(profileJsToRow(profile));
+    const { error } = await sb.from('profile').upsert(profileJsToRow(profile), { onConflict: 'user_id' });
     if (error) throw error;
   });
 }
@@ -176,128 +177,14 @@ function saveDayEntries(entries) {
 }
 
 // ============================================================
-// SEED DATA (imported from Excel)
-// ============================================================
-
-const SEED_FOOD = [
-  { date:"2026-02-05", time:"11:00", food:"Fried rice", qty:1, unit:"cup", calLow:279, calHigh:300, proLow:5, proHigh:6 },
-  { date:"2026-02-05", time:"11:00", food:"Beef stew", qty:160, unit:"g", calLow:185, calHigh:230, proLow:10, proHigh:13 },
-  { date:"2026-02-05", time:"16:00", food:"Coffee with 1 tsp creamer and 1 tbsp milk", qty:1, unit:"cup", calLow:17, calHigh:25, proLow:0.5, proHigh:0.5 },
-  { date:"2026-02-05", time:"11:00", food:"Nestle yogurt", qty:110, unit:"g", calLow:92, calHigh:92, proLow:3.5, proHigh:3.5 },
-  { date:"2026-02-05", time:"17:00", food:"Unsalted roasted cashews", qty:29.5, unit:"g", calLow:185.85, calHigh:185.85, proLow:5, proHigh:5 },
-  { date:"2026-02-05", time:"19:00", food:"Ribeye steak", qty:50, unit:"g", calLow:145, calHigh:165, proLow:12, proHigh:14 },
-  { date:"2026-02-05", time:"19:00", food:"Baby back ribs", qty:2, unit:"ribs", calLow:160, calHigh:220, proLow:14, proHigh:16 },
-  { date:"2026-02-05", time:"19:00", food:"White rice", qty:280, unit:"g", calLow:360, calHigh:390, proLow:7, proHigh:8 },
-  { date:"2026-02-05", time:"22:00", food:"Protein shake", qty:2, unit:"scoop", calLow:244, calHigh:244, proLow:48, proHigh:48 },
-  { date:"2026-02-05", time:"23:00", food:"Eggs w/ butter and 1 tbsp ketchup", qty:2, unit:"pieces", calLow:170, calHigh:150, proLow:10, proHigh:10 },
-  { date:"2026-02-05", time:"23:00", food:"Fish oil", qty:1, unit:"capsule", calLow:15, calHigh:15, proLow:0, proHigh:0 },
-  { date:"2026-02-06", time:"09:00", food:"Honeycured Bacon", qty:40, unit:"g", calLow:180, calHigh:180, proLow:12, proHigh:12 },
-  { date:"2026-02-06", time:"09:00", food:"Eggs w/ 1 tsp butter", qty:2, unit:"pieces", calLow:176, calHigh:176, proLow:12, proHigh:12 },
-  { date:"2026-02-06", time:"09:00", food:"Oatmeal", qty:0.5, unit:"cups", calLow:150, calHigh:150, proLow:5, proHigh:5 },
-  { date:"2026-02-06", time:"09:00", food:"Blueberries", qty:0.5, unit:"cups", calLow:42, calHigh:42, proLow:0.5, proHigh:0.5 },
-  { date:"2026-02-06", time:"09:00", food:"Honeycured Bacon", qty:10, unit:"g", calLow:30, calHigh:30, proLow:0, proHigh:0 },
-  { date:"2026-02-06", time:"14:30", food:"Jollibee 1 pc. Chicken Rib", qty:1, unit:"pieces", calLow:200, calHigh:290, proLow:12, proHigh:15 },
-  { date:"2026-02-06", time:"14:30", food:"White rice", qty:160, unit:"g", calLow:210, calHigh:210, proLow:4, proHigh:5 },
-  { date:"2026-02-06", time:"14:30", food:"Jolly spaghetti", qty:1, unit:"order", calLow:500, calHigh:550, proLow:23, proHigh:23 },
-  { date:"2026-02-06", time:"14:30", food:"Jolly fries", qty:40, unit:"g", calLow:120, calHigh:130, proLow:1, proHigh:2 },
-  { date:"2026-02-06", time:"14:30", food:"Regular coke", qty:1, unit:"cup", calLow:140, calHigh:140, proLow:0, proHigh:0 },
-  { date:"2026-02-06", time:"13:30", food:"Protein shake", qty:1, unit:"scoop", calLow:122, calHigh:122, proLow:24, proHigh:24 },
-  { date:"2026-02-06", time:"17:00", food:"Coffee with 1 tsp creamer and 1 tbsp milk", qty:1, unit:"cup", calLow:17, calHigh:25, proLow:0.5, proHigh:0.5 },
-  { date:"2026-02-06", time:"19:00", food:"Fish oil", qty:1, unit:"capsule", calLow:15, calHigh:15, proLow:0, proHigh:0 },
-  { date:"2026-02-06", time:"19:00", food:"Chicken", qty:150, unit:"g", calLow:250, calHigh:250, proLow:45, proHigh:47 },
-  { date:"2026-02-06", time:"21:00", food:"Royal", qty:160, unit:"ml", calLow:32, calHigh:32, proLow:0, proHigh:0 },
-  { date:"2026-02-07", time:"07:30", food:"3 inch Bola-bola siopao", qty:2, unit:"pieces", calLow:480, calHigh:560, proLow:18, proHigh:24 },
-  { date:"2026-02-07", time:"11:30", food:"Adobo chicken", qty:87, unit:"g", calLow:180, calHigh:180, proLow:23, proHigh:23 },
-  { date:"2026-02-07", time:"11:30", food:"White rice", qty:160, unit:"g", calLow:160, calHigh:208, proLow:4, proHigh:4 },
-  { date:"2026-02-07", time:"11:30", food:"Lean beef cubes", qty:45, unit:"g", calLow:72, calHigh:72, proLow:12, proHigh:12 },
-  { date:"2026-02-07", time:"11:30", food:"Beef Tendon", qty:8, unit:"g", calLow:12, calHigh:12, proLow:3, proHigh:3 },
-  { date:"2026-02-07", time:"11:30", food:"Noodles", qty:95, unit:"g", calLow:347, calHigh:347, proLow:10, proHigh:12 },
-  { date:"2026-02-07", time:"20:00", food:"Icho Japanese Restaurant", qty:1, unit:"visit", calLow:970, calHigh:970, proLow:95, proHigh:95 },
-  { date:"2026-02-07", time:"22:00", food:"Potato Fries Ketchup", qty:1, unit:"pack", calLow:300, calHigh:300, proLow:0, proHigh:0 },
-  { date:"2026-02-08", time:"08:00", food:"Bacon", qty:41.5, unit:"g", calLow:225, calHigh:225, proLow:15, proHigh:15 },
-  { date:"2026-02-08", time:"08:00", food:"White rice", qty:101.5, unit:"g", calLow:132, calHigh:132, proLow:2.7, proHigh:2.7 },
-  { date:"2026-02-08", time:"12:00", food:"Tawilis", qty:2, unit:"pcs", calLow:80, calHigh:120, proLow:8, proHigh:12 },
-  { date:"2026-02-08", time:"12:00", food:"Egg fried rice", qty:40, unit:"g", calLow:70, calHigh:80, proLow:1.5, proHigh:2.5 },
-  { date:"2026-02-08", time:"23:59", food:"Protein shake", qty:1.25, unit:"scoop", calLow:152.5, calHigh:152.5, proLow:30, proHigh:30 },
-  { date:"2026-02-08", time:"18:00", food:"Baliwag chicken", qty:180, unit:"g", calLow:300, calHigh:400, proLow:30, proHigh:40 },
-  { date:"2026-02-08", time:"18:00", food:"Fried itik", qty:40, unit:"g", calLow:80, calHigh:100, proLow:8, proHigh:10 },
-  { date:"2026-02-08", time:"18:00", food:"White rice", qty:150, unit:"g", calLow:195, calHigh:195, proLow:3, proHigh:4 },
-  { date:"2026-02-08", time:"18:00", food:"Baliwag chicken", qty:70, unit:"g", calLow:120, calHigh:120, proLow:12, proHigh:12 },
-  { date:"2026-02-08", time:"19:00", food:"Fish oil", qty:1, unit:"capsule", calLow:15, calHigh:15, proLow:0, proHigh:0 },
-  { date:"2026-02-09", time:"09:00", food:"Eggs", qty:111, unit:"g", calLow:163, calHigh:163, proLow:14, proHigh:14 },
-  { date:"2026-02-09", time:"09:00", food:"Rendered Bacon", qty:32, unit:"g", calLow:173, calHigh:173, proLow:11.8, proHigh:11.8 },
-  { date:"2026-02-09", time:"09:00", food:"Oatmeal", qty:40, unit:"g", calLow:152, calHigh:152, proLow:5.3, proHigh:5.3 },
-  { date:"2026-02-09", time:"09:00", food:"Blueberries", qty:0.25, unit:"cups", calLow:21, calHigh:21, proLow:0.3, proHigh:0.3 },
-  { date:"2026-02-09", time:"09:00", food:"Honeycured Bacon", qty:12.5, unit:"g", calLow:38, calHigh:38, proLow:0, proHigh:0 },
-  { date:"2026-02-09", time:"18:30", food:"White rice", qty:230, unit:"g", calLow:299, calHigh:299, proLow:6, proHigh:6 },
-  { date:"2026-02-09", time:"18:30", food:"Beef stew", qty:40, unit:"g", calLow:50, calHigh:50, proLow:5, proHigh:5 },
-  { date:"2026-02-09", time:"18:30", food:"Pork and chives dumpling", qty:4, unit:"pcs", calLow:250, calHigh:250, proLow:8, proHigh:8 },
-  { date:"2026-02-09", time:"12:00", food:"White rice", qty:200, unit:"g", calLow:260, calHigh:260, proLow:5, proHigh:5 },
-  { date:"2026-02-09", time:"12:00", food:"Beef stew", qty:140, unit:"g", calLow:175, calHigh:175, proLow:17, proHigh:17 },
-  { date:"2026-02-09", time:"12:00", food:"Fish oil", qty:1, unit:"capsule", calLow:15, calHigh:15, proLow:0, proHigh:0 },
-  { date:"2026-02-09", time:"22:30", food:"Protein shake", qty:1.5, unit:"scoop", calLow:183, calHigh:183, proLow:36, proHigh:36 },
-  { date:"2026-02-09", time:"23:00", food:"Chicken", qty:2, unit:"pcs", calLow:310, calHigh:310, proLow:23, proHigh:23 },
-  { date:"2026-02-09", time:"23:00", food:"White rice", qty:150, unit:"g", calLow:195, calHigh:195, proLow:4, proHigh:4 },
-  { date:"2026-02-10", time:"09:00", food:"Honeycured Bacon", qty:42, unit:"g", calLow:190, calHigh:190, proLow:12, proHigh:12 },
-  { date:"2026-02-10", time:"09:00", food:"Eggs", qty:109, unit:"g", calLow:155, calHigh:155, proLow:13, proHigh:13 },
-  { date:"2026-02-10", time:"09:00", food:"Oatmeal", qty:0.5, unit:"cups", calLow:150, calHigh:150, proLow:5, proHigh:5 },
-  { date:"2026-02-10", time:"09:00", food:"Blueberries", qty:0.25, unit:"cups", calLow:21, calHigh:21, proLow:0, proHigh:0 },
-  { date:"2026-02-10", time:"12:00", food:"Lean beef cubes", qty:60, unit:"g", calLow:96, calHigh:96, proLow:16, proHigh:16 },
-  { date:"2026-02-10", time:"12:00", food:"Noodles", qty:95, unit:"g", calLow:347, calHigh:347, proLow:10, proHigh:12 },
-  { date:"2026-02-10", time:"19:30", food:"Lapu lapu fillet tempura", qty:77, unit:"g", calLow:160, calHigh:160, proLow:11, proHigh:11 },
-  { date:"2026-02-10", time:"19:30", food:"Japanese mayonnaise", qty:22, unit:"g", calLow:150, calHigh:150, proLow:0.3, proHigh:0.3 },
-  { date:"2026-02-10", time:"19:30", food:"White rice", qty:119, unit:"g", calLow:155, calHigh:155, proLow:3.2, proHigh:3.2 },
-  { date:"2026-02-10", time:"19:30", food:"Shrimp (peeled)", qty:43.5, unit:"g", calLow:43, calHigh:43, proLow:10.4, proHigh:10.4 },
-  { date:"2026-02-10", time:"19:30", food:"Pechay", qty:31.3, unit:"g", calLow:4, calHigh:4, proLow:0.5, proHigh:0.5 },
-  { date:"2026-02-10", time:"19:30", food:"Protein shake", qty:2, unit:"scoop", calLow:244, calHigh:244, proLow:48, proHigh:48 },
-  { date:"2026-02-10", time:"19:30", food:"Fish oil", qty:1, unit:"capsule", calLow:15, calHigh:15, proLow:0, proHigh:0 },
-  { date:"2026-02-11", time:"10:00", food:"Fried rice", qty:125, unit:"g", calLow:162, calHigh:162, proLow:3.4, proHigh:3.4 },
-  { date:"2026-02-11", time:"10:00", food:"Egg", qty:55, unit:"g", calLow:79, calHigh:79, proLow:6.9, proHigh:6.9 },
-  { date:"2026-02-11", time:"10:00", food:"Shrimp (peeled)", qty:45, unit:"g", calLow:45, calHigh:45, proLow:10.8, proHigh:10.8 },
-  { date:"2026-02-11", time:"10:00", food:"Lapu lapu fillet tempura", qty:50, unit:"g", calLow:100, calHigh:100, proLow:7.5, proHigh:7.5 },
-  { date:"2026-02-11", time:"10:00", food:"Pechay", qty:30, unit:"g", calLow:4, calHigh:4, proLow:0.5, proHigh:0.5 },
-  { date:"2026-02-11", time:"12:00", food:"White rice", qty:112.8, unit:"g", calLow:147, calHigh:147, proLow:3, proHigh:3 },
-  { date:"2026-02-11", time:"12:00", food:"Steamed wanton", qty:87.84, unit:"g", calLow:132, calHigh:132, proLow:7, proHigh:7 },
-  { date:"2026-02-11", time:"12:00", food:"Pechay", qty:20, unit:"g", calLow:3, calHigh:3, proLow:0.4, proHigh:0.4 },
-  { date:"2026-02-11", time:"12:00", food:"Napoleones", qty:36.2, unit:"g", calLow:95, calHigh:95, proLow:1.2, proHigh:1.2 },
-  { date:"2026-02-11", time:"12:00", food:"Chips", qty:30, unit:"g", calLow:150, calHigh:150, proLow:0, proHigh:0 },
-  { date:"2026-02-11", time:"18:30", food:"Tenderloin Pork w/ Onions", qty:104.5, unit:"g", calLow:155, calHigh:155, proLow:27, proHigh:27 },
-  { date:"2026-02-11", time:"18:30", food:"White rice", qty:198.7, unit:"g", calLow:258, calHigh:258, proLow:5.4, proHigh:5.4 },
-  { date:"2026-02-11", time:"18:30", food:"Steamed wanton", qty:54.2, unit:"g", calLow:81, calHigh:81, proLow:4.3, proHigh:4.3 },
-  { date:"2026-02-11", time:"18:30", food:"Fish oil", qty:1, unit:"capsule", calLow:15, calHigh:15, proLow:0, proHigh:0 },
-  { date:"2026-02-11", time:"19:30", food:"Protein shake", qty:2, unit:"scoop", calLow:244, calHigh:244, proLow:48, proHigh:48 },
-  { date:"2026-02-11", time:"19:30", food:"Banana", qty:1, unit:"pieces", calLow:110, calHigh:110, proLow:1, proHigh:1.3 },
-  { date:"2026-02-12", time:"09:00", food:"Scrambled Eggs w/ 1 tsp butter", qty:105, unit:"g", calLow:190, calHigh:190, proLow:11, proHigh:11 },
-  { date:"2026-02-12", time:"09:00", food:"Crispy Spam", qty:45, unit:"g", calLow:142, calHigh:142, proLow:6, proHigh:6 },
-  { date:"2026-02-12", time:"09:00", food:"Oatmeal", qty:0.5, unit:"cups", calLow:152, calHigh:152, proLow:5, proHigh:5 },
-  { date:"2026-02-12", time:"09:00", food:"Blueberries", qty:0.25, unit:"cups", calLow:21, calHigh:21, proLow:0.3, proHigh:0.3 },
-  { date:"2026-02-12", time:"09:00", food:"White rice", qty:130, unit:"g", calLow:169, calHigh:169, proLow:3.5, proHigh:3.5 },
-  { date:"2026-02-12", time:"09:00", food:"Lumpiang Shanghai", qty:85, unit:"g", calLow:230, calHigh:230, proLow:9, proHigh:9 },
-  { date:"2026-02-12", time:"09:00", food:"Coffee with 1 tsp creamer", qty:9, unit:"g", calLow:45, calHigh:45, proLow:0, proHigh:0 },
-];
-
-const SEED_DAYS = [
-  { date:"2026-02-05", age:32, weight:166, activity:"\u{1F3CB}\uFE0F Gym day (moderate workout)", deficit:550, proteinTargetLow:135, proteinTargetHigh:150 },
-  { date:"2026-02-06", age:32, weight:166, activity:"\u{1F4AA} Hard gym session (intense)", deficit:550, proteinTargetLow:135, proteinTargetHigh:150 },
-  { date:"2026-02-07", age:32, weight:166, activity:"\u{1F6B6} Light activity (walked / errands)", deficit:550, proteinTargetLow:135, proteinTargetHigh:150 },
-  { date:"2026-02-08", age:32, weight:168, activity:"\u{1FA91} Sat all day (no exercise)", deficit:550, proteinTargetLow:135, proteinTargetHigh:150 },
-  { date:"2026-02-09", age:32, weight:168, activity:"\u{1F4AA} Hard gym session (intense)", deficit:550, proteinTargetLow:135, proteinTargetHigh:150 },
-  { date:"2026-02-10", age:32, weight:168, activity:"\u{1FA91} Sat all day (no exercise)", deficit:550, proteinTargetLow:135, proteinTargetHigh:150 },
-  { date:"2026-02-11", age:32, weight:168, activity:"\u{1F6B6} Light activity (walked / errands)", deficit:550, proteinTargetLow:135, proteinTargetHigh:150 },
-  { date:"2026-02-12", age:32, weight:168, activity:"\u{1FA91} Sat all day (no exercise)", deficit:550, proteinTargetLow:135, proteinTargetHigh:150 },
-];
-
-// ============================================================
 // INITIALIZE DATA — Supabase with localStorage fallback
 // ============================================================
-
-const DATA_VERSION = 2; // Bump this when seed data changes
 
 async function initFromSupabase() {
   const [foodRes, daysRes, profileRes, assessRes, settingsRes] = await Promise.all([
     sb.from('food_entries').select('*').order('date', { ascending: false }),
     sb.from('days').select('*').order('date', { ascending: false }),
-    sb.from('profile').select('*').eq('id', 1).maybeSingle(),
+    sb.from('profile').select('*').maybeSingle(),
     sb.from('assessments').select('*').order('timestamp', { ascending: false }),
     sb.from('settings').select('*'),
   ]);
@@ -309,21 +196,6 @@ async function initFromSupabase() {
   const hasFoodData = foodRes.data && foodRes.data.length > 0;
   const hasDaysData = daysRes.data && daysRes.data.length > 0;
   const hasProfileData = profileRes.data != null;
-
-  // If Supabase is empty, check if we should migrate from localStorage or seed
-  if (!hasFoodData && !hasDaysData && !hasProfileData) {
-    const localFood = lsGet("food");
-    const localDays = lsGet("days");
-    if (localFood || localDays) {
-      // Migrate existing localStorage data to Supabase
-      await migrateLocalStorageToSupabase();
-    } else {
-      // Fresh install — seed data
-      await seedSupabase();
-    }
-    // Re-fetch after migration/seeding
-    return initFromSupabase();
-  }
 
   // Populate cache from Supabase data
   _cache.food = foodRes.data.map(foodRowToJs);
@@ -348,22 +220,13 @@ async function initFromSupabase() {
   lsSet("assessments", JSON.stringify(_cache.assessments));
 
   _cache.ready = true;
+  _cache.profileMissing = !hasProfileData;
   if (_needSeed) saveProfile(_cache.profile); // persist only when age/goal were missing before seeding
   console.log('[Supabase] Loaded from cloud:', _cache.food.length, 'food entries,', _cache.days.length, 'days');
 }
 
 function initFromLocalStorage() {
   // Fallback: populate cache from localStorage (same as old behavior)
-  const currentVersion = parseInt(lsGet("version") || "0");
-  if (currentVersion < DATA_VERSION) {
-    const foodEntries = SEED_FOOD.map((f, i) => ({ id: i + 1, ...f }));
-    lsSet("food", JSON.stringify(foodEntries));
-    const dayEntries = SEED_DAYS.map((d, i) => ({ id: i + 1, ...d }));
-    lsSet("days", JSON.stringify(dayEntries));
-    lsSet("profile", JSON.stringify(DEFAULT_PROFILE));
-    lsSet("version", String(DATA_VERSION));
-  }
-
   const savedFood = lsGet("food");
   _cache.food = savedFood ? JSON.parse(savedFood).map(Macros.migrateEntry) : [];
   const savedDays = lsGet("days");
@@ -377,98 +240,9 @@ function initFromLocalStorage() {
   _cache.assessments = savedAssessments ? JSON.parse(savedAssessments) : [];
 
   _cache.ready = true;
+  _cache.profileMissing = !savedProfile;
   if (_needSeed) saveProfile(_cache.profile); // persist only when age/goal were missing before seeding
   console.log('[localStorage] Loaded from local storage (offline fallback)');
-}
-
-async function migrateLocalStorageToSupabase() {
-  console.log('[Supabase] Migrating localStorage data to Supabase...');
-
-  const foodRaw = lsGet("food");
-  const daysRaw = lsGet("days");
-  const profileRaw = lsGet("profile");
-  const assessmentsRaw = lsGet("assessments");
-
-  // Migrate food entries
-  if (foodRaw) {
-    const food = JSON.parse(foodRaw);
-    if (food.length > 0) {
-      // Migrate legacy entries to the macros shape before mapping, so foodJsToRow's
-      // Macros.getMacro() reads find calorie/protein values instead of writing nulls.
-      const rows = food.map((e) => foodJsToRow(Macros.migrateEntry(e)));
-      const { error } = await sb.from('food_entries').upsert(rows);
-      if (error) console.error('[Supabase] Food migration error:', error);
-    }
-  }
-
-  // Migrate day entries
-  if (daysRaw) {
-    const days = JSON.parse(daysRaw);
-    if (days.length > 0) {
-      const rows = days.map(dayJsToRow);
-      const { error } = await sb.from('days').upsert(rows);
-      if (error) console.error('[Supabase] Days migration error:', error);
-    }
-  }
-
-  // Migrate profile
-  if (profileRaw) {
-    const profile = JSON.parse(profileRaw);
-    const { error } = await sb.from('profile').upsert(profileJsToRow(profile));
-    if (error) console.error('[Supabase] Profile migration error:', error);
-  }
-
-  // Migrate assessments
-  if (assessmentsRaw) {
-    const assessments = JSON.parse(assessmentsRaw);
-    if (assessments.length > 0) {
-      const rows = assessments.map(a => ({
-        timestamp: a.timestamp,
-        period: a.period || 'unknown',
-        data: a,
-      }));
-      const { error } = await sb.from('assessments').insert(rows);
-      if (error) console.error('[Supabase] Assessments migration error:', error);
-    }
-  }
-
-  // Migrate settings (provider modes, models, spread threshold — NOT API keys)
-  const settingsToMigrate = [];
-  for (const provider of ['openai', 'anthropic']) {
-    const mode = localStorage.getItem(`nt_${provider}_mode`);
-    if (mode) settingsToMigrate.push({ key: `${provider}_mode`, value: mode });
-    const primary = localStorage.getItem(`nt_${provider}_primary`);
-    if (primary) settingsToMigrate.push({ key: `${provider}_primary`, value: primary });
-    const secondary = localStorage.getItem(`nt_${provider}_secondary`);
-    if (secondary) settingsToMigrate.push({ key: `${provider}_secondary`, value: secondary });
-  }
-  const threshold = localStorage.getItem("nt_spread_threshold");
-  if (threshold) settingsToMigrate.push({ key: 'spread_threshold', value: threshold });
-
-  if (settingsToMigrate.length > 0) {
-    const { error } = await sb.from('settings').upsert(settingsToMigrate);
-    if (error) console.error('[Supabase] Settings migration error:', error);
-  }
-
-  console.log('[Supabase] Migration complete');
-}
-
-async function seedSupabase() {
-  console.log('[Supabase] Seeding initial data...');
-  const foodEntries = SEED_FOOD.map((f, i) => ({ id: i + 1, ...f }));
-  const dayEntries = SEED_DAYS.map((d, i) => ({ id: i + 1, ...d }));
-
-  const foodRows = foodEntries.map(foodJsToRow);
-  const dayRows = dayEntries.map(dayJsToRow);
-
-  await Promise.all([
-    sb.from('food_entries').upsert(foodRows),
-    sb.from('days').upsert(dayRows),
-    sb.from('profile').upsert(profileJsToRow(DEFAULT_PROFILE)),
-  ]);
-
-  lsSet("version", String(DATA_VERSION));
-  console.log('[Supabase] Seeding complete');
 }
 
 // ============================================================
@@ -3331,7 +3105,44 @@ function wireAuthUi() {
 
 let _appStarted = false;
 
-function maybeShowOnboarding() {} // replaced in the onboarding task
+function maybeShowOnboarding() {
+  if (!_cache.profileMissing) return;
+  const ob = document.getElementById("onboarding-view");
+  // Populate the selects (same options as the Targets tab).
+  const act = document.getElementById("ob-activity");
+  act.innerHTML = ACTIVITY_TYPES.map((a) => `<option value="${escapeHtml(a.label)}">${escapeHtml(a.label)}</option>`).join("");
+  const goal = document.getElementById("ob-goal");
+  goal.innerHTML = Targets.GOALS.map((g) => `<option value="${escapeHtml(g.goal)}">${escapeHtml(g.goal)}</option>`).join("");
+  goal.value = "0.50 kg/week";
+  document.getElementById("ob-protein-low").value = DEFAULT_PROFILE.proteinLow;
+  document.getElementById("ob-protein-high").value = DEFAULT_PROFILE.proteinHigh;
+  ob.classList.remove("hidden");
+}
+
+function completeOnboarding(ev) {
+  ev.preventDefault();
+  const profile = {
+    height: parseFloat(document.getElementById("ob-height").value),
+    age: parseInt(document.getElementById("ob-age").value, 10),
+    proteinLow: parseFloat(document.getElementById("ob-protein-low").value),
+    proteinHigh: parseFloat(document.getElementById("ob-protein-high").value),
+    weightLossGoal: document.getElementById("ob-goal").value,
+  };
+  if ([profile.height, profile.age, profile.proteinLow, profile.proteinHigh].some((n) => !Number.isFinite(n))) return;
+  saveProfile(profile);
+  // First Day entry seeds the copy-forward chain used by ensureDayExists.
+  const weight = parseFloat(document.getElementById("ob-weight").value);
+  const activity = document.getElementById("ob-activity").value;
+  if (Number.isFinite(weight)) {
+    const today = new Date().toISOString().slice(0, 10);
+    saveDayEntries([...loadDayEntries(), { id: Date.now(), date: today, weight, activity }]);
+  }
+  _cache.profileMissing = false;
+  document.getElementById("onboarding-view").classList.add("hidden");
+  // Re-render everything that reads profile/days.
+  renderCalorieTracker();
+  renderCalorieTarget();
+}
 
 async function startApp() {
   if (_appStarted) return;
@@ -3378,6 +3189,7 @@ async function startApp() {
 
   // Profile form
   document.getElementById("profile-form").addEventListener("submit", saveProfileForm);
+  document.getElementById("onboarding-form").addEventListener("submit", completeOnboarding);
 
   // Provider settings
   renderProviderSettings();
