@@ -192,6 +192,7 @@ async function initFromSupabase() {
   // Check for errors on critical tables
   if (foodRes.error) throw foodRes.error;
   if (daysRes.error) throw daysRes.error;
+  if (profileRes.error) throw profileRes.error;
 
   const hasFoodData = foodRes.data && foodRes.data.length > 0;
   const hasDaysData = daysRes.data && daysRes.data.length > 0;
@@ -213,10 +214,13 @@ async function initFromSupabase() {
     }
   }
 
-  // Sync back to localStorage as offline fallback
+  // Sync back to localStorage as offline fallback. Only mirror the profile when the
+  // cloud really has one — otherwise an offline relaunch would read the mirrored
+  // DEFAULT_PROFILE placeholder and skip onboarding.
   lsSet("food", JSON.stringify(_cache.food));
   lsSet("days", JSON.stringify(_cache.days));
-  lsSet("profile", JSON.stringify(_cache.profile));
+  if (hasProfileData) lsSet("profile", JSON.stringify(_cache.profile));
+  else localStorage.removeItem(AuthView.nsKey(currentUid(), "profile"));
   lsSet("assessments", JSON.stringify(_cache.assessments));
 
   _cache.ready = true;
@@ -3113,7 +3117,7 @@ function maybeShowOnboarding() {
   act.innerHTML = ACTIVITY_TYPES.map((a) => `<option value="${escapeHtml(a.label)}">${escapeHtml(a.label)}</option>`).join("");
   const goal = document.getElementById("ob-goal");
   goal.innerHTML = Targets.GOALS.map((g) => `<option value="${escapeHtml(g.goal)}">${escapeHtml(g.goal)}</option>`).join("");
-  goal.value = "0.50 kg/week";
+  goal.value = DEFAULT_PROFILE.weightLossGoal;
   document.getElementById("ob-protein-low").value = DEFAULT_PROFILE.proteinLow;
   document.getElementById("ob-protein-high").value = DEFAULT_PROFILE.proteinHigh;
   ob.classList.remove("hidden");
