@@ -77,6 +77,14 @@ function bgWrite(fn) {
   Promise.resolve().then(fn).catch(err => console.error('[Supabase bgWrite]', err));
 }
 
+// ---- Per-user localStorage cache (theme + API keys stay device-global) ----
+const CACHE_BASES = ["food", "days", "profile", "assessments", "version"];
+function lsGet(base) { return localStorage.getItem(AuthView.nsKey(currentUid(), base)); }
+function lsSet(base, value) { localStorage.setItem(AuthView.nsKey(currentUid(), base), value); }
+function clearUserCache() {
+  for (const base of CACHE_BASES) localStorage.removeItem(AuthView.nsKey(currentUid(), base));
+}
+
 // ---- Constants ----
 
 const ACTIVITY_TYPES = [
@@ -100,13 +108,13 @@ const DEFAULT_PROFILE = { height: 170.1, age: 32, proteinLow: 135, proteinHigh: 
 
 function loadProfile() {
   if (_cache.ready && _cache.profile) return { ..._cache.profile };
-  const saved = localStorage.getItem("nt_profile");
+  const saved = lsGet("profile");
   return saved ? JSON.parse(saved) : { ...DEFAULT_PROFILE };
 }
 
 function saveProfile(profile) {
   _cache.profile = { ...profile };
-  localStorage.setItem("nt_profile", JSON.stringify(profile));
+  lsSet("profile", JSON.stringify(profile));
   bgWrite(async () => {
     const { error } = await sb.from('profile').upsert(profileJsToRow(profile));
     if (error) throw error;
@@ -117,13 +125,13 @@ function getDeficit() { return Targets.deficitForGoal(loadProfile().weightLossGo
 
 function loadFoodEntries() {
   if (_cache.ready && _cache.food) return _cache.food.map(Macros.migrateEntry);
-  const saved = localStorage.getItem("nt_food");
+  const saved = lsGet("food");
   return saved ? JSON.parse(saved).map(Macros.migrateEntry) : [];
 }
 
 function saveFoodEntries(entries) {
   _cache.food = [...entries];
-  localStorage.setItem("nt_food", JSON.stringify(entries));
+  lsSet("food", JSON.stringify(entries));
   bgWrite(async () => {
     // Upsert FIRST, then delete only rows that no longer exist. This is non-destructive
     // on failure: if the upsert errors (e.g. a missing column), nothing is deleted, so the
@@ -145,13 +153,13 @@ function saveFoodEntries(entries) {
 
 function loadDayEntries() {
   if (_cache.ready && _cache.days) return [..._cache.days];
-  const saved = localStorage.getItem("nt_days");
+  const saved = lsGet("days");
   return saved ? JSON.parse(saved).map(Targets.migrateDay) : [];
 }
 
 function saveDayEntries(entries) {
   _cache.days = [...entries];
-  localStorage.setItem("nt_days", JSON.stringify(entries));
+  lsSet("days", JSON.stringify(entries));
   bgWrite(async () => {
     if (entries.length === 0) {
       const { error } = await sb.from('days').delete().gte('id', 0);
@@ -304,8 +312,8 @@ async function initFromSupabase() {
 
   // If Supabase is empty, check if we should migrate from localStorage or seed
   if (!hasFoodData && !hasDaysData && !hasProfileData) {
-    const localFood = localStorage.getItem("nt_food");
-    const localDays = localStorage.getItem("nt_days");
+    const localFood = lsGet("food");
+    const localDays = lsGet("days");
     if (localFood || localDays) {
       // Migrate existing localStorage data to Supabase
       await migrateLocalStorageToSupabase();
@@ -334,10 +342,10 @@ async function initFromSupabase() {
   }
 
   // Sync back to localStorage as offline fallback
-  localStorage.setItem("nt_food", JSON.stringify(_cache.food));
-  localStorage.setItem("nt_days", JSON.stringify(_cache.days));
-  localStorage.setItem("nt_profile", JSON.stringify(_cache.profile));
-  localStorage.setItem("nt_assessments", JSON.stringify(_cache.assessments));
+  lsSet("food", JSON.stringify(_cache.food));
+  lsSet("days", JSON.stringify(_cache.days));
+  lsSet("profile", JSON.stringify(_cache.profile));
+  lsSet("assessments", JSON.stringify(_cache.assessments));
 
   _cache.ready = true;
   if (_needSeed) saveProfile(_cache.profile); // persist only when age/goal were missing before seeding
@@ -346,26 +354,26 @@ async function initFromSupabase() {
 
 function initFromLocalStorage() {
   // Fallback: populate cache from localStorage (same as old behavior)
-  const currentVersion = parseInt(localStorage.getItem("nt_version") || "0");
+  const currentVersion = parseInt(lsGet("version") || "0");
   if (currentVersion < DATA_VERSION) {
     const foodEntries = SEED_FOOD.map((f, i) => ({ id: i + 1, ...f }));
-    localStorage.setItem("nt_food", JSON.stringify(foodEntries));
+    lsSet("food", JSON.stringify(foodEntries));
     const dayEntries = SEED_DAYS.map((d, i) => ({ id: i + 1, ...d }));
-    localStorage.setItem("nt_days", JSON.stringify(dayEntries));
-    localStorage.setItem("nt_profile", JSON.stringify(DEFAULT_PROFILE));
-    localStorage.setItem("nt_version", String(DATA_VERSION));
+    lsSet("days", JSON.stringify(dayEntries));
+    lsSet("profile", JSON.stringify(DEFAULT_PROFILE));
+    lsSet("version", String(DATA_VERSION));
   }
 
-  const savedFood = localStorage.getItem("nt_food");
+  const savedFood = lsGet("food");
   _cache.food = savedFood ? JSON.parse(savedFood).map(Macros.migrateEntry) : [];
-  const savedDays = localStorage.getItem("nt_days");
+  const savedDays = lsGet("days");
   const parsedDays = savedDays ? JSON.parse(savedDays) : [];
-  const savedProfile = localStorage.getItem("nt_profile");
+  const savedProfile = lsGet("profile");
   _cache.profile = savedProfile ? JSON.parse(savedProfile) : { ...DEFAULT_PROFILE };
   const _needSeed = _cache.profile.age == null || _cache.profile.weightLossGoal == null;
   _cache.profile = Targets.migrateProfile(_cache.profile, parsedDays);
   _cache.days = parsedDays.map(Targets.migrateDay);
-  const savedAssessments = localStorage.getItem("nt_assessments");
+  const savedAssessments = lsGet("assessments");
   _cache.assessments = savedAssessments ? JSON.parse(savedAssessments) : [];
 
   _cache.ready = true;
@@ -376,10 +384,10 @@ function initFromLocalStorage() {
 async function migrateLocalStorageToSupabase() {
   console.log('[Supabase] Migrating localStorage data to Supabase...');
 
-  const foodRaw = localStorage.getItem("nt_food");
-  const daysRaw = localStorage.getItem("nt_days");
-  const profileRaw = localStorage.getItem("nt_profile");
-  const assessmentsRaw = localStorage.getItem("nt_assessments");
+  const foodRaw = lsGet("food");
+  const daysRaw = lsGet("days");
+  const profileRaw = lsGet("profile");
+  const assessmentsRaw = lsGet("assessments");
 
   // Migrate food entries
   if (foodRaw) {
@@ -459,7 +467,7 @@ async function seedSupabase() {
     sb.from('profile').upsert(profileJsToRow(DEFAULT_PROFILE)),
   ]);
 
-  localStorage.setItem("nt_version", String(DATA_VERSION));
+  lsSet("version", String(DATA_VERSION));
   console.log('[Supabase] Seeding complete');
 }
 
@@ -1402,6 +1410,24 @@ function confirmPhotoItems() {
 }
 
 // --- Settings UI ---
+
+function renderAccountSettings() {
+  const host = document.getElementById("account-settings");
+  if (!host) return;
+  const email = _authUser && _authUser.email ? _authUser.email : "(unknown)";
+  host.innerHTML = `<div class="settings-card">
+    <h2>Account</h2>
+    <p style="color:var(--text-dim);margin:0 0 12px;">Signed in as <b style="color:var(--text)">${escapeHtml(email)}</b></p>
+    <button id="sign-out-btn" class="btn btn-secondary">Sign out</button>
+  </div>`;
+  document.getElementById("sign-out-btn").addEventListener("click", signOut);
+}
+
+async function signOut() {
+  clearUserCache();          // wipe this user's offline cache before identity flips
+  await sb.auth.signOut();   // clears the persisted session
+  location.reload();         // relaunch -> gate shows the sign-in view
+}
 
 function renderProviderSettings() {
   const container = document.getElementById("provider-settings");
@@ -3005,7 +3031,7 @@ function renderAssessmentResults(result) {
 
 function loadAssessments() {
   if (_cache.ready && _cache.assessments) return [..._cache.assessments];
-  const saved = localStorage.getItem("nt_assessments");
+  const saved = lsGet("assessments");
   return saved ? JSON.parse(saved) : [];
 }
 
@@ -3014,7 +3040,7 @@ function saveAssessment(result) {
   assessments.unshift(result);
   while (assessments.length > 20) assessments.pop();
   _cache.assessments = [...assessments];
-  localStorage.setItem("nt_assessments", JSON.stringify(assessments));
+  lsSet("assessments", JSON.stringify(assessments));
   bgWrite(async () => {
     const { error } = await sb.from('assessments').insert({
       timestamp: result.timestamp,
@@ -3029,7 +3055,7 @@ function deleteAssessment(index) {
   const assessments = loadAssessments();
   const removed = assessments.splice(index, 1)[0];
   _cache.assessments = [...assessments];
-  localStorage.setItem("nt_assessments", JSON.stringify(assessments));
+  lsSet("assessments", JSON.stringify(assessments));
   if (removed) {
     bgWrite(async () => {
       // Delete by matching timestamp
@@ -3350,6 +3376,7 @@ async function startApp() {
   // Provider settings
   renderProviderSettings();
   renderMacroSettings();
+  renderAccountSettings();
 
   // Migrate old API key if present
   const oldKey = localStorage.getItem("nt_openai_key");
@@ -3462,7 +3489,13 @@ document.addEventListener("DOMContentLoaded", async () => {
   // startApp exceptions must not propagate back into verifyOtp /
   // exchangeCodeForSession as unhandled rejections.
   sb.auth.onAuthStateChange((_event, s) => {
+    const hadUser = !!_authUser;
     setAuthUser(s ? s.user : null);
     if (s) { showAuthView(false); setTimeout(() => startApp().catch(console.error), 0); }
+    else if (_appStarted && hadUser) {
+      // Session lost while running (token revoked/expired in background):
+      // don't strand a live app silently writing to a dead session.
+      location.reload();
+    }
   });
 });
