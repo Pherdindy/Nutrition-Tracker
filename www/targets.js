@@ -41,5 +41,26 @@
     return out;
   }
 
-  return { GOALS, deficitForGoal, migrateDay, migrateProfile };
+  // ---- Day-card display helpers (pure) ----
+  // tone: "good" | "bad" | "warn" | "neutral". Invalid input -> empty text so
+  // callers can fall back to their legacy rendering.
+  const EMPTY_DISPLAY = { text: "", tone: "neutral", icon: "" };
+
+  function calDeltaDisplay(overLow, overHigh) {
+    if (!Number.isFinite(overLow) || !Number.isFinite(overHigh)) return { ...EMPTY_DISPLAY };
+    const lo = Math.round(Math.min(overLow, overHigh));
+    const hi = Math.round(Math.max(overLow, overHigh));
+    // Neutral: range touches/straddles zero, or sits entirely inside the ±50
+    // band (same threshold as surplusClass in app.js).
+    if ((lo <= 0 && hi >= 0) || (lo >= -50 && hi <= 50)) {
+      return { text: "on target", tone: "neutral", icon: "" };
+    }
+    if (hi < 0) {
+      const a = Math.abs(hi), b = Math.abs(lo); // a <= b: small number first
+      return { text: `${a === b ? a : a + "–" + b} under target`, tone: "good", icon: "" };
+    }
+    return { text: `${lo === hi ? lo : lo + "–" + hi} over target`, tone: "bad", icon: "" };
+  }
+
+  return { GOALS, deficitForGoal, migrateDay, migrateProfile, calDeltaDisplay };
 });

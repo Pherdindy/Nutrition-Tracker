@@ -36,3 +36,40 @@ test("migrateProfile falls back to age 32 / 0.50 goal with no days", () => {
   assert.equal(p.age, 32);
   assert.equal(p.weightLossGoal, "0.50 kg/week");
 });
+
+test("calDeltaDisplay: whole range under target -> 'a–b under target', good, abs values small-first", () => {
+  assert.deepEqual(T.calDeltaDisplay(-273, -70), { text: "70–273 under target", tone: "good", icon: "" });
+});
+
+test("calDeltaDisplay: whole range over target -> 'a–b over target', bad", () => {
+  assert.deepEqual(T.calDeltaDisplay(112, 283), { text: "112–283 over target", tone: "bad", icon: "" });
+});
+
+test("calDeltaDisplay: range straddling zero or within ±50 band -> 'on target', neutral", () => {
+  assert.deepEqual(T.calDeltaDisplay(-30, 40), { text: "on target", tone: "neutral", icon: "" });
+  assert.deepEqual(T.calDeltaDisplay(-40, -10), { text: "on target", tone: "neutral", icon: "" }); // inside ±50 band
+  assert.deepEqual(T.calDeltaDisplay(10, 45), { text: "on target", tone: "neutral", icon: "" });   // inside ±50 band
+  assert.deepEqual(T.calDeltaDisplay(0, 0), { text: "on target", tone: "neutral", icon: "" });
+  assert.deepEqual(T.calDeltaDisplay(-60, 0), { text: "on target", tone: "neutral", icon: "" });   // touches zero = straddle
+});
+
+test("calDeltaDisplay: just outside the ±50 band is not neutral", () => {
+  assert.deepEqual(T.calDeltaDisplay(-60, -20), { text: "20–60 under target", tone: "good", icon: "" });
+  assert.deepEqual(T.calDeltaDisplay(20, 60), { text: "20–60 over target", tone: "bad", icon: "" });
+});
+
+test("calDeltaDisplay: degenerate range -> single number", () => {
+  assert.deepEqual(T.calDeltaDisplay(-170, -170), { text: "170 under target", tone: "good", icon: "" });
+  assert.deepEqual(T.calDeltaDisplay(200, 200), { text: "200 over target", tone: "bad", icon: "" });
+});
+
+test("calDeltaDisplay: rounds fractional inputs", () => {
+  assert.deepEqual(T.calDeltaDisplay(-272.6, -70.4), { text: "70–273 under target", tone: "good", icon: "" });
+});
+
+test("calDeltaDisplay: invalid input -> empty neutral fallback", () => {
+  const empty = { text: "", tone: "neutral", icon: "" };
+  assert.deepEqual(T.calDeltaDisplay(NaN, -70), empty);
+  assert.deepEqual(T.calDeltaDisplay(null, -70), empty);
+  assert.deepEqual(T.calDeltaDisplay(undefined, undefined), empty);
+});
