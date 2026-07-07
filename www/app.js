@@ -1424,16 +1424,15 @@ function renderAccountSettings() {
 }
 
 async function signOut() {
-  _estimateQueue.length = 0;   // stop in-flight estimate follow-ups from re-writing the cache
-  clearUserCache();            // wipe this user's offline cache before identity flips
-  try {
-    await sb.auth.signOut();   // clears the persisted session (locally even if the server revoke fails)
-  } catch (e) {
-    console.error("[Auth] signOut:", e);
-  } finally {
-    clearUserCache();          // re-clear: catch writes that raced the network call
-    location.reload();         // relaunch -> gate shows the sign-in view
-  }
+  // Capture identity up front: sb.auth.signOut() emits SIGNED_OUT (nulling
+  // _authUser) BEFORE it resolves, so currentUid() is null in the finally.
+  const uid = currentUid();
+  const wipe = () => { for (const b of CACHE_BASES) localStorage.removeItem(AuthView.nsKey(uid, b)); };
+  _estimateQueue.length = 0;   // stop in-flight estimate follow-ups
+  wipe();                      // wipe this user's offline cache before identity flips
+  try { await sb.auth.signOut(); }
+  catch (e) { console.error("[Auth] signOut:", e); }
+  finally { wipe(); location.reload(); } // re-clear: catch writes that raced the network call
 }
 
 function renderProviderSettings() {
