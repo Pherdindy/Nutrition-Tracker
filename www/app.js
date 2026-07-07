@@ -3197,7 +3197,15 @@ function isNativeApp() {
   return !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform());
 }
 
+// In-flight guard shared by the auth actions: a double-tap on the Google
+// button would fire signInWithOAuth twice and overwrite the PKCE
+// code_verifier (failing the first tab's sign-in); a double-tap on Verify
+// would consume the token then flash a spurious "wrong or expired" error.
+let _authBusy = false;
+
 async function signInWithGoogle() {
+  if (_authBusy) return;
+  _authBusy = true;
   setAuthError(null);
   try {
     if (isNativeApp()) {
@@ -3221,26 +3229,40 @@ async function signInWithGoogle() {
   } catch (err) {
     console.error("[Auth] Google sign-in failed:", err);
     setAuthError(err);
+  } finally {
+    _authBusy = false;
   }
 }
 
 async function sendOtp() {
+  if (_authBusy) return;
   setAuthError(null);
   const email = document.getElementById("auth-email").value.trim();
   if (!AuthView.validEmail(email)) { setAuthError({ message: "Enter a valid email address" }); return; }
-  const { error } = await sb.auth.signInWithOtp({ email });
-  if (error) { setAuthError(error); return; }
-  document.getElementById("auth-otp-row").classList.remove("hidden");
+  _authBusy = true;
+  try {
+    const { error } = await sb.auth.signInWithOtp({ email });
+    if (error) { setAuthError(error); return; }
+    document.getElementById("auth-otp-row").classList.remove("hidden");
+  } finally {
+    _authBusy = false;
+  }
 }
 
 async function verifyOtp() {
+  if (_authBusy) return;
   setAuthError(null);
   const email = document.getElementById("auth-email").value.trim();
   const token = document.getElementById("auth-otp").value.trim();
   if (!AuthView.validOtp(token)) { setAuthError({ message: "Enter the 6-digit code" }); return; }
-  const { error } = await sb.auth.verifyOtp({ email, token, type: "email" });
-  if (error) setAuthError(error);
-  // Success path: onAuthStateChange fires and starts the app.
+  _authBusy = true;
+  try {
+    const { error } = await sb.auth.verifyOtp({ email, token, type: "email" });
+    if (error) setAuthError(error);
+    // Success path: onAuthStateChange fires and starts the app.
+  } finally {
+    _authBusy = false;
+  }
 }
 
 function wireAuthUi() {
@@ -3257,7 +3279,11 @@ function wireAuthUi() {
     window.Capacitor.Plugins.App.addListener("appUrlOpen", async ({ url }) => {
       if (!url || !url.startsWith("com.lazymacros.app://auth-callback")) return;
       try { await window.Capacitor.Plugins.Browser.close(); } catch (e) { /* browser may already be closed */ }
-      const code = new URL(url).searchParams.get("code");
+      const u = new URL(url);
+      // Surface OAuth denial (e.g. ?error=access_denied) instead of failing silently.
+      const authErr = u.searchParams.get("error_description") || u.searchParams.get("error");
+      if (authErr) { setAuthError({ message: authErr }); return; }
+      const code = u.searchParams.get("code");
       if (!code) return;
       const { error } = await sb.auth.exchangeCodeForSession(code);
       if (error) { console.error("[Auth] Code exchange failed:", error); setAuthError(error); }
@@ -3431,8 +3457,12 @@ document.addEventListener("DOMContentLoaded", async () => {
     showAuthView(true);
   }
   // Fires on OTP verify, OAuth code exchange, and sign-out.
-  sb.auth.onAuthStateChange(async (_event, s) => {
+  // startApp is deferred via setTimeout so it runs outside the auth callback
+  // stack: supabase-js may hold an internal lock during this callback, and
+  // startApp exceptions must not propagate back into verifyOtp /
+  // exchangeCodeForSession as unhandled rejections.
+  sb.auth.onAuthStateChange((_event, s) => {
     setAuthUser(s ? s.user : null);
-    if (s) { showAuthView(false); await startApp(); }
+    if (s) { showAuthView(false); setTimeout(() => startApp().catch(console.error), 0); }
   });
 });
