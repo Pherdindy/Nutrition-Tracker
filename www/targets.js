@@ -1,4 +1,4 @@
-// Pure logic for global calorie-deficit / protein-target / age goals.
+// Pure logic for global calorie-deficit / protein-target / age goals, plus day-card display helpers.
 // UMD: usable as a browser global (window.Targets) and a Node module.
 (function (root, factory) {
   const api = factory();
@@ -46,6 +46,10 @@
   // callers can fall back to their legacy rendering.
   const EMPTY_DISPLAY = { text: "", tone: "neutral", icon: "" };
 
+  function rangeText(lo, hi) {
+    return lo === hi ? `${lo}` : `${lo}–${hi}`;
+  }
+
   function calDeltaDisplay(overLow, overHigh) {
     if (!Number.isFinite(overLow) || !Number.isFinite(overHigh)) return { ...EMPTY_DISPLAY };
     const lo = Math.round(Math.min(overLow, overHigh));
@@ -56,11 +60,22 @@
       return { text: "on target", tone: "neutral", icon: "" };
     }
     if (hi < 0) {
-      const a = Math.abs(hi), b = Math.abs(lo); // a <= b: small number first
-      return { text: `${a === b ? a : a + "–" + b} under target`, tone: "good", icon: "" };
+      return { text: `${rangeText(Math.abs(hi), Math.abs(lo))} under target`, tone: "good", icon: "" };
     }
-    return { text: `${lo === hi ? lo : lo + "–" + hi} over target`, tone: "bad", icon: "" };
+    return { text: `${rangeText(lo, hi)} over target`, tone: "bad", icon: "" };
   }
 
-  return { GOALS, deficitForGoal, migrateDay, migrateProfile, calDeltaDisplay };
+  // Met = intake low end reaches the target low; exceeding the target high is
+  // still "met" (protein surplus is good — same semantics as proteinSurplusClass).
+  function proteinStatusDisplay(proLow, proHigh, targetLow, targetHigh) {
+    if (![proLow, proHigh, targetLow, targetHigh].every(Number.isFinite)) return { ...EMPTY_DISPLAY };
+    const lo = Math.round(Math.min(proLow, proHigh));
+    const hi = Math.round(Math.max(proLow, proHigh));
+    const text = `${rangeText(lo, hi)} g (target ${rangeText(targetLow, targetHigh)})`;
+    if (lo >= targetLow) return { text, tone: "good", icon: "✓" };
+    if (hi < targetLow) return { text, tone: "bad", icon: "✗" };
+    return { text, tone: "warn", icon: "~" };
+  }
+
+  return { GOALS, deficitForGoal, migrateDay, migrateProfile, calDeltaDisplay, proteinStatusDisplay };
 });

@@ -73,3 +73,48 @@ test("calDeltaDisplay: invalid input -> empty neutral fallback", () => {
   assert.deepEqual(T.calDeltaDisplay(null, -70), empty);
   assert.deepEqual(T.calDeltaDisplay(undefined, undefined), empty);
 });
+
+test("proteinStatusDisplay: met (low end at/above target low) -> good ✓; exceeding high stays good", () => {
+  assert.deepEqual(T.proteinStatusDisplay(136, 147, 135, 150),
+    { text: "136–147 g (target 135–150)", tone: "good", icon: "✓" });
+  assert.deepEqual(T.proteinStatusDisplay(155, 170, 135, 150),
+    { text: "155–170 g (target 135–150)", tone: "good", icon: "✓" });
+});
+
+test("proteinStatusDisplay: missed (high end below target low) -> bad ✗", () => {
+  assert.deepEqual(T.proteinStatusDisplay(93, 102, 135, 150),
+    { text: "93–102 g (target 135–150)", tone: "bad", icon: "✗" });
+});
+
+test("proteinStatusDisplay: straddles target low -> warn ~", () => {
+  assert.deepEqual(T.proteinStatusDisplay(128, 140, 135, 150),
+    { text: "128–140 g (target 135–150)", tone: "warn", icon: "~" });
+});
+
+test("proteinStatusDisplay: degenerate ranges collapse to single numbers", () => {
+  assert.deepEqual(T.proteinStatusDisplay(140, 140, 135, 150),
+    { text: "140 g (target 135–150)", tone: "good", icon: "✓" });
+  assert.deepEqual(T.proteinStatusDisplay(100, 100, 135, 135),
+    { text: "100 g (target 135)", tone: "bad", icon: "✗" });
+});
+
+test("proteinStatusDisplay: rounds fractional intake", () => {
+  assert.deepEqual(T.proteinStatusDisplay(135.6, 147.2, 135, 150),
+    { text: "136–147 g (target 135–150)", tone: "good", icon: "✓" });
+});
+
+test("proteinStatusDisplay: invalid input -> empty neutral fallback", () => {
+  const empty = { text: "", tone: "neutral", icon: "" };
+  assert.deepEqual(T.proteinStatusDisplay(NaN, 147, 135, 150), empty);
+  assert.deepEqual(T.proteinStatusDisplay(136, 147, null, 150), empty);
+  assert.deepEqual(T.proteinStatusDisplay(undefined, undefined, undefined, undefined), empty);
+});
+
+test("calDeltaDisplay: reversed arguments are normalized", () => {
+  assert.deepEqual(T.calDeltaDisplay(-70, -273), { text: "70–273 under target", tone: "good", icon: "" });
+});
+
+test("calDeltaDisplay: exact ±50 band edges are neutral", () => {
+  assert.deepEqual(T.calDeltaDisplay(-50, -50), { text: "on target", tone: "neutral", icon: "" });
+  assert.deepEqual(T.calDeltaDisplay(50, 50), { text: "on target", tone: "neutral", icon: "" });
+});
