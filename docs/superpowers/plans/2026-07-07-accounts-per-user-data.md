@@ -531,7 +531,8 @@ git commit -m "feat(auth): sign-in gate with Google OAuth deep link + email OTP"
 
 ### Task 6: Namespaced offline cache + Account card with sign-out
 
-> **Hard requirements added by Task 5's code review:** (a) sign-out must `location.reload()` (already in Step 3 below); (b) the `onAuthStateChange` callback in the DOMContentLoaded handler must also handle session LOSS while the app is running (token revoked/expired in background): add `if (!s && _appStarted) { clearUserCache(); location.reload(); }` so a dead session can't strand a running app silently writing to a wrong cache.
+> **Hard requirements added by Task 5's code review:** (a) sign-out must `location.reload()` (already in Step 3 below); (b) the `onAuthStateChange` callback in the DOMContentLoaded handler must also handle session LOSS while the app is running (token revoked/expired in background): `else if (_appStarted && hadUser) { location.reload(); }` so a dead session can't strand a running app.
+> **Deliberate decision (final review confirmed):** the session-loss branch does NOT clear the cache — involuntary revocation isn't a sign-out; the namespaced cache is the same account's only copy of unsynced data and is re-owned on re-sign-in. Explicit sign-out is the shared-device privacy path and DOES clear (queue-halted + re-cleared before reload, see Task 6 fixes).
 
 **Files:**
 - Modify: `www/app.js` — cache wrappers + replace the five data-key call sites; Account card renderer
