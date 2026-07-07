@@ -25,7 +25,11 @@ function activateTab(tabId) {
 
 const SUPABASE_URL = 'https://wcbpvvyhswaricoadqbb.supabase.co';
 const SUPABASE_ANON_KEY = 'sb_publishable_I_XmlCcMCBDOkbU8PWN42A_SID54xxi';
-const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+// PKCE flow so the Android deep-link return can exchange a code for a session;
+// detectSessionInUrl handles the ?code= redirect in plain-browser (dev) mode.
+const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+  auth: { flowType: "pkce", persistSession: true, autoRefreshToken: true, detectSessionInUrl: true },
+});
 
 const _cache = { food: null, days: null, profile: null, assessments: null, settings: {}, ready: false };
 
