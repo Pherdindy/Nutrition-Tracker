@@ -1870,6 +1870,7 @@ body.loading::after {
 .tut-dots { display: flex; justify-content: center; gap: 8px; margin: 16px 0 12px; }
 .tut-dot { width: 8px; height: 8px; padding: 0; border-radius: 50%; border: none; background: var(--text-dim); opacity: 0.4; cursor: pointer; }
 .tut-dot.active { background: var(--primary); opacity: 1; }
+.tut-dot:focus-visible { opacity: 1; }
 
 .tut-controls { display: flex; align-items: center; gap: 8px; }
 .tut-spacer { flex: 1; }

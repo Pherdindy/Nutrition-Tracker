@@ -3190,10 +3190,16 @@ function renderTutorial() {
 
 function tutGoTo(i) {
   _tutIndex = Tutorial.clampIndex(i);
-  document.querySelectorAll("#tut-viewport .tut-slide").forEach((el) =>
-    el.classList.toggle("active", Number(el.dataset.i) === _tutIndex));
-  document.querySelectorAll("#tut-dots .tut-dot").forEach((d) =>
-    d.classList.toggle("active", Number(d.dataset.i) === _tutIndex));
+  document.querySelectorAll("#tut-viewport .tut-slide").forEach((el) => {
+    const on = Number(el.dataset.i) === _tutIndex;
+    el.classList.toggle("active", on);
+    el.setAttribute("aria-hidden", on ? "false" : "true"); // hide off-screen slides from assistive tech
+  });
+  document.querySelectorAll("#tut-dots .tut-dot").forEach((d) => {
+    const on = Number(d.dataset.i) === _tutIndex;
+    d.classList.toggle("active", on);
+    if (on) d.setAttribute("aria-current", "true"); else d.removeAttribute("aria-current");
+  });
   const fill = document.getElementById("tut-progress-fill");
   if (fill) fill.style.width = ((_tutIndex + 1) / Tutorial.slideCount() * 100) + "%";
   const last = Tutorial.isLast(_tutIndex);
