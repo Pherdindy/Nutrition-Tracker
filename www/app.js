@@ -3107,6 +3107,195 @@ function wireAuthUi() {
   }
 }
 
+// ============================================================
+// FIRST-RUN WALKTHROUGH (tutorial) — depends on window.Tutorial
+// ============================================================
+const TUT_ADVANCE_MS = 4500;
+let _tutIndex = 0;
+let _tutTimer = null;
+let _tutAuto = false;        // is auto-advance currently active?
+let _tutFromAuto = false;    // was this open triggered by the first-run auto-show?
+let _tutReturnFocus = null;  // element to restore focus to on close
+let _tutRendered = false;    // slides built once
+let _tutTouchX = null;       // swipe start x
+
+function tutReduceMotion() {
+  return !!(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+}
+
+// Trusted, static illustration markup per slide `art` key (no user data → innerHTML is safe).
+function tutArtHtml(key) {
+  switch (key) {
+    case "welcome":
+      return '<div class="tut-emblem tut-emblem-pulse"><svg class="tut-ring" viewBox="0 0 120 120" fill="none">' +
+        '<circle class="bg" cx="60" cy="60" r="50" stroke-width="10"/>' +
+        '<circle class="fg" cx="60" cy="60" r="50" stroke-width="10" stroke-dasharray="235 314" transform="rotate(-90 60 60)"/>' +
+        '</svg><span class="tut-score" style="font-size:1.4rem">LM</span></div>';
+    case "food":
+      return '<div class="tut-phone">' +
+        '<div class="tut-bar"></div><div class="tut-bar short"></div><div class="tut-bar"></div><div class="tut-bar short"></div>' +
+        '<div class="tut-fabs">' +
+          '<span class="tut-fab tut-pulse"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></span>' +
+          '<span class="tut-fab tut-fab2 tut-pulse"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7h3l2-2h8l2 2h3v12H3z"/><circle cx="12" cy="13" r="3.5"/></svg></span>' +
+        '</div></div>';
+    case "days":
+      return '<div class="tut-phone">' +
+        '<div class="tut-row"><span>Weight</span><b>184 lb</b></div>' +
+        '<div class="tut-row hi"><span>🏋️ Gym day</span><b>×1.55</b></div>' +
+        '<div class="tut-arrow">↓</div>' +
+        '<div class="tut-chip">Target 1,820 kcal</div></div>';
+    case "targets":
+      return '<div class="tut-phone">' +
+        '<div class="tut-row"><span>Height</span><b>170 cm</b></div>' +
+        '<div class="tut-row"><span>Age</span><b>32</b></div>' +
+        '<div class="tut-row hi"><span>🎯 Goal</span><b>0.50 kg/wk</b></div>' +
+        '<div class="tut-chip">Protein 135–150 g</div></div>';
+    case "assess":
+      return '<div class="tut-emblem"><svg class="tut-ring" viewBox="0 0 120 120" fill="none">' +
+        '<circle class="bg" cx="60" cy="60" r="50" stroke-width="10"/>' +
+        '<circle class="fg" cx="60" cy="60" r="50" stroke-width="10" stroke-dasharray="245 314" transform="rotate(-90 60 60)"/>' +
+        '</svg><span class="tut-score">78</span></div>';
+    case "done":
+      return '<div class="tut-emblem"><svg class="tut-check-svg" viewBox="0 0 120 120">' +
+        '<circle cx="60" cy="60" r="52"/>' +
+        '<path d="M38 62 L54 78 L84 44" fill="none" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/>' +
+        '</svg></div>';
+    default:
+      return "";
+  }
+}
+
+function renderTutorial() {
+  if (_tutRendered) return;
+  const vp = document.getElementById("tut-viewport");
+  const count = Tutorial.slideCount();
+  vp.innerHTML = Tutorial.SLIDES.map((s, i) =>
+    '<div class="tut-slide" data-i="' + i + '" role="group" aria-roledescription="slide" aria-label="Slide ' + (i + 1) + ' of ' + count + '">' +
+      '<div class="tut-art">' + tutArtHtml(s.art) + '</div>' +
+      '<h2 class="tut-title"></h2>' +
+      '<p class="tut-caption"></p>' +
+    '</div>'
+  ).join("");
+  // Titles/captions via textContent (safe, plain text).
+  Tutorial.SLIDES.forEach((s, i) => {
+    const slide = vp.querySelector('.tut-slide[data-i="' + i + '"]');
+    slide.querySelector(".tut-title").textContent = s.title;
+    slide.querySelector(".tut-caption").textContent = s.caption;
+  });
+  document.getElementById("tut-dots").innerHTML = Tutorial.SLIDES.map((_, i) =>
+    '<button type="button" class="tut-dot" data-i="' + i + '" aria-label="Go to slide ' + (i + 1) + '"></button>'
+  ).join("");
+  _tutRendered = true;
+}
+
+function tutGoTo(i) {
+  _tutIndex = Tutorial.clampIndex(i);
+  document.querySelectorAll("#tut-viewport .tut-slide").forEach((el) =>
+    el.classList.toggle("active", Number(el.dataset.i) === _tutIndex));
+  document.querySelectorAll("#tut-dots .tut-dot").forEach((d) =>
+    d.classList.toggle("active", Number(d.dataset.i) === _tutIndex));
+  const fill = document.getElementById("tut-progress-fill");
+  if (fill) fill.style.width = ((_tutIndex + 1) / Tutorial.slideCount() * 100) + "%";
+  const last = Tutorial.isLast(_tutIndex);
+  document.getElementById("tut-back").disabled = Tutorial.isFirst(_tutIndex);
+  document.getElementById("tut-skip").classList.toggle("hidden", last);
+  document.getElementById("tut-next").textContent = last ? "Start tracking" : "Next";
+}
+
+function tutStopAuto() {
+  _tutAuto = false;
+  if (_tutTimer) { clearTimeout(_tutTimer); _tutTimer = null; }
+}
+
+function tutScheduleAuto() {
+  if (!_tutAuto) return;
+  if (_tutTimer) clearTimeout(_tutTimer);
+  _tutTimer = setTimeout(() => {
+    if (!_tutAuto) return;
+    if (Tutorial.isLast(_tutIndex)) { tutStopAuto(); return; }
+    tutGoTo(Tutorial.next(_tutIndex));
+    tutScheduleAuto();
+  }, TUT_ADVANCE_MS);
+}
+
+// First manual interaction cancels auto-advance for good.
+function tutInteract() { if (_tutAuto) tutStopAuto(); }
+
+function openTutorial(fromAuto) {
+  renderTutorial();
+  // Mark seen the moment it opens (auto or manual); replay re-sets "1" harmlessly.
+  localStorage.setItem("nt_tutorial_seen", "1");
+  _tutFromAuto = !!fromAuto;
+  _tutReturnFocus = document.activeElement;
+  document.getElementById("tutorial-view").classList.remove("hidden");
+  tutGoTo(0);
+  _tutAuto = !tutReduceMotion();
+  tutScheduleAuto();
+  const next = document.getElementById("tut-next");
+  if (next) next.focus();
+}
+
+function closeTutorial() {
+  tutStopAuto();
+  document.getElementById("tutorial-view").classList.add("hidden");
+  if (_tutFromAuto) activateTab("food-eaten"); // land new users on Food; leave replay users where they were
+  if (_tutReturnFocus && typeof _tutReturnFocus.focus === "function" && document.body.contains(_tutReturnFocus)) {
+    _tutReturnFocus.focus();
+  }
+  _tutReturnFocus = null;
+  _tutFromAuto = false;
+}
+
+function maybeAutoShowTutorial() {
+  if (Tutorial.shouldAutoShow(localStorage.getItem("nt_tutorial_seen"))) openTutorial(true);
+}
+
+function tutTrapFocus(e) {
+  if (e.key !== "Tab") return;
+  const nodes = document.querySelectorAll("#tutorial-view button:not([disabled])");
+  const focusable = Array.prototype.filter.call(nodes, (el) => el.offsetParent !== null);
+  if (!focusable.length) return;
+  const first = focusable[0];
+  const last = focusable[focusable.length - 1];
+  if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+  else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+}
+
+function initTutorialUi() {
+  document.getElementById("tut-back").addEventListener("click", () => { tutInteract(); tutGoTo(Tutorial.prev(_tutIndex)); });
+  document.getElementById("tut-skip").addEventListener("click", () => { tutInteract(); closeTutorial(); });
+  document.getElementById("tut-next").addEventListener("click", () => {
+    tutInteract();
+    if (Tutorial.isLast(_tutIndex)) closeTutorial();
+    else tutGoTo(Tutorial.next(_tutIndex));
+  });
+  document.getElementById("tut-dots").addEventListener("click", (e) => {
+    const dot = e.target.closest(".tut-dot");
+    if (!dot) return;
+    tutInteract();
+    tutGoTo(Number(dot.dataset.i));
+  });
+  const view = document.getElementById("tutorial-view");
+  view.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") { closeTutorial(); return; }
+    if (e.key === "ArrowRight") { tutInteract(); tutGoTo(Tutorial.next(_tutIndex)); return; }
+    if (e.key === "ArrowLeft") { tutInteract(); tutGoTo(Tutorial.prev(_tutIndex)); return; }
+    tutTrapFocus(e);
+  });
+  const vp = document.getElementById("tut-viewport");
+  vp.addEventListener("touchstart", (e) => { _tutTouchX = e.changedTouches[0].clientX; }, { passive: true });
+  vp.addEventListener("touchend", (e) => {
+    if (_tutTouchX == null) return;
+    const dx = e.changedTouches[0].clientX - _tutTouchX;
+    _tutTouchX = null;
+    if (Math.abs(dx) < 40) return;
+    tutInteract();
+    tutGoTo(dx < 0 ? Tutorial.next(_tutIndex) : Tutorial.prev(_tutIndex));
+  }, { passive: true });
+  const replay = document.getElementById("tutorial-replay-btn");
+  if (replay) replay.addEventListener("click", () => openTutorial(false));
+}
+
 let _appStarted = false;
 
 function maybeShowOnboarding() {
@@ -3146,6 +3335,8 @@ function completeOnboarding(ev) {
   // Re-render everything that reads profile/days.
   renderCalorieTracker();
   renderCalorieTarget();
+  // First-run walkthrough plays right after onboarding.
+  maybeAutoShowTutorial();
 }
 
 async function startApp() {
@@ -3294,10 +3485,15 @@ async function startApp() {
   if (window.matchMedia) {
     matchMedia("(prefers-color-scheme: light)").addEventListener("change", () => { if (getTheme() === "system") applyTheme(); });
   }
+
+  // First-run walkthrough: show for returning users who haven't seen it.
+  // (New users see it right after onboarding — see completeOnboarding.)
+  if (!_cache.profileMissing) maybeAutoShowTutorial();
 }
 
 document.addEventListener("DOMContentLoaded", async () => {
   wireAuthUi();
+  initTutorialUi();
   const { data: { session } } = await sb.auth.getSession();
   setAuthUser(session ? session.user : null);
   if (session) {

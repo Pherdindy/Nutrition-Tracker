@@ -1933,3 +1933,7 @@ body.loading::after {
   .tut-slide, .tut-progress-fill { transition: none; }
   .tut-emblem-pulse, .tut-pulse { animation: none; }
 }
+
+@media (max-width: 720px) {
+  #tut-back, #tut-skip, #tut-next { min-height: 44px; }
+}
