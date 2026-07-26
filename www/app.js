@@ -3238,9 +3238,12 @@ function openTutorial(fromAuto) {
 function closeTutorial() {
   tutStopAuto();
   document.getElementById("tutorial-view").classList.add("hidden");
-  if (_tutFromAuto) activateTab("food-eaten"); // land new users on Food; leave replay users where they were
-  if (_tutReturnFocus && typeof _tutReturnFocus.focus === "function" && document.body.contains(_tutReturnFocus)) {
-    _tutReturnFocus.focus();
+  if (_tutFromAuto) {
+    activateTab("food-eaten"); // land new users on Food
+    const foodNav = document.querySelector((isMobile() ? ".bottom-nav-item" : ".tab") + '[data-tab="food-eaten"]');
+    if (foodNav) foodNav.focus();
+  } else if (_tutReturnFocus && typeof _tutReturnFocus.focus === "function" && document.body.contains(_tutReturnFocus)) {
+    _tutReturnFocus.focus(); // replay: return focus to the trigger (e.g. the "How to use" button)
   }
   _tutReturnFocus = null;
   _tutFromAuto = false;
@@ -3278,8 +3281,8 @@ function initTutorialUi() {
   const view = document.getElementById("tutorial-view");
   view.addEventListener("keydown", (e) => {
     if (e.key === "Escape") { closeTutorial(); return; }
-    if (e.key === "ArrowRight") { tutInteract(); tutGoTo(Tutorial.next(_tutIndex)); return; }
-    if (e.key === "ArrowLeft") { tutInteract(); tutGoTo(Tutorial.prev(_tutIndex)); return; }
+    if (e.key === "ArrowRight") { e.preventDefault(); tutInteract(); tutGoTo(Tutorial.next(_tutIndex)); return; }
+    if (e.key === "ArrowLeft") { e.preventDefault(); tutInteract(); tutGoTo(Tutorial.prev(_tutIndex)); return; }
     tutTrapFocus(e);
   });
   const vp = document.getElementById("tut-viewport");
@@ -3288,8 +3291,8 @@ function initTutorialUi() {
     if (_tutTouchX == null) return;
     const dx = e.changedTouches[0].clientX - _tutTouchX;
     _tutTouchX = null;
+    tutInteract(); // any deliberate touch (tap or swipe) stops auto-advance
     if (Math.abs(dx) < 40) return;
-    tutInteract();
     tutGoTo(dx < 0 ? Tutorial.next(_tutIndex) : Tutorial.prev(_tutIndex));
   }, { passive: true });
   const replay = document.getElementById("tutorial-replay-btn");
