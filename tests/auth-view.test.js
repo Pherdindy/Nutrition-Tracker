@@ -18,11 +18,13 @@ test("validEmail accepts normal addresses, rejects junk", () => {
   assert.equal(AV.validEmail(null), false);
 });
 
-test("validOtp requires exactly 6 digits", () => {
+test("validOtp accepts 6-10 digits (Supabase OTP length is configurable; this project sends 8)", () => {
   assert.equal(AV.validOtp("123456"), true);
+  assert.equal(AV.validOtp("94281547"), true); // 8 digits — live value 2026-07-27
+  assert.equal(AV.validOtp("1234567890"), true); // 10 digits — Supabase max
   assert.equal(AV.validOtp(" 123456 "), true); // tolerates whitespace padding
-  assert.equal(AV.validOtp("12345"), false);
-  assert.equal(AV.validOtp("1234567"), false);
+  assert.equal(AV.validOtp("12345"), false); // below Supabase minimum
+  assert.equal(AV.validOtp("12345678901"), false); // above Supabase maximum
   assert.equal(AV.validOtp("12345a"), false);
   assert.equal(AV.validOtp(""), false);
   assert.equal(AV.validOtp(null), false);

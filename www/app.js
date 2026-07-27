@@ -3064,7 +3064,7 @@ async function verifyOtp() {
   setAuthError(null);
   const email = document.getElementById("auth-email").value.trim();
   const token = document.getElementById("auth-otp").value.trim();
-  if (!AuthView.validOtp(token)) { setAuthError({ message: "Enter the 6-digit code" }); return; }
+  if (!AuthView.validOtp(token)) { setAuthError({ message: "Enter the code from the email" }); return; }
   _authBusy = true;
   try {
     const { error } = await sb.auth.verifyOtp({ email, token, type: "email" });

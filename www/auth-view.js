@@ -17,7 +17,10 @@
   }
 
   function validOtp(s) {
-    return typeof s === "string" && /^\d{6}$/.test(s.trim());
+    // Supabase email-OTP length is configurable from 6 to 10 digits; this
+    // project currently issues 8. Accept the whole legal range so a dashboard
+    // config change can never lock users out (found live 2026-07-27).
+    return typeof s === "string" && /^\d{6,10}$/.test(s.trim());
   }
 
   function authErrorMessage(err) {
