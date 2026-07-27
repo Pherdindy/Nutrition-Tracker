@@ -1,0 +1,856 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Lazy Macros — log the food, skip the math</title>
+<meta name="description" content="Lazy Macros is a calorie and macro tracker for people who hate tracking. Type what you ate — or snap a photo — and it estimates the numbers for you, as honest ranges instead of fake precision.">
+<link rel="canonical" href="https://lazymacros.com/">
+
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://lazymacros.com/">
+<meta property="og:title" content="Lazy Macros — log the food, skip the math">
+<meta property="og:description" content="Type what you ate — or snap a photo. Lazy Macros estimates calories and macros for you, as honest ranges instead of fake precision.">
+<meta property="og:image" content="https://lazymacros.com/og.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="theme-color" content="#16324f">
+
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='22' fill='%2316324f'/%3E%3Ctext x='50' y='68' font-family='Arial,sans-serif' font-size='52' font-weight='800' fill='%232bb673' text-anchor='middle'%3ELM%3C/text%3E%3C/svg%3E">
+
+<script>
+  // Set the theme before first paint so there's no flash.
+  (function () {
+    try {
+      var t = localStorage.getItem("lm_site_theme");
+      if (!t) t = matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+      document.documentElement.setAttribute("data-theme", t);
+    } catch (e) {}
+  })();
+</script>
+
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --navy: #16324f;
+    --bg: #0f1117;
+    --bg-alt: #141822;
+    --surface: #1a1d27;
+    --surface2: #242836;
+    --border: #2e3345;
+    --text: #e4e6ed;
+    --text-dim: #8b8fa3;
+    --brand: #2bb673;
+    --brand-soft: rgba(43, 182, 115, 0.14);
+    --primary: #4f8cff;
+    --green: #34d399;
+    --red: #f87171;
+    --yellow: #fbbf24;
+    --shadow: 0 24px 60px -20px rgba(0, 0, 0, 0.65);
+    --radius: 14px;
+    --font: 'Segoe UI', system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+    --maxw: 1120px;
+  }
+
+  [data-theme="light"] {
+    --bg: #f6f7fb;
+    --bg-alt: #eef1f6;
+    --surface: #ffffff;
+    --surface2: #eef1f6;
+    --border: #dfe3ec;
+    --text: #1c1f2a;
+    --text-dim: #5d6478;
+    --brand: #1f9d63;
+    --brand-soft: rgba(31, 157, 99, 0.12);
+    --primary: #2f6fed;
+    --green: #1f9d63;
+    --red: #d64545;
+    --yellow: #c98a00;
+    --shadow: 0 24px 50px -24px rgba(22, 50, 79, 0.35);
+  }
+
+  html { scroll-behavior: smooth; }
+  @media (prefers-reduced-motion: reduce) {
+    html { scroll-behavior: auto; }
+    * { animation: none !important; transition: none !important; }
+  }
+
+  body {
+    font-family: var(--font);
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+    overflow-x: hidden;
+  }
+
+  a { color: inherit; }
+  img, svg { max-width: 100%; }
+
+  .wrap { max-width: var(--maxw); margin: 0 auto; padding: 0 24px; }
+
+  /* ---------- Header ---------- */
+  header.site {
+    position: sticky; top: 0; z-index: 50;
+    background: color-mix(in srgb, var(--bg) 88%, transparent);
+    backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--border);
+  }
+  .nav { display: flex; align-items: center; gap: 20px; height: 64px; }
+  .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; letter-spacing: -0.01em; text-decoration: none; }
+  .brand-mark {
+    width: 32px; height: 32px; border-radius: 9px; background: var(--navy);
+    color: var(--brand); font-size: 0.82rem; font-weight: 800;
+    display: grid; place-items: center; flex: none;
+  }
+  .nav-links { display: flex; gap: 22px; margin-left: auto; }
+  .nav-links a { color: var(--text-dim); text-decoration: none; font-size: 0.92rem; font-weight: 500; }
+  .nav-links a:hover { color: var(--text); }
+  .nav-actions { display: flex; align-items: center; gap: 10px; margin-left: auto; }
+  .nav-links + .nav-actions { margin-left: 0; }
+
+  .theme-toggle {
+    width: 36px; height: 36px; border-radius: 10px; flex: none;
+    border: 1px solid var(--border); background: var(--surface); color: var(--text-dim);
+    cursor: pointer; display: grid; place-items: center;
+  }
+  .theme-toggle:hover { color: var(--text); border-color: var(--text-dim); }
+  [data-theme="dark"] .icon-sun { display: none; }
+  [data-theme="light"] .icon-moon { display: none; }
+
+  /* ---------- Buttons ---------- */
+  .btn {
+    display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+    padding: 11px 20px; border-radius: 10px; border: 1px solid transparent;
+    font: inherit; font-size: 0.94rem; font-weight: 600; text-decoration: none;
+    cursor: pointer; transition: transform 0.12s ease, background 0.15s, border-color 0.15s;
+    white-space: nowrap;
+  }
+  .btn:active { transform: translateY(1px); }
+  .btn-primary { background: var(--brand); color: #06231a; }
+  [data-theme="light"] .btn-primary { color: #ffffff; }
+  .btn-primary:hover { background: color-mix(in srgb, var(--brand) 85%, #ffffff); }
+  .btn-ghost { border-color: var(--border); color: var(--text); background: var(--surface); }
+  .btn-ghost:hover { border-color: var(--text-dim); }
+  .btn-sm { padding: 8px 14px; font-size: 0.87rem; }
+
+  /* ---------- Hero ---------- */
+  .hero { position: relative; padding: 88px 0 72px; overflow: hidden; }
+  .hero::before {
+    content: ""; position: absolute; inset: -40% 0 auto -10%;
+    height: 620px; pointer-events: none;
+    background: radial-gradient(60% 55% at 20% 45%, color-mix(in srgb, var(--brand) 22%, transparent), transparent 70%),
+                radial-gradient(50% 50% at 80% 20%, color-mix(in srgb, var(--navy) 55%, transparent), transparent 70%);
+    opacity: 0.75;
+  }
+  [data-theme="light"] .hero::before { opacity: 0.45; }
+  .hero .wrap { position: relative; display: grid; grid-template-columns: 1.05fr 0.95fr; gap: 56px; align-items: center; }
+
+  .eyebrow {
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 6px 12px; border-radius: 999px;
+    background: var(--brand-soft); color: var(--brand);
+    font-size: 0.8rem; font-weight: 600; letter-spacing: 0.01em;
+    border: 1px solid color-mix(in srgb, var(--brand) 30%, transparent);
+  }
+  h1 {
+    font-size: clamp(2.4rem, 5.4vw, 3.65rem);
+    line-height: 1.08; letter-spacing: -0.03em; font-weight: 800;
+    margin: 20px 0 18px;
+  }
+  h1 .accent { color: var(--brand); }
+  .lede { font-size: 1.12rem; color: var(--text-dim); max-width: 34em; }
+  .hero-cta { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 30px; }
+  .hero-note { margin-top: 16px; font-size: 0.86rem; color: var(--text-dim); }
+
+  /* ---------- Phone mockup ---------- */
+  .phone {
+    width: 300px; margin: 0 auto; border-radius: 38px; padding: 10px;
+    background: linear-gradient(160deg, #2b3242, #12151d);
+    border: 1px solid var(--border); box-shadow: var(--shadow);
+  }
+  [data-theme="light"] .phone { background: linear-gradient(160deg, #cfd6e4, #97a2b8); }
+  .phone-screen {
+    background: var(--bg); border-radius: 30px; overflow: hidden;
+    border: 1px solid var(--border); position: relative;
+  }
+  .phone-notch {
+    height: 22px; display: grid; place-items: center;
+  }
+  .phone-notch::after { content: ""; width: 74px; height: 5px; border-radius: 3px; background: var(--border); }
+  .phone-body { padding: 4px 12px 14px; }
+
+  .ph-title { font-size: 0.95rem; font-weight: 700; padding: 4px 2px 10px; }
+  .ph-daybar {
+    display: flex; justify-content: space-between; align-items: baseline;
+    font-size: 0.72rem; color: var(--text-dim); text-transform: uppercase;
+    letter-spacing: 0.04em; padding: 8px 2px 6px; border-bottom: 1px solid var(--border);
+  }
+  .ph-daybar b { color: var(--text); font-size: 0.78rem; letter-spacing: 0; text-transform: none; }
+
+  .ph-card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 10px; padding: 10px 12px; margin-top: 8px;
+  }
+  .ph-row { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
+  .ph-food { font-size: 0.86rem; font-weight: 600; }
+  .ph-cal { font-size: 0.82rem; font-weight: 700; color: var(--text); white-space: nowrap; }
+  .ph-sub { font-size: 0.72rem; color: var(--text-dim); margin-top: 2px; }
+  .ph-macro { display: flex; justify-content: space-between; font-size: 0.72rem; color: var(--text-dim); margin-top: 5px; }
+  .ph-macro b { color: var(--text); font-weight: 600; }
+  .est-badge {
+    display: inline-grid; place-items: center; width: 16px; height: 16px; border-radius: 50%;
+    font-size: 0.62rem; font-weight: 700; vertical-align: middle;
+    background: var(--brand-soft); color: var(--brand);
+  }
+
+  .ph-nav {
+    display: grid; grid-template-columns: repeat(4, 1fr); gap: 2px;
+    border-top: 1px solid var(--border); margin: 14px -12px -14px; padding: 8px 0 10px;
+    background: var(--surface);
+  }
+  .ph-nav div { text-align: center; font-size: 0.6rem; color: var(--text-dim); }
+  .ph-nav div span { display: block; font-size: 0.95rem; line-height: 1.3; }
+  .ph-nav div.on { color: var(--brand); }
+
+  .ph-fab {
+    position: absolute; right: 14px; bottom: 62px;
+    width: 46px; height: 46px; border-radius: 50%; background: var(--brand);
+    color: #06231a; display: grid; place-items: center; font-size: 1.5rem; font-weight: 400;
+    box-shadow: 0 8px 20px -6px rgba(0, 0, 0, 0.6);
+  }
+  [data-theme="light"] .ph-fab { color: #fff; }
+
+  /* ---------- Sections ---------- */
+  section { padding: 76px 0; }
+  .section-alt { background: var(--bg-alt); border-block: 1px solid var(--border); }
+  .section-head { max-width: 40em; margin-bottom: 44px; }
+  .section-head.center { margin-inline: auto; text-align: center; }
+  h2 { font-size: clamp(1.7rem, 3.2vw, 2.25rem); line-height: 1.18; letter-spacing: -0.02em; font-weight: 750; }
+  .section-head p { color: var(--text-dim); margin-top: 12px; font-size: 1.03rem; }
+  h3 { font-size: 1.05rem; font-weight: 650; letter-spacing: -0.01em; }
+
+  /* ---------- The range idea ---------- */
+  .range-panel {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 40px; align-items: center;
+  }
+  .range-demo {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 26px; box-shadow: var(--shadow);
+  }
+  .range-item + .range-item { margin-top: 22px; padding-top: 22px; border-top: 1px solid var(--border); }
+  .range-label { display: flex; justify-content: space-between; font-size: 0.85rem; margin-bottom: 10px; }
+  .range-label b { font-weight: 650; }
+  .range-label span { color: var(--text-dim); }
+  .range-track { height: 10px; border-radius: 6px; background: var(--surface2); position: relative; overflow: hidden; }
+  /* Fills are positioned by real percentages of the 0–900 cal scale; min-width keeps
+     a very tight range visible as a pill rather than a hairline. */
+  .range-fill { position: absolute; top: 0; bottom: 0; min-width: 12px; border-radius: 6px; background: linear-gradient(90deg, color-mix(in srgb, var(--brand) 55%, transparent), var(--brand)); }
+  .range-scale { display: flex; justify-content: space-between; font-size: 0.7rem; color: var(--text-dim); margin-top: 6px; }
+  .quote-line { color: var(--text-dim); font-size: 0.92rem; margin-top: 22px; }
+
+  /* ---------- Feature grid ---------- */
+  .grid { display: grid; gap: 20px; }
+  .grid-3 { grid-template-columns: repeat(3, 1fr); }
+  .grid-2 { grid-template-columns: repeat(2, 1fr); }
+  .card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 24px;
+  }
+  .card:hover { border-color: color-mix(in srgb, var(--brand) 40%, var(--border)); }
+  .card .ico {
+    width: 38px; height: 38px; border-radius: 10px; display: grid; place-items: center;
+    background: var(--brand-soft); color: var(--brand); margin-bottom: 14px;
+  }
+  .card p { color: var(--text-dim); font-size: 0.93rem; margin-top: 8px; }
+
+  /* ---------- Steps ---------- */
+  .steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px; counter-reset: step; }
+  .step { position: relative; padding-top: 8px; }
+  .step::before {
+    counter-increment: step; content: counter(step);
+    display: grid; place-items: center; width: 30px; height: 30px; border-radius: 50%;
+    background: var(--navy); color: var(--brand); font-size: 0.85rem; font-weight: 700;
+    margin-bottom: 14px; border: 1px solid color-mix(in srgb, var(--brand) 35%, transparent);
+  }
+  [data-theme="light"] .step::before { color: #fff; background: var(--brand); border-color: transparent; }
+  .step p { color: var(--text-dim); font-size: 0.93rem; margin-top: 8px; }
+
+  /* ---------- Split feature rows ---------- */
+  .split { display: grid; grid-template-columns: 1fr 1fr; gap: 52px; align-items: center; }
+  .split + .split { margin-top: 76px; }
+  .split.flip .split-visual { order: -1; }
+  .split ul { list-style: none; margin-top: 20px; display: grid; gap: 12px; }
+  .split li { display: flex; gap: 10px; color: var(--text-dim); font-size: 0.95rem; }
+  .split li::before { content: "✓"; color: var(--brand); font-weight: 700; flex: none; }
+  .split p.intro { color: var(--text-dim); margin-top: 12px; }
+
+  .mock {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 18px; box-shadow: var(--shadow);
+  }
+  .mock-head { font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-dim); margin-bottom: 14px; }
+  .mock-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 9px 0; font-size: 0.88rem; }
+  .mock-row + .mock-row { border-top: 1px solid var(--border); }
+  .mock-row b { font-weight: 650; }
+  .tone-good { color: var(--green); }
+  .tone-bad { color: var(--red); }
+  .tone-warn { color: var(--yellow); }
+  .mock-dim { color: var(--text-dim); }
+
+  .score { display: flex; align-items: center; gap: 20px; }
+  .score-ring {
+    --pct: 78;
+    width: 92px; height: 92px; border-radius: 50%; flex: none;
+    background: conic-gradient(var(--brand) calc(var(--pct) * 1%), var(--surface2) 0);
+    display: grid; place-items: center;
+  }
+  .score-ring-inner {
+    width: 70px; height: 70px; border-radius: 50%; background: var(--surface);
+    display: grid; place-items: center; line-height: 1;
+  }
+  .score-num { font-size: 1.5rem; font-weight: 800; }
+  .score-den { font-size: 0.7rem; color: var(--text-dim); }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+  .chip {
+    font-size: 0.76rem; font-weight: 600; padding: 4px 10px; border-radius: 999px;
+    background: var(--surface2); color: var(--text-dim);
+  }
+  .chip.good { background: color-mix(in srgb, var(--green) 18%, transparent); color: var(--green); }
+  .chip.warn { background: color-mix(in srgb, var(--yellow) 18%, transparent); color: var(--yellow); }
+  .action-line { font-size: 0.86rem; color: var(--text-dim); padding: 8px 0; }
+  .action-line + .action-line { border-top: 1px solid var(--border); }
+
+  /* ---------- Privacy ---------- */
+  .privacy-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; }
+  .privacy-grid .card p { font-size: 0.9rem; }
+
+  /* ---------- FAQ ---------- */
+  .faq { max-width: 780px; margin: 0 auto; }
+  details.faq-item {
+    border: 1px solid var(--border); border-radius: 12px;
+    background: var(--surface); padding: 0 18px; margin-bottom: 10px;
+  }
+  details.faq-item summary {
+    cursor: pointer; list-style: none; padding: 16px 0;
+    font-weight: 600; font-size: 0.97rem; display: flex; justify-content: space-between; gap: 16px;
+  }
+  details.faq-item summary::-webkit-details-marker { display: none; }
+  details.faq-item summary::after { content: "+"; color: var(--brand); font-size: 1.2rem; line-height: 1; flex: none; }
+  details.faq-item[open] summary::after { content: "–"; }
+  details.faq-item p { color: var(--text-dim); font-size: 0.93rem; padding-bottom: 18px; }
+  details.faq-item p + p { padding-top: 0; margin-top: -8px; }
+
+  /* ---------- Final CTA ---------- */
+  .cta-band {
+    background: linear-gradient(135deg, var(--navy), color-mix(in srgb, var(--navy) 60%, var(--brand)));
+    border-radius: 20px; padding: 54px 40px; text-align: center; color: #fff;
+    box-shadow: var(--shadow);
+  }
+  .cta-band h2 { color: #fff; }
+  .cta-band p { color: rgba(255, 255, 255, 0.78); margin: 14px auto 26px; max-width: 34em; }
+  .cta-band .btn-ghost { background: rgba(255, 255, 255, 0.08); border-color: rgba(255, 255, 255, 0.28); color: #fff; }
+  .cta-band .btn-ghost:hover { background: rgba(255, 255, 255, 0.16); }
+
+  /* ---------- Footer ---------- */
+  footer.site { border-top: 1px solid var(--border); padding: 36px 0; margin-top: 76px; }
+  .foot { display: flex; flex-wrap: wrap; align-items: center; gap: 16px; justify-content: space-between; }
+  .foot-links { display: flex; flex-wrap: wrap; gap: 20px; }
+  .foot-links a { color: var(--text-dim); font-size: 0.88rem; text-decoration: none; }
+  .foot-links a:hover { color: var(--text); }
+  .foot-legal { color: var(--text-dim); font-size: 0.82rem; }
+  .disclaimer { color: var(--text-dim); font-size: 0.78rem; margin-top: 20px; max-width: 60em; line-height: 1.6; }
+
+  /* ---------- Responsive ---------- */
+  @media (max-width: 900px) {
+    .hero .wrap, .range-panel, .split { grid-template-columns: 1fr; gap: 40px; }
+    .split.flip .split-visual { order: 0; }
+    .grid-3, .steps, .privacy-grid { grid-template-columns: 1fr 1fr; }
+    .nav-links { display: none; }
+    .hero { padding: 60px 0 56px; }
+    section { padding: 60px 0; }
+  }
+  @media (max-width: 620px) {
+    .grid-3, .grid-2, .steps, .privacy-grid { grid-template-columns: 1fr; }
+    .cta-band { padding: 40px 24px; }
+    .hero-cta .btn { flex: 1 1 auto; }
+  }
+
+  .sr-only {
+    position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+    overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+  }
+  .skip-link {
+    position: absolute; left: 16px; top: -60px; z-index: 100;
+    background: var(--brand); color: #06231a; padding: 10px 16px; border-radius: 8px;
+    text-decoration: none; font-weight: 600; transition: top 0.15s;
+  }
+  .skip-link:focus { top: 12px; }
+  :focus-visible { outline: 2px solid var(--brand); outline-offset: 3px; border-radius: 4px; }
+</style>
+</head>
+<body>
+
+<a class="skip-link" href="#main">Skip to content</a>
+
+<header class="site">
+  <div class="wrap nav">
+    <a class="brand" href="#top">
+      <span class="brand-mark" aria-hidden="true">LM</span>
+      <span>Lazy Macros</span>
+    </a>
+    <nav class="nav-links" aria-label="Primary">
+      <a href="#how">How it works</a>
+      <a href="#features">Features</a>
+      <a href="#assessment">Assessment</a>
+      <a href="#privacy">Your data</a>
+      <a href="#faq">FAQ</a>
+    </nav>
+    <div class="nav-actions">
+      <button class="theme-toggle" id="theme-toggle" aria-label="Toggle light and dark theme">
+        <svg class="icon-moon" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+        <svg class="icon-sun" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+      </button>
+      <a class="btn btn-primary btn-sm" href="#get">Get the app</a>
+    </div>
+  </div>
+</header>
+
+<main id="main">
+<a id="top"></a>
+
+<!-- ============ HERO ============ -->
+<section class="hero">
+  <div class="wrap">
+    <div>
+      <span class="eyebrow">Calorie &amp; macro tracking, minus the data entry</span>
+      <h1>Log the food.<br><span class="accent">Skip the math.</span></h1>
+      <p class="lede">
+        Most trackers make you hunt through a database, guess a serving size, and pretend
+        the answer is exact. Lazy Macros takes “two eggs and a slice of toast” — or a photo
+        of the plate — and fills in the calories and macros itself, as an honest range.
+      </p>
+      <div class="hero-cta">
+        <a class="btn btn-primary" href="#get">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="6" y="2" width="12" height="20" rx="2"/><path d="M11 18h2"/></svg>
+          Get the Android app
+        </a>
+        <a class="btn btn-ghost" href="#how">See how it works</a>
+      </div>
+      <p class="hero-note">Android app or any browser · Works offline · Free and open source</p>
+    </div>
+
+    <div class="hero-visual">
+      <div class="phone" role="img" aria-label="Screenshot of the Lazy Macros food log showing three entries with calorie ranges and a daily total.">
+        <div class="phone-screen">
+          <div class="phone-notch"></div>
+          <div class="phone-body">
+            <div class="ph-title">Food Eaten</div>
+
+            <div class="ph-daybar"><span>Today</span><b>1,690–1,940 cal</b></div>
+
+            <div class="ph-card">
+              <div class="ph-row">
+                <span class="ph-food">Chicken adobo with rice</span>
+                <span class="ph-cal">620–720</span>
+              </div>
+              <div class="ph-sub">12:40 PM · 1 plate</div>
+              <div class="ph-macro"><span>Protein</span><b>38–44 g</b></div>
+              <div class="ph-macro"><span>Carbs</span><b>62–74 g</b></div>
+            </div>
+
+            <div class="ph-card">
+              <div class="ph-row">
+                <span class="ph-food">Greek yogurt</span>
+                <span class="ph-cal">130–150</span>
+              </div>
+              <div class="ph-sub">9:05 AM · 170 g</div>
+              <div class="ph-macro"><span>Protein</span><b>15–17 g</b></div>
+            </div>
+
+            <div class="ph-card">
+              <div class="ph-row">
+                <span class="ph-food">Iced latte</span>
+                <span class="ph-cal">— <span class="est-badge" title="Estimating">…</span></span>
+              </div>
+              <div class="ph-sub">8:20 AM · 1 medium</div>
+              <div class="ph-macro"><span class="mock-dim">Estimating in the background…</span></div>
+            </div>
+
+            <div class="ph-fab" aria-hidden="true">+</div>
+
+            <div class="ph-nav" aria-hidden="true">
+              <div class="on"><span>🍽</span>Food</div>
+              <div><span>📅</span>Days</div>
+              <div><span>🎯</span>Targets</div>
+              <div><span>📊</span>Assess</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ RANGES ============ -->
+<section class="section-alt" id="ranges">
+  <div class="wrap range-panel">
+    <div>
+      <h2>“417 calories” was always a guess. We just stop pretending.</h2>
+      <p class="lede" style="margin-top:14px;">
+        Nobody weighs the oil in a restaurant stir-fry. Every tracker on your phone is
+        estimating — it just hides that behind a decimal point. Lazy Macros shows you the
+        low and the high, so you can see when a meal is genuinely uncertain and when it isn’t.
+      </p>
+      <p class="quote-line">
+        The range narrows as the food gets more specific. “A sandwich” is a wide guess.
+        “100 g grilled chicken breast” is a tight one. Either way, you spent five seconds logging it.
+      </p>
+    </div>
+
+    <div class="range-demo">
+      <div class="range-item">
+        <div class="range-label"><b>100 g grilled chicken breast</b><span>160–175 cal</span></div>
+        <div class="range-track"><div class="range-fill" style="left:17.8%; width:1.7%"></div></div>
+        <div class="range-scale"><span>0</span><span>tight — the food is well defined</span><span>900</span></div>
+      </div>
+      <div class="range-item">
+        <div class="range-label"><b>1 bowl of pasta</b><span>420–780 cal</span></div>
+        <div class="range-track"><div class="range-fill" style="left:46.7%; width:40%"></div></div>
+        <div class="range-scale"><span>0</span><span>wide — portion and sauce are unknown</span><span>900</span></div>
+      </div>
+      <div class="range-item">
+        <div class="range-label"><b>2 large eggs, fried</b><span>180–220 cal</span></div>
+        <div class="range-track"><div class="range-fill" style="left:20%; width:4.4%"></div></div>
+        <div class="range-scale"><span>0</span><span>tight — cooking fat is the only variable</span><span>900</span></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ HOW IT WORKS ============ -->
+<section id="how">
+  <div class="wrap">
+    <div class="section-head center">
+      <h2>Three taps, not three minutes</h2>
+      <p>No barcode hunting, no database scrolling, no “was that serving 1 cup or 1 container?”</p>
+    </div>
+    <div class="steps">
+      <div class="step">
+        <h3>Write it like you’d say it</h3>
+        <p>
+          “Chicken adobo with rice, 1 plate.” Add several items at once in batch mode when
+          you’re logging a whole meal. That’s the entire input.
+        </p>
+      </div>
+      <div class="step">
+        <h3>Or just take the photo</h3>
+        <p>
+          Snap to Log reads the plate, splits it into separate items with portions, and queues
+          them up. Wrong about something? Type “that’s a sloppy joe, not bean soup” and it re-reads
+          the photo with your correction.
+        </p>
+      </div>
+      <div class="step">
+        <h3>Numbers fill themselves in</h3>
+        <p>
+          Estimates run in the background while you get on with your day. Come back to a day view
+          that tells you, in plain words, whether you landed on target and whether you hit your protein.
+        </p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ FEATURES ============ -->
+<section class="section-alt" id="features">
+  <div class="wrap">
+    <div class="section-head center">
+      <h2>Everything else, kept deliberately small</h2>
+      <p>The features that earn their place on a screen you look at four times a day.</p>
+    </div>
+
+    <div class="grid grid-3">
+      <div class="card">
+        <div class="ico" aria-hidden="true">
+          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7h3l2-2h8l2 2h3v12H3z"/><circle cx="12" cy="13" r="3.5"/></svg>
+        </div>
+        <h3>Snap to Log</h3>
+        <p>Photograph a meal and get one entry per food, each with its own portion and macro range. Correct it in plain English and it re-estimates the whole plate.</p>
+      </div>
+
+      <div class="card">
+        <div class="ico" aria-hidden="true">
+          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 18V9M10 18V5M16 18v-6M22 18v-9"/></svg>
+        </div>
+        <h3>Targets that follow your weight</h3>
+        <p>BMR and TDEE recalculate from the weight you logged that day and the activity level you picked. Choose a goal from maintain up to 1 kg per week and the daily target moves with you.</p>
+      </div>
+
+      <div class="card">
+        <div class="ico" aria-hidden="true">
+          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18M5 8h14M5 16h14"/></svg>
+        </div>
+        <h3>Only the macros you care about</h3>
+        <p>Calories and protein always. Carbs, fat, fiber, sugar, saturated fat and sodium are yours to switch on and off — the whole app follows, including what the estimator is asked for.</p>
+      </div>
+
+      <div class="card">
+        <div class="ico" aria-hidden="true">
+          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>
+        </div>
+        <h3>Plain-language day cards</h3>
+        <p>“180–240 over target.” “Protein met.” No mental arithmetic against a number you have to remember, and no red screen because you were forty calories out.</p>
+      </div>
+
+      <div class="card">
+        <div class="ico" aria-hidden="true">
+          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a9 9 0 1 0 9 9h-9z"/><path d="M14 3.2A9 9 0 0 1 20.8 10H14z"/></svg>
+        </div>
+        <h3>Two opinions on hard foods</h3>
+        <p>Run a second model as a cross-check. When the two estimates disagree by more than your threshold, the entry gets flagged instead of quietly averaging a bad guess.</p>
+      </div>
+
+      <div class="card">
+        <div class="ico" aria-hidden="true">
+          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+        </div>
+        <h3>Dark, light, or whatever your phone says</h3>
+        <p>A real dark theme for logging dinner in bed, a real light one for daylight, and a system setting that just follows along.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ SPLIT: DAYS ============ -->
+<section id="days">
+  <div class="wrap">
+    <div class="split">
+      <div>
+        <span class="eyebrow">Days</span>
+        <h2 style="margin-top:16px;">A day view that answers the only two questions</h2>
+        <p class="intro">
+          Did I eat roughly the right amount, and did I get enough protein? Everything else
+          is one tap away, and stays out of the way until you ask for it.
+        </p>
+        <ul>
+          <li>Daily target derived from your weight, height, age, activity and goal — not a number you typed in once and forgot</li>
+          <li>Calorie result stated as a range against target, with a ±50 cal dead zone so “on target” means on target</li>
+          <li>Protein marked met, borderline or missed, because a surplus is a good thing and shouldn’t be scored as a miss</li>
+          <li>Tap any day to correct the weight or activity — everything downstream recalculates</li>
+        </ul>
+      </div>
+      <div class="split-visual">
+        <div class="mock">
+          <div class="mock-head">Mon, 27 Jul · 1,690–1,940 / 1,820 cal</div>
+          <div class="mock-row"><span class="mock-dim">Weight</span><b>178 lb</b></div>
+          <div class="mock-row"><span class="mock-dim">BMR / TDEE</span><b>1,655 / 2,370</b></div>
+          <div class="mock-row"><span class="mock-dim">Activity</span><b>Lightly active</b></div>
+          <div class="mock-row"><span class="mock-dim">Cal +/-</span><b class="tone-good">on target</b></div>
+          <div class="mock-row"><span class="mock-dim">Protein</span><b class="tone-good">✓ 142–158 g (target 135–150)</b></div>
+        </div>
+        <div class="mock" style="margin-top:16px;">
+          <div class="mock-head">Sun, 26 Jul · 2,240–2,480 / 1,830 cal</div>
+          <div class="mock-row"><span class="mock-dim">Cal +/-</span><b class="tone-bad">410–650 over target</b></div>
+          <div class="mock-row"><span class="mock-dim">Protein</span><b class="tone-warn">~ 118–146 g (target 135–150)</b></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============ SPLIT: ASSESSMENT ============ -->
+    <div class="split flip" id="assessment">
+      <div>
+        <span class="eyebrow">Diet assessment</span>
+        <h2 style="margin-top:16px;">Ask what the last month actually looked like</h2>
+        <p class="intro">
+          Pick a window — yesterday, a week, 90 days, year over year, or any custom range — and
+          get a read on the whole period instead of a wall of daily numbers.
+        </p>
+        <ul>
+          <li>One score with a verdict line, plus chips for calories, protein and variety</li>
+          <li>Three concrete things to change this week, ranked</li>
+          <li>Drill into food groups, a grocery and sourcing plan, and the reasoning behind the score</li>
+          <li>Past assessments are kept, so you can see whether the advice worked</li>
+        </ul>
+      </div>
+      <div class="split-visual">
+        <div class="mock">
+          <div class="score">
+            <div class="score-ring" style="--pct:72">
+              <div class="score-ring-inner"><span class="score-num">7.2</span><span class="score-den">/10</span></div>
+            </div>
+            <div>
+              <b>Solid week — protein is carrying it.</b>
+              <div class="chips">
+                <span class="chip good">Calories on track</span>
+                <span class="chip good">Protein met 6/7</span>
+                <span class="chip warn">Low variety</span>
+              </div>
+            </div>
+          </div>
+          <div class="mock-head" style="margin:22px 0 6px;">Do this week</div>
+          <div class="action-line">Add a second vegetable to dinner four nights — you logged the same three all week.</div>
+          <div class="action-line">Move ~200 cal from evening snacks into lunch; four of seven overages came after 9 PM.</div>
+          <div class="action-line">Keep the yogurt-and-eggs breakfast. It is doing most of the protein work.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ PRIVACY ============ -->
+<section class="section-alt" id="privacy">
+  <div class="wrap">
+    <div class="section-head center">
+      <h2>Your food log is yours</h2>
+      <p>A diet log is personal data. Here is exactly where it goes.</p>
+    </div>
+    <div class="privacy-grid">
+      <div class="card">
+        <h3>Works offline first</h3>
+        <p>Entries save to the device immediately and read back from a local cache, so the app works on a plane or in a basement restaurant. Cloud sync catches up when you’re back online.</p>
+      </div>
+      <div class="card">
+        <h3>Your own API key</h3>
+        <p>Estimates run against your key with the provider you choose. The key stays on your device — it is never synced to the cloud with the rest of your settings.</p>
+      </div>
+      <div class="card">
+        <h3>No key? No problem</h3>
+        <p>Manual mode lets you type the numbers yourself, and every estimate is editable regardless. The tracker works without an AI provider attached at all.</p>
+      </div>
+      <div class="card">
+        <h3>No ads, no upsell</h3>
+        <p>Nothing to subscribe to, no premium tier hiding your own history behind a paywall, and no advertiser being told what you ate.</p>
+      </div>
+      <div class="card">
+        <h3>Open source</h3>
+        <p>The whole app is a few files of plain HTML, CSS and JavaScript. Read it, audit the prompts, fork it, or run your own copy.</p>
+      </div>
+      <div class="card">
+        <h3>Export by owning it</h3>
+        <p>Your data lives in your own storage. Nothing about the format is proprietary, and there’s no leaving-fee for taking it with you.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ FAQ ============ -->
+<section id="faq">
+  <div class="wrap">
+    <div class="section-head center">
+      <h2>Questions worth asking</h2>
+    </div>
+    <div class="faq">
+      <details class="faq-item">
+        <summary>How accurate is this, really?</summary>
+        <p>
+          As accurate as a careful human guess, which is roughly what every tracker gives you once
+          you stop weighing food. The difference is that Lazy Macros shows you the uncertainty rather
+          than rounding it away. For a well-defined food the range is tight; for “a bowl of pasta” it is
+          wide, and it should be. Trends over weeks are the thing to trust — not any single entry.
+        </p>
+      </details>
+      <details class="faq-item">
+        <summary>Do I need an API key?</summary>
+        <p>
+          Only for the automatic estimates and the diet assessment. Add a key from your provider of
+          choice in Targets → settings and estimates start filling themselves in. Without one, the app
+          drops into manual mode: you type calories and macros yourself and everything else — targets,
+          day cards, history — works exactly the same.
+        </p>
+      </details>
+      <details class="faq-item">
+        <summary>Why two numbers instead of one?</summary>
+        <p>
+          Because the honest answer to “how many calories were in that?” is a range. Showing a single
+          number invites you to chase a precision that was never there — and to panic over a 40-calorie
+          overshoot that is well inside the noise. Days are judged against the range, with a ±50 calorie
+          band counted as on target.
+        </p>
+      </details>
+      <details class="faq-item">
+        <summary>Is there an iPhone version?</summary>
+        <p>
+          Not as a native app yet. Lazy Macros is a web app wrapped for Android, so on iOS you can open
+          it in Safari and add it to your home screen — everything except the native camera integration
+          works the same.
+        </p>
+      </details>
+      <details class="faq-item">
+        <summary>What does it cost?</summary>
+        <p>
+          The app is free and open source. If you turn on automatic estimates you pay your AI provider
+          directly for the tokens you use — typically fractions of a cent per logged food — and nothing to us.
+        </p>
+      </details>
+      <details class="faq-item">
+        <summary>Can I track something other than weight loss?</summary>
+        <p>
+          Yes. Set your goal to Maintain and the daily target becomes your TDEE. Protein targets are set
+          independently, so you can run a maintenance or recomposition setup without a deficit.
+        </p>
+      </details>
+    </div>
+  </div>
+</section>
+
+<!-- ============ FINAL CTA ============ -->
+<section id="get">
+  <div class="wrap">
+    <div class="cta-band">
+      <h2>Stop negotiating with a food database</h2>
+      <p>
+        Install it, log tonight’s dinner in five seconds, and see whether you still miss
+        scrolling through eleven versions of “banana.”
+      </p>
+      <div class="hero-cta" style="justify-content:center;">
+        <a class="btn btn-primary" href="https://github.com/Pherdindy/Nutrition-Tracker/releases">Download for Android</a>
+        <a class="btn btn-ghost" href="https://github.com/Pherdindy/Nutrition-Tracker">View source on GitHub</a>
+      </div>
+    </div>
+  </div>
+</section>
+</main>
+
+<footer class="site">
+  <div class="wrap">
+    <div class="foot">
+      <a class="brand" href="#top">
+        <span class="brand-mark" aria-hidden="true">LM</span>
+        <span>Lazy Macros</span>
+      </a>
+      <nav class="foot-links" aria-label="Footer">
+        <a href="#how">How it works</a>
+        <a href="#features">Features</a>
+        <a href="#privacy">Your data</a>
+        <a href="#faq">FAQ</a>
+        <a href="https://github.com/Pherdindy/Nutrition-Tracker">GitHub</a>
+      </nav>
+      <span class="foot-legal">© <span id="year">2026</span> Lazy Macros</span>
+    </div>
+    <p class="disclaimer">
+      Lazy Macros provides estimates for general wellness tracking. It is not medical advice and is not
+      a substitute for a doctor or a registered dietitian. Calorie and macro figures are approximations —
+      that is the whole point of showing them as ranges. Talk to a professional before making significant
+      changes to your diet, particularly if you have a medical condition or a history of disordered eating.
+    </p>
+  </div>
+</footer>
+
+<script>
+  (function () {
+    var root = document.documentElement;
+    var btn = document.getElementById("theme-toggle");
+    btn.addEventListener("click", function () {
+      var next = root.getAttribute("data-theme") === "light" ? "dark" : "light";
+      root.setAttribute("data-theme", next);
+      try { localStorage.setItem("lm_site_theme", next); } catch (e) {}
+    });
+
+    var y = document.getElementById("year");
+    if (y) y.textContent = new Date().getFullYear();
+  })();
+</script>
+
+</body>
+</html>
