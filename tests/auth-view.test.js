@@ -41,6 +41,8 @@ test("authErrorMessage maps known Supabase auth errors to friendly text", () => 
     "Can't reach the server — check your connection and try again.");
   assert.equal(AV.authErrorMessage({ message: "For security purposes, you can only request this after 60 seconds." }),
     "Please wait a minute before requesting another code.");
+  assert.equal(AV.authErrorMessage({ message: "email rate limit exceeded" }), // hit live 2026-07-27
+    "Too many sign-in emails right now — try again in a little while.");
   assert.equal(AV.authErrorMessage({ message: "Something exotic" }), "Sign-in failed: Something exotic");
   assert.equal(AV.authErrorMessage(null), "Sign-in failed. Please try again.");
 });

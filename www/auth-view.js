@@ -28,6 +28,7 @@
     if (/expired|invalid|otp/i.test(m)) return "That code is wrong or expired — request a new one.";
     if (/fetch|network/i.test(m)) return "Can't reach the server — check your connection and try again.";
     if (/security purposes|after \d+ seconds/i.test(m)) return "Please wait a minute before requesting another code.";
+    if (/rate limit/i.test(m)) return "Too many sign-in emails right now — try again in a little while.";
     if (m) return `Sign-in failed: ${m}`;
     return "Sign-in failed. Please try again.";
   }
