@@ -74,11 +74,12 @@ the agent at its code).
    (UMD `FinanceSync.planResync`, 7 tests in `tests/finance-sync.test.js`,
    suite now 77), auth gate in `finance/index.html`/`styles.css`, gate wiring
    + `resyncOfflineData` in `finance/app.js` (server-only rows are reported in
-   console, never deleted; `window.financeSignOut()` helper). RECOVERY RUN
-   PENDING: user opens the finance app in the SAME browser they always use
-   (that's where the offline rows live), signs in with an emailed code, the
-   app pushes offline rows up — then verify server-side: transactions count
-   should exceed 402 with fresh created_at, stock_trades > 0 if trades exist.
+   console, never deleted; `window.financeSignOut()` helper).
+   ✅ **RECOVERY RUN DONE 2026-07-29:** user signed in in their usual browser;
+   resync pushed all 6 offline entries (server 402 → 408, verified row-by-row
+   against the user's screenshot). stock_trades synced 0 — Stock Journal was
+   locally empty; table ready for future use. The finance app is fully
+   operational again, authenticated as the owner.
 4. ✅ **DONE 2026-07-29 — Emulator back to signed-in-as-owner** (via the
    Resend-delivered code; 126 entries re-downloaded through per-user RLS).
 
