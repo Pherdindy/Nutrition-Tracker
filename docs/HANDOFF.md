@@ -62,8 +62,23 @@ the agent at its code).
    only listed test users can use Google sign-in until it's published to
    **Production** (Google Auth Platform → Audience → Publish). Do this before
    real users; basic scopes need no Google verification review.
-3. **Finance app sign-in** — reuse the OTP pattern from `www/app.js`
-   (`signInWithOtp`/`verifyOtp`); user will provide the code location.
+3. **Finance app sign-in — BUILT 2026-07-29, awaiting the user's recovery
+   run.** The finance app is `finance/` in this repo (tracked). Discovered
+   during diagnosis: (a) its adds since the lock only exist in the browser's
+   localStorage (server still had 402 rows, last insert 2026-07-26); (b) the
+   `stock_trades` table it syncs to NEVER existed — Stock Journal data is
+   localStorage-only since forever (table now created, migration
+   `create_stock_trades_owner_only`, owner-scoped like transactions); (c) its
+   init overwrites localStorage with server-preferred data, so the resync
+   snapshots localStorage BEFORE init. What was added: `finance/sync.js`
+   (UMD `FinanceSync.planResync`, 7 tests in `tests/finance-sync.test.js`,
+   suite now 77), auth gate in `finance/index.html`/`styles.css`, gate wiring
+   + `resyncOfflineData` in `finance/app.js` (server-only rows are reported in
+   console, never deleted; `window.financeSignOut()` helper). RECOVERY RUN
+   PENDING: user opens the finance app in the SAME browser they always use
+   (that's where the offline rows live), signs in with an emailed code, the
+   app pushes offline rows up — then verify server-side: transactions count
+   should exceed 402 with fresh created_at, stock_trades > 0 if trades exist.
 4. ✅ **DONE 2026-07-29 — Emulator back to signed-in-as-owner** (via the
    Resend-delivered code; 126 entries re-downloaded through per-user RLS).
 

@@ -6,6 +6,37 @@ const SUPABASE_URL = 'https://wcbpvvyhswaricoadqbb.supabase.co';
 const SUPABASE_ANON_KEY = 'sb_publishable_I_XmlCcMCBDOkbU8PWN42A_SID54xxi';
 const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
+// ---- Auth gate ----
+// transactions/settings/stock_trades are locked to the owner account
+// server-side (per-user RLS since 2026-07); Supabase reads/writes silently
+// fail until this app holds the owner's session.
+
+function showGate(show) { document.getElementById('auth-gate').classList.toggle('hidden', !show); }
+function setGateError(msg) { document.getElementById('gate-error').textContent = msg || ''; }
+
+async function gateSendCode() {
+  const email = document.getElementById('gate-email').value.trim();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { setGateError('Enter a valid email address'); return; }
+  setGateError('');
+  const { error } = await sb.auth.signInWithOtp({ email });
+  if (error) { setGateError(error.message); return; }
+  document.getElementById('gate-code-row').classList.remove('hidden');
+  document.getElementById('gate-code').focus();
+}
+
+async function gateVerifyCode() {
+  const email = document.getElementById('gate-email').value.trim();
+  const token = document.getElementById('gate-code').value.trim();
+  // Supabase email-OTP length is configurable 6-10 digits; this project sends 8.
+  if (!/^\d{6,10}$/.test(token)) { setGateError('Enter the code from the email'); return; }
+  setGateError('');
+  const { error } = await sb.auth.verifyOtp({ email, token, type: 'email' });
+  if (error) setGateError(error.message);
+  // Success path: onAuthStateChange hides the gate and starts the app.
+}
+
+window.financeSignOut = () => sb.auth.signOut().then(() => location.reload());
+
 const _cache = { transactions: null, categories: null, stockTrades: null, ready: false };
 
 // ---- Default Categories ----
@@ -314,6 +345,63 @@ function initFromLocalStorage() {
   _cache.categories = loadCategories();
   _cache.stockTrades = JSON.parse(localStorage.getItem('ft_stock_trades') || '[]');
   _cache.ready = true;
+}
+
+// ---- Offline resync ----
+// initFromSupabase overwrites localStorage with server-preferred data, so the
+// pre-init snapshot (captured in startApp BEFORE init runs) is the only record
+// of rows created/edited while writes were failing. Push those up.
+
+async function resyncTable(table, lsKey, fields, snapshotJson, getList, setList) {
+  const { data: server, error } = await sb.from(table).select('*');
+  if (error || !server) { console.warn(`[resync] cannot read ${table}: ${error ? error.message : 'no data'}`); return; }
+  const local = JSON.parse(snapshotJson || '[]');
+  const plan = FinanceSync.planResync(server, local, fields);
+  if (plan.serverOnlyIds.length) {
+    console.warn(`[resync] ${table}: ${plan.serverOnlyIds.length} rows exist only on the server (possible offline deletes) — left untouched`);
+  }
+  if (!plan.inserts.length && !plan.updates.length) return;
+  console.log(`[resync] ${table}: pushing ${plan.inserts.length} new + ${plan.updates.length} edited offline rows`);
+  let list = getList();
+  for (const row of plan.inserts) {
+    const { id, created_at, ...payload } = row;
+    const { data, error: e } = await sb.from(table).insert(payload).select();
+    if (e) { console.error(`[resync] insert failed on ${table}: ${e.message}`); continue; }
+    if (data && data[0]) list = list.map(t => t.id === row.id ? data[0] : t);
+  }
+  for (const row of plan.updates) {
+    const { created_at, ...payload } = row;
+    const { error: e } = await sb.from(table).update(payload).eq('id', row.id);
+    if (e) { console.error(`[resync] update failed on ${table}: ${e.message}`); continue; }
+    // The cache holds the stale server version after init — restore the local edit.
+    list = list.map(t => t.id === row.id ? { ...row } : t);
+  }
+  setList(list);
+  localStorage.setItem(lsKey, JSON.stringify(list));
+}
+
+async function resyncOfflineData(snapshot) {
+  await resyncTable('transactions', 'ft_transactions',
+    ['date', 'type', 'category', 'subcategory', 'description', 'amount', 'notes'],
+    snapshot.transactions, () => _cache.transactions, l => { _cache.transactions = l; });
+  await resyncTable('stock_trades', 'ft_stock_trades',
+    ['stock_code', 'date_bought', 'price_bought', 'shares_bought', 'buy_fees', 'date_sold', 'price_sold', 'shares_sold', 'sell_fees', 'notes'],
+    snapshot.stockTrades, () => _cache.stockTrades, l => { _cache.stockTrades = l; });
+  // Categories: the local snapshot is the user's latest state on this device;
+  // if it differs from what the server had, the local version wins.
+  if (snapshot.categories) {
+    try {
+      const { data } = await sb.from('settings').select('value').eq('key', 'ft_categories').maybeSingle();
+      const serverValue = data && data.value;
+      if (serverValue !== snapshot.categories) {
+        console.log('[resync] categories: pushing offline category edits');
+        _cache.categories = JSON.parse(snapshot.categories);
+        localStorage.setItem('ft_categories', snapshot.categories);
+        const { error } = await sb.from('settings').upsert({ key: 'ft_categories', value: snapshot.categories });
+        if (error) console.error(`[resync] categories upsert failed: ${error.message}`);
+      }
+    } catch (e) { console.error('[resync] categories failed:', e); }
+  }
 }
 
 // ============================================================
@@ -1252,9 +1340,40 @@ document.addEventListener('keydown', e => {
 // INIT
 // ============================================================
 
-(async () => {
+let _appStarted = false;
+
+async function startApp() {
+  if (_appStarted) return;
+  _appStarted = true;
+  // Snapshot BEFORE initFromSupabase — init overwrites localStorage with
+  // server-preferred data, which would erase the record of offline changes.
+  const snapshot = {
+    transactions: localStorage.getItem('ft_transactions'),
+    stockTrades: localStorage.getItem('ft_stock_trades'),
+    categories: localStorage.getItem('ft_categories'),
+  };
   populateCategories();
   await initFromSupabase();
+  await resyncOfflineData(snapshot);
+  // Reconcile AFTER resync: its bgWrite updates need real server ids to exist.
   reconcileTransactionsWithCategories();
   render();
+}
+
+(async () => {
+  document.getElementById('gate-send').addEventListener('click', gateSendCode);
+  document.getElementById('gate-verify').addEventListener('click', gateVerifyCode);
+  document.getElementById('gate-email').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); gateSendCode(); } });
+  document.getElementById('gate-code').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); gateVerifyCode(); } });
+
+  // Fires on OTP verify and sign-out. startApp is deferred via setTimeout so it
+  // runs outside the auth callback stack (supabase-js may hold an internal
+  // lock during the callback — lesson from the Lazy Macros auth gate).
+  sb.auth.onAuthStateChange((_event, session) => {
+    if (session) { showGate(false); setTimeout(() => startApp().catch(console.error), 0); }
+  });
+
+  const { data } = await sb.auth.getSession();
+  if (data && data.session) { showGate(false); startApp().catch(console.error); }
+  else showGate(true);
 })();

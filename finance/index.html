@@ -408,6 +408,25 @@
     </div>
   </div>
 
+  <!-- AUTH GATE — transactions/settings/stock_trades are locked to the owner
+       account server-side; nothing syncs until this app is signed in. -->
+  <div id="auth-gate" class="auth-gate hidden">
+    <div class="auth-gate-card">
+      <h2>Finance</h2>
+      <p class="auth-gate-sub">Sign in to sync your data</p>
+      <label for="gate-email">Email</label>
+      <input type="email" id="gate-email" value="robertmessi123456@gmail.com" autocomplete="email">
+      <button id="gate-send" class="btn btn-primary">Email me a code</button>
+      <div id="gate-code-row" class="hidden">
+        <label for="gate-code">Code from the email</label>
+        <input type="text" id="gate-code" inputmode="numeric" maxlength="10" autocomplete="one-time-code">
+        <button id="gate-verify" class="btn btn-primary">Verify code</button>
+      </div>
+      <p id="gate-error" class="auth-gate-error"></p>
+    </div>
+  </div>
+
+  <script src="sync.js"></script>
   <script src="app.js"></script>
 </body>
 </html>
