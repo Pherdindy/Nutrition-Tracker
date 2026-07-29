@@ -53,14 +53,15 @@ the agent at its code).
    (code delivered via Resend, owner signed in on the emulator with it). The
    per-project mailer rate-limit launch blocker is RESOLVED. If auth emails
    ever misbehave: Resend dashboard → Emails shows delivery logs.
-2. **Google OAuth**: Google Cloud → OAuth consent screen (External, basic
-   scopes, add owner as test user) → Web application client with redirect URI
-   `https://wcbpvvyhswaricoadqbb.supabase.co/auth/v1/callback` → paste ID +
-   secret into Supabase Auth Providers → Google. PLUS Supabase Auth → URL
-   Configuration: Site URL `http://localhost:8080`, Redirect URLs
-   `com.lazymacros.app://auth-callback` and `http://localhost:8080`
-   (required for the deep-link return; still unset as of handoff). Same-email
-   Google sign-in links to the existing owner account (same UID).
+2. ✅ **DONE 2026-07-29 — Google OAuth live + emulator-verified end-to-end**
+   (button → Custom Tab → account select → consent → deep-link return →
+   signed in as the SAME owner UID; `app_metadata.providers` now
+   `["email","google"]` — email-linking confirmed). Google Cloud project
+   "Lazy Macros" holds the Web client; redirect URLs configured in Supabase.
+   ⚠️ LAUNCH CHECKLIST: the OAuth consent screen is in **Testing** status —
+   only listed test users can use Google sign-in until it's published to
+   **Production** (Google Auth Platform → Audience → Publish). Do this before
+   real users; basic scopes need no Google verification review.
 3. **Finance app sign-in** — reuse the OTP pattern from `www/app.js`
    (`signInWithOtp`/`verifyOtp`); user will provide the code location.
 4. ✅ **DONE 2026-07-29 — Emulator back to signed-in-as-owner** (via the
