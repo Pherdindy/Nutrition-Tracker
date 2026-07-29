@@ -1,4 +1,4 @@
-# Project Handoff — state as of 2026-07-28
+# Project Handoff — state as of 2026-07-29
 
 Cross-machine session state. **Agent: read this before doing anything; update
 it at the end of each working session.**
@@ -33,8 +33,9 @@ empty app, sees 0 owner rows (client RLS probe + server ledger both checked).
 - Email auth: Supabase issues **8-digit** OTP codes here; BOTH templates
   ("Confirm signup" — used for first-time addresses — AND "Magic Link")
   contain `{{ .Token }}`. Do not revert either.
-- ⚠️ **LAUNCH BLOCKER: built-in mailer rate limit (~4 emails/hour, per
-  PROJECT, not per user).** Custom SMTP required before real users.
+- ~~LAUNCH BLOCKER: built-in mailer rate limit~~ **RESOLVED 2026-07-29:**
+  custom SMTP via Resend is live (verified domain, delivery tested); email
+  rate limit raised in Authentication → Rate Limits.
 
 ## `transactions` table (NOT part of this app)
 
@@ -47,12 +48,11 @@ the agent at its code).
 
 ## Immediate next steps (user chose "do all of these")
 
-1. **Custom SMTP via Resend** (user owns a domain). User dashboard steps:
-   resend.com account → Domains → add + verify domain (3 DNS records) → API
-   key → Supabase Project Settings → Auth → SMTP: host `smtp.resend.com`,
-   port 465, username `resend`, password = API key, sender on the verified
-   domain → then Authentication → Rate Limits: raise email limit (e.g.
-   100/hr). Agent then re-tests OTP end-to-end.
+1. ✅ **DONE 2026-07-29 — Custom SMTP via Resend.** Domain verified in
+   Resend, API key wired into Supabase SMTP settings, OTP tested end-to-end
+   (code delivered via Resend, owner signed in on the emulator with it). The
+   per-project mailer rate-limit launch blocker is RESOLVED. If auth emails
+   ever misbehave: Resend dashboard → Emails shows delivery logs.
 2. **Google OAuth**: Google Cloud → OAuth consent screen (External, basic
    scopes, add owner as test user) → Web application client with redirect URI
    `https://wcbpvvyhswaricoadqbb.supabase.co/auth/v1/callback` → paste ID +
@@ -63,9 +63,8 @@ the agent at its code).
    Google sign-in links to the existing owner account (same UID).
 3. **Finance app sign-in** — reuse the OTP pattern from `www/app.js`
    (`signInWithOtp`/`verifyOtp`); user will provide the code location.
-4. **Emulator state at handoff:** signed OUT at the gate (mailer rate-limited
-   on 2026-07-27). Sign back in whenever; data re-downloads from Supabase.
-   (Task 9 checklist itself is fully passed — this is just device state.)
+4. ✅ **DONE 2026-07-29 — Emulator back to signed-in-as-owner** (via the
+   Resend-delivered code; 126 entries re-downloaded through per-user RLS).
 
 Known minor (accepted): offline onboarding has no retry; `AuthView.route()`
 is exported but unused (documentation value only). The dev machine still has
