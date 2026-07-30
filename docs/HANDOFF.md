@@ -82,6 +82,20 @@ the agent at its code).
    operational again, authenticated as the owner.
 4. ✅ **DONE 2026-07-29 — Emulator back to signed-in-as-owner** (via the
    Resend-delivered code; 126 entries re-downloaded through per-user RLS).
+5. **Finance app 2026-07-30 — Stock Journal REMOVED, Monthly Breakdown +
+   CSV export ADDED** (working tree on `feat/metering`, uncommitted). The
+   Stock Journal tab/modal and all `stock_trades` client code are gone from
+   `finance/` (the owner-scoped `stock_trades` table + any `ft_stock_trades`
+   localStorage were left untouched — data preserved, just no UI). New
+   "Monthly Breakdown" tab: year/type/category filters → per-month cards
+   listing EVERY transaction grouped by category with subtotals; "Export CSV"
+   there exports the filtered set, and a second "Export CSV" on the
+   Transactions tab exports ALL transactions (columns
+   Date,Type,Category,Subcategory,Description,Amount,Notes; UTF-8 BOM for
+   Excel). `fmtPct` + trade-only CSS removed; the stock-flavored
+   `finance-sync` test retitled (suite still 120). Verified via Node DOM-stub
+   smoke (render, filters, totals, CSV escaping) — not yet clicked through in
+   a live browser.
 
 Known minor (accepted): offline onboarding has no retry; `AuthView.route()`
 is exported but unused (documentation value only). The dev machine still has
