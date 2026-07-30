@@ -83,7 +83,9 @@ the agent at its code).
 4. ✅ **DONE 2026-07-29 — Emulator back to signed-in-as-owner** (via the
    Resend-delivered code; 126 entries re-downloaded through per-user RLS).
 5. **Finance app 2026-07-30 — Stock Journal REMOVED, Monthly Breakdown +
-   CSV export ADDED** (working tree on `feat/metering`, uncommitted). The
+   CSV export ADDED** (committed on `feat/metering` AND cherry-picked to
+   `main` as `2a0a2ec`, both pushed — main got only the finance work, the
+   metering changes stay on the branch pending verification). The
    Stock Journal tab/modal and all `stock_trades` client code are gone from
    `finance/` (the owner-scoped `stock_trades` table + any `ft_stock_trades`
    localStorage were left untouched — data preserved, just no UI). New
