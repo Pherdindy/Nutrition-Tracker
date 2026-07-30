@@ -489,6 +489,7 @@ Deno.serve(async (req) => {
   const { data: ent } = await admin.from("entitlements").select("plan").eq("user_id", uid).single();
   const plan = ent?.plan ?? "free";
   const planCfg = cfg.plans[plan === "owner" ? "t10" : plan]; // owner runs top-tier models
+  if (!planCfg) return json(503, { error: "misconfigured plan" }); // unknown plan name in entitlements
 
   // 3. Rate limit: ledger rows in the trailing 60s
   const minuteAgo = new Date(Date.now() - 60_000).toISOString();
@@ -561,7 +562,9 @@ Deno.serve(async (req) => {
 });
 ```
 
-  `parseEstimate(text)` is also ported from the client: the existing adapters parse the model's JSON reply into `{ cal_low, cal_high, pro_low, pro_high, macros }` — `grep -n "cal_low" www/app.js` locates the parsing block; move it verbatim (it already handles code-fence stripping).
+  `parseEstimate(text)` is also ported from the client: the existing adapters parse the model's JSON reply into `{ cal_low, cal_high, pro_low, pro_high, macros }` — `grep -n "cal_low" www/app.js` locates the parsing block; move it verbatim (it already handles code-fence stripping). ADDITION from Task 3 review: `parseEstimate` must return `null` when any of the four range fields is missing or non-finite — a partially-parsed estimate would poison the merge with NaN; a `null` correctly degrades to the single-model path.
+
+  Behavior notes locked by Task 3's review (already in `metering.mjs`): malformed usage objects land in `unpriced` (fail loudly, never NaN into billing); calorie and protein divergence widen their ranges independently; `quotaState` fails closed (`allowed:false, misconfigured:true`) on missing/zero allowance instead of throwing — the proxy's `!planCfg` 503 guard above fires first in the normal path.
 - [ ] **Step 3: Deploy** via MCP `deploy_edge_function` (project `wcbpvvyhswaricoadqbb`, slug `ai-proxy`, files: `index.ts` + `../_shared/metering.mjs`). Expected: success response with version.
 - [ ] **Step 4: Smoke the auth wall** — `curl -s -X POST https://wcbpvvyhswaricoadqbb.supabase.co/functions/v1/ai-proxy -H "Content-Type: application/json" -d '{"feature":"estimate","payload":{}}'`. Expected: `{"error":"unauthenticated"}` (or Supabase's own 401 envelope).
 - [ ] **Step 5: Commit** (`git add supabase/functions/ai-proxy/index.ts && git commit -m "feat(metering): ai-proxy edge function - dual-model pairs, quota, ledger"`).
