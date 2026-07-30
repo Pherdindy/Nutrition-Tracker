@@ -658,23 +658,33 @@ Deno.serve(async (req) => {
   const planCfg = cfg.plans[plan === "owner" ? "t10" : plan]; // owner runs top-tier models
   if (!planCfg) return json(503, { error: "misconfigured plan" }); // unknown plan name in entitlements
 
-  // 3. Rate limit: ledger rows in the trailing 60s
+  // 3. Rate limit: ledger rows in the trailing 60s. Fail closed — a metering
+  // outage must never mean free unmetered AI.
   const minuteAgo = new Date(Date.now() - 60_000).toISOString();
-  const { count: recent } = await admin.from("ai_usage")
+  const { count: recent, error: rateErr } = await admin.from("ai_usage")
     .select("id", { count: "exact", head: true })
     .eq("user_id", uid).gte("created_at", minuteAgo);
+  if (rateErr) {
+    console.error("rate-limit query failed", rateErr);
+    return json(503, { error: "not configured" });
+  }
   if (rateLimited(recent ?? 0, cfg.rate_per_min)) return json(429, { error: "rate limited" });
 
-  // 4. Quota pre-check
-  let usedQuery = admin.from("ai_usage").select("cost_usd").eq("user_id", uid);
-  if (!planCfg?.lifetime && plan !== "owner") {
+  // 4. Quota pre-check — summed SQL-side by the ai_usage_total RPC (a JS-side
+  // row fetch silently truncates at PostgREST max-rows, which would stop the
+  // lifetime cap from enforcing after ~1000 ledger rows). Fail closed on error.
+  let since: string | null = null;
+  if (!planCfg.lifetime && plan !== "owner") {
     const monthStart = new Date();
     monthStart.setUTCDate(1); monthStart.setUTCHours(0, 0, 0, 0);
-    usedQuery = usedQuery.gte("created_at", monthStart.toISOString());
+    since = monthStart.toISOString();
   }
-  const { data: rows } = await usedQuery;
-  const usedUsd = (rows ?? []).reduce((s: number, r: any) => s + Number(r.cost_usd), 0);
-  const quota = quotaState({ plan, planCfg, usedUsd });
+  const { data: usedTotal, error: usedErr } = await admin.rpc("ai_usage_total", { p_user: uid, p_since: since });
+  if (usedErr) {
+    console.error("usage-total rpc failed", usedErr);
+    return json(503, { error: "not configured" });
+  }
+  const quota = quotaState({ plan, planCfg, usedUsd: Number(usedTotal) });
   if (!quota.allowed) return json(402, { error: "quota exhausted", pct_used: quota.pctUsed });
 
   // 5. Model pair for this feature class
