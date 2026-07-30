@@ -835,38 +835,60 @@ select {
   opacity: 0.4;
 }
 
-/* ========== STOCK JOURNAL ========== */
+/* ========== MONTHLY BREAKDOWN ========== */
 
-.section-title {
-  font-size: 0.95rem;
-  font-weight: 600;
-  margin-bottom: 12px;
+.bd-month-card {
+  margin-bottom: 20px;
+}
+
+.bd-month-body {
+  padding: 8px 20px 16px;
+}
+
+.bd-cat {
+  margin-top: 16px;
+}
+
+.bd-cat-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 0;
+  border-bottom: 2px solid var(--border);
+}
+
+.bd-cat-name {
+  font-size: 0.9rem;
+  font-weight: 700;
   color: var(--text);
 }
 
-.stock-code {
-  font-weight: 700;
-  letter-spacing: 0.02em;
-  color: var(--primary);
-}
-
-.stock-date-detail {
-  font-size: 0.78rem;
+.bd-cat-meta {
+  font-size: 0.8rem;
   color: var(--text-dim);
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
 }
 
-.trade-compact {
-  font-size: 0.82rem;
-  line-height: 1.4;
+.bd-cat-subtotal {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
 }
 
-.trade-compact .trade-date {
-  font-weight: 500;
+.bd-table {
+  width: 100%;
 }
 
-.trade-compact .trade-price {
-  color: var(--text-secondary);
-  font-size: 0.78rem;
+.bd-table td,
+.bd-table th {
+  white-space: normal;
+  vertical-align: top;
+}
+
+.bd-no-sub {
+  color: var(--text-dim);
 }
 
 .detail-summary-bar {
@@ -917,24 +939,6 @@ select {
 /* Modal wide variant */
 .modal-wide {
   width: 620px;
-}
-
-.form-row-triple {
-  display: grid;
-  grid-template-columns: 1fr 1fr 1fr;
-  gap: 12px;
-}
-
-.form-divider {
-  border: none;
-  border-top: 1px solid var(--border);
-  margin: 8px 0 16px;
-}
-
-.label-hint {
-  color: var(--text-dim);
-  font-weight: 400;
-  font-size: 0.75rem;
 }
 
 /* ========== WEEKLY SNAPSHOT ========== */

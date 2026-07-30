@@ -7,7 +7,7 @@ const SUPABASE_ANON_KEY = 'sb_publishable_I_XmlCcMCBDOkbU8PWN42A_SID54xxi';
 const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 // ---- Auth gate ----
-// transactions/settings/stock_trades are locked to the owner account
+// transactions/settings are locked to the owner account
 // server-side (per-user RLS since 2026-07); Supabase reads/writes silently
 // fail until this app holds the owner's session.
 
@@ -37,7 +37,7 @@ async function gateVerifyCode() {
 
 window.financeSignOut = () => sb.auth.signOut().then(() => location.reload());
 
-const _cache = { transactions: null, categories: null, stockTrades: null, ready: false };
+const _cache = { transactions: null, categories: null, ready: false };
 
 // ---- Default Categories ----
 
@@ -227,64 +227,6 @@ function reconcileTransactionsWithCategories() {
   if (changedRows.length) persistTransactions(next, changedRows);
 }
 
-// ---- Stock Trade functions ----
-
-function loadStockTrades() {
-  if (_cache.ready && _cache.stockTrades) return [..._cache.stockTrades];
-  const saved = localStorage.getItem('ft_stock_trades');
-  return saved ? JSON.parse(saved) : [];
-}
-
-function saveStockTrade(trade) {
-  const list = loadStockTrades();
-  list.push(trade);
-  _cache.stockTrades = list;
-  localStorage.setItem('ft_stock_trades', JSON.stringify(list));
-  const tempId = trade.id;
-  bgWrite(async () => {
-    const { id, created_at, ...row } = trade;
-    const { data, error } = await sb.from('stock_trades').insert(row).select();
-    if (error) throw error;
-    if (data && data[0]) {
-      _cache.stockTrades = _cache.stockTrades.map(t => t.id === tempId ? data[0] : t);
-      localStorage.setItem('ft_stock_trades', JSON.stringify(_cache.stockTrades));
-    }
-  });
-}
-
-function updateStockTrade(trade) {
-  const list = loadStockTrades();
-  const idx = list.findIndex(t => t.id === trade.id);
-  if (idx === -1) return;
-  list[idx] = { ...trade };
-  _cache.stockTrades = list;
-  localStorage.setItem('ft_stock_trades', JSON.stringify(list));
-  bgWrite(async () => {
-    const { created_at, ...row } = trade;
-    const { error } = await sb.from('stock_trades').update(row).eq('id', trade.id);
-    if (error) throw error;
-  });
-}
-
-function deleteStockTrade(id) {
-  _cache.stockTrades = loadStockTrades().filter(t => t.id !== id);
-  localStorage.setItem('ft_stock_trades', JSON.stringify(_cache.stockTrades));
-  bgWrite(async () => {
-    const { error } = await sb.from('stock_trades').delete().eq('id', id);
-    if (error) throw error;
-  });
-}
-
-async function refreshStockTrades() {
-  const { data, error } = await sb.from('stock_trades').select('*').order('date_bought', { ascending: false });
-  if (!error && data) {
-    const local = JSON.parse(localStorage.getItem('ft_stock_trades') || '[]');
-    const merged = mergeById(data, local);
-    _cache.stockTrades = merged;
-    localStorage.setItem('ft_stock_trades', JSON.stringify(merged));
-  }
-}
-
 // ---- Init ----
 
 function mergeById(supaData, localData) {
@@ -322,28 +264,13 @@ async function initFromSupabase() {
     _cache.categories = loadCategories();
   }
 
-  // Stock trades
-  try {
-    const { data, error } = await sb.from('stock_trades').select('*').order('date_bought', { ascending: false });
-    const local = JSON.parse(localStorage.getItem('ft_stock_trades') || '[]');
-    if (!error && data) {
-      _cache.stockTrades = mergeById(data, local);
-    } else {
-      _cache.stockTrades = local;
-    }
-  } catch (e) {
-    _cache.stockTrades = JSON.parse(localStorage.getItem('ft_stock_trades') || '[]');
-  }
-  localStorage.setItem('ft_stock_trades', JSON.stringify(_cache.stockTrades));
-
   _cache.ready = true;
-  console.log(`[Supabase] Loaded ${_cache.transactions.length} txns, ${_cache.stockTrades.length} trades`);
+  console.log(`[Supabase] Loaded ${_cache.transactions.length} txns`);
 }
 
 function initFromLocalStorage() {
   _cache.transactions = JSON.parse(localStorage.getItem('ft_transactions') || '[]');
   _cache.categories = loadCategories();
-  _cache.stockTrades = JSON.parse(localStorage.getItem('ft_stock_trades') || '[]');
   _cache.ready = true;
 }
 
@@ -384,9 +311,6 @@ async function resyncOfflineData(snapshot) {
   await resyncTable('transactions', 'ft_transactions',
     ['date', 'type', 'category', 'subcategory', 'description', 'amount', 'notes'],
     snapshot.transactions, () => _cache.transactions, l => { _cache.transactions = l; });
-  await resyncTable('stock_trades', 'ft_stock_trades',
-    ['stock_code', 'date_bought', 'price_bought', 'shares_bought', 'buy_fees', 'date_sold', 'price_sold', 'shares_sold', 'sell_fees', 'notes'],
-    snapshot.stockTrades, () => _cache.stockTrades, l => { _cache.stockTrades = l; });
   // Categories: the local snapshot is the user's latest state on this device;
   // if it differs from what the server had, the local version wins.
   if (snapshot.categories) {
@@ -420,10 +344,6 @@ function escapeAttr(str) {
 
 function fmt(amount) {
   return Number(amount).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-}
-
-function fmtPct(val) {
-  return (val >= 0 ? '+' : '') + val.toFixed(2) + '%';
 }
 
 function currentMonth() {
@@ -504,9 +424,7 @@ function formatDateShort(dateStr) {
 let currentTab = 'transactions';
 let editingId = null;
 let deletingId = null;
-let deleteTarget = 'transaction'; // 'transaction' or 'trade'
 let catModalState = { mode: null, type: null, catName: null, subIdx: null };
-let editingTradeId = null;
 let currentSummaryContext = { txns: [], label: 'All Time', startDate: null, endDate: null };
 let activeExpenseDetailLabel = null;
 
@@ -683,7 +601,7 @@ function renderTransactions() {
         <td style="color:var(--text-secondary)">${escapeHtml(t.notes || '')}</td>
         <td><div class="actions">
           <button class="btn-icon" onclick="openEditModal(${t.id})">Edit</button>
-          <button class="btn-icon delete" onclick="openDeleteModal(${t.id},'transaction')">Del</button>
+          <button class="btn-icon delete" onclick="openDeleteModal(${t.id})">Del</button>
         </div></td>`;
       tbody.appendChild(tr);
     });
@@ -992,8 +910,169 @@ document.getElementById('manage-cats-modal').addEventListener('click', (e) => {
 });
 
 // ============================================================
-// RENDER — Stock Journal Tab
+// CSV EXPORT
 // ============================================================
+
+const CSV_HEADERS = ['Date', 'Type', 'Category', 'Subcategory', 'Description', 'Amount', 'Notes'];
+
+function csvEscape(value) {
+  const str = value === null || value === undefined ? '' : String(value);
+  return /[",\n\r]/.test(str) ? `"${str.replace(/"/g, '""')}"` : str;
+}
+
+function buildTransactionsCsv(txns) {
+  const rows = txns.map(t => [
+    t.date, t.type, t.category, t.subcategory || '', t.description,
+    Number(t.amount).toFixed(2), t.notes || ''
+  ]);
+  return [CSV_HEADERS, ...rows].map(row => row.map(csvEscape).join(',')).join('\r\n');
+}
+
+function downloadCsv(filename, csvText) {
+  // UTF-8 BOM so Excel detects the encoding
+  const blob = new Blob([String.fromCharCode(0xFEFF) + csvText], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+function exportAllTransactions() {
+  const txns = loadTransactions().slice().sort((a, b) => a.date.localeCompare(b.date));
+  if (!txns.length) { alert('No transactions to export.'); return; }
+  downloadCsv(`finance-transactions-all-${currentDateValue()}.csv`, buildTransactionsCsv(txns));
+}
+
+document.getElementById('export-all-btn').addEventListener('click', exportAllTransactions);
+
+// ============================================================
+// RENDER — Monthly Breakdown Tab
+// ============================================================
+
+const bdYearFilter = document.getElementById('bd-year-filter');
+const bdTypeFilter = document.getElementById('bd-type-filter');
+const bdCatFilter = document.getElementById('bd-cat-filter');
+
+function populateBreakdownYearOptions() {
+  const years = getTransactionYears();
+  const prev = bdYearFilter.value || String(new Date().getFullYear());
+  bdYearFilter.innerHTML = years.map(y => `<option value="${y}">${y}</option>`).join('');
+  bdYearFilter.value = years.includes(Number(prev)) ? prev : String(years[0] || new Date().getFullYear());
+}
+
+function populateBreakdownCategoryOptions() {
+  const type = bdTypeFilter.value;
+  // Union of configured categories and any category still on a transaction
+  // (e.g. Uncategorized) so nothing is filterable-out of existence.
+  const names = new Set(Object.keys(loadCategories()[type] || {}));
+  loadTransactions().forEach(t => { if (t.type === type && t.category) names.add(t.category); });
+  const prev = bdCatFilter.value;
+  bdCatFilter.innerHTML = '<option value="">All Categories</option>' +
+    [...names].sort((a, b) => a.localeCompare(b)).map(c => `<option value="${escapeAttr(c)}">${escapeHtml(c)}</option>`).join('');
+  bdCatFilter.value = names.has(prev) ? prev : '';
+}
+
+function getBreakdownTransactions() {
+  const year = bdYearFilter.value;
+  const type = bdTypeFilter.value;
+  const category = bdCatFilter.value;
+  return loadTransactions().filter(t =>
+    t.date && t.date.startsWith(year) && t.type === type && (!category || t.category === category));
+}
+
+function renderBreakdown() {
+  populateBreakdownYearOptions();
+  populateBreakdownCategoryOptions();
+  const txns = getBreakdownTransactions();
+  const type = bdTypeFilter.value;
+  const sign = type === 'income' ? '+' : '-';
+  const amountClass = type === 'income' ? 'positive' : 'negative';
+
+  const total = txns.reduce((s, t) => s + Number(t.amount), 0);
+  document.getElementById('bd-totals').innerHTML = `
+    <div class="total-card"><div class="total-label">${bdYearFilter.value} ${type === 'income' ? 'Income' : 'Expenses'}${bdCatFilter.value ? ` — ${escapeHtml(bdCatFilter.value)}` : ''}</div>
+    <div class="total-value ${amountClass}">${fmt(total)}</div></div>
+    <div class="total-card"><div class="total-label">Transactions</div><div class="total-value">${txns.length}</div></div>`;
+
+  // month "YYYY-MM" → category → txns
+  const byMonth = {};
+  txns.forEach(t => {
+    const month = t.date.slice(0, 7);
+    if (!byMonth[month]) byMonth[month] = {};
+    const cat = t.category || 'Other';
+    if (!byMonth[month][cat]) byMonth[month][cat] = [];
+    byMonth[month][cat].push(t);
+  });
+
+  const months = Object.keys(byMonth).sort((a, b) => b.localeCompare(a));
+  let html = '';
+  months.forEach(month => {
+    const { year, monthIndex } = parseMonthValue(month);
+    const cats = Object.entries(byMonth[month])
+      .map(([cat, list]) => ({ cat, list, subtotal: list.reduce((s, t) => s + Number(t.amount), 0) }))
+      .sort((a, b) => b.subtotal - a.subtotal);
+    const monthTotal = cats.reduce((s, c) => s + c.subtotal, 0);
+    const monthCount = cats.reduce((s, c) => s + c.list.length, 0);
+
+    let catsHtml = '';
+    cats.forEach(({ cat, list, subtotal }) => {
+      const rows = list
+        .sort((a, b) => b.date.localeCompare(a.date) || Number(b.amount) - Number(a.amount))
+        .map(t => `
+          <tr>
+            <td>${formatDateShort(t.date)}</td>
+            <td>${t.subcategory ? escapeHtml(t.subcategory) : '<span class="bd-no-sub">—</span>'}</td>
+            <td>${escapeHtml(t.description)}</td>
+            <td class="num ${amountClass}">${sign}${fmt(t.amount)}</td>
+            <td style="color:var(--text-secondary)">${escapeHtml(t.notes || '')}</td>
+          </tr>`).join('');
+      catsHtml += `
+        <div class="bd-cat">
+          <div class="bd-cat-header">
+            <span class="bd-cat-name">${escapeHtml(cat)}</span>
+            <span class="bd-cat-meta">${list.length} transaction${list.length === 1 ? '' : 's'}
+              <span class="bd-cat-subtotal ${amountClass}">${sign}${fmt(subtotal)}</span></span>
+          </div>
+          <table class="bd-table">
+            <thead><tr><th>Date</th><th>Subcategory</th><th>Description</th><th class="num">Amount</th><th>Notes</th></tr></thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>`;
+    });
+
+    html += `
+      <div class="snap-month-card bd-month-card">
+        <div class="snap-month-header">
+          <h3 class="snap-month-name">${formatMonthLabel(year, monthIndex)}</h3>
+          <div class="snap-month-totals">
+            <span>${monthCount} transaction${monthCount === 1 ? '' : 's'}</span>
+            <span class="${amountClass}">${sign}${fmt(monthTotal)}</span>
+          </div>
+        </div>
+        <div class="bd-month-body">${catsHtml}</div>
+      </div>`;
+  });
+
+  document.getElementById('bd-months').innerHTML = html ||
+    `<div class="empty-state"><div class="empty-state-icon">&#128202;</div>No ${type} transactions for ${bdYearFilter.value}</div>`;
+}
+
+function exportBreakdownCsv() {
+  const txns = getBreakdownTransactions()
+    .sort((a, b) => a.date.localeCompare(b.date) || (a.category || '').localeCompare(b.category || ''));
+  if (!txns.length) { alert('Nothing to export for this filter.'); return; }
+  const catPart = bdCatFilter.value ? `-${bdCatFilter.value.replace(/[^a-z0-9]+/gi, '_')}` : '';
+  downloadCsv(`finance-${bdTypeFilter.value}-${bdYearFilter.value}${catPart}.csv`, buildTransactionsCsv(txns));
+}
+
+bdYearFilter.addEventListener('change', render);
+bdTypeFilter.addEventListener('change', () => { populateBreakdownCategoryOptions(); bdCatFilter.value = ''; render(); });
+bdCatFilter.addEventListener('change', render);
+document.getElementById('bd-export-btn').addEventListener('click', exportBreakdownCsv);
 
 // ---- Summary detail modal ----
 
@@ -1008,81 +1087,6 @@ expenseBreakdownTableBody.addEventListener('click', e => {
 
 document.getElementById('expense-detail-close').addEventListener('click', closeExpenseDetailModal);
 expenseDetailModal.querySelector('.modal-overlay').addEventListener('click', closeExpenseDetailModal);
-
-function renderStocks() {
-  const trades = loadStockTrades();
-  const open = trades.filter(t => !t.date_sold);
-  const closed = trades.filter(t => t.date_sold);
-
-  // Summary
-  let totalInvested = 0, totalRealizedPL = 0, totalFees = 0, wins = 0;
-  open.forEach(t => { totalInvested += Number(t.price_bought) * Number(t.shares_bought); totalFees += Number(t.buy_fees || 0); });
-  closed.forEach(t => {
-    const buyAmt = Number(t.price_bought) * Number(t.shares_bought);
-    const sellAmt = Number(t.price_sold) * Number(t.shares_sold || t.shares_bought);
-    const fees = Number(t.buy_fees || 0) + Number(t.sell_fees || 0);
-    const net = sellAmt - buyAmt - fees;
-    totalRealizedPL += net;
-    totalFees += fees;
-    if (net > 0) wins++;
-  });
-  const winRate = closed.length > 0 ? (wins / closed.length * 100) : 0;
-
-  document.getElementById('stock-summary-cards').innerHTML = `
-    <div class="summary-card"><div class="card-label">Open Invested</div><div class="card-value">${fmt(totalInvested)}</div></div>
-    <div class="summary-card"><div class="card-label">Realized P&L</div><div class="card-value ${totalRealizedPL >= 0 ? 'positive' : 'negative'}">${totalRealizedPL >= 0 ? '+' : ''}${fmt(totalRealizedPL)}</div></div>
-    <div class="summary-card"><div class="card-label">Win Rate</div><div class="card-value">${winRate.toFixed(0)}% <span style="font-size:0.8rem;color:var(--text-dim)">(${wins}/${closed.length})</span></div></div>`;
-
-  // Open positions
-  const openTbody = document.getElementById('open-positions-tbody');
-  if (!open.length) {
-    openTbody.innerHTML = `<tr><td colspan="7"><div class="empty-state">No open positions</div></td></tr>`;
-  } else {
-    openTbody.innerHTML = open.map(t => {
-      const buyAmt = Number(t.price_bought) * Number(t.shares_bought);
-      return `<tr>
-        <td class="stock-code">${escapeHtml(t.stock_code)}</td>
-        <td>${formatDateShort(t.date_bought)}</td>
-        <td class="num">${fmt(t.price_bought)}</td>
-        <td class="num">${Number(t.shares_bought).toLocaleString()}</td>
-        <td class="num">${fmt(buyAmt)}</td>
-        <td class="num">${fmt(t.buy_fees || 0)}</td>
-        <td><div class="actions">
-          <button class="btn-icon" onclick="openEditTradeModal(${t.id})">Edit</button>
-          <button class="btn-icon delete" onclick="openDeleteModal(${t.id},'trade')">Del</button>
-        </div></td></tr>`;
-    }).join('');
-  }
-
-  // Trade history
-  const histTbody = document.getElementById('trade-history-tbody');
-  if (!closed.length) {
-    histTbody.innerHTML = `<tr><td colspan="9"><div class="empty-state">No completed trades</div></td></tr>`;
-  } else {
-    histTbody.innerHTML = closed.sort((a, b) => b.date_sold.localeCompare(a.date_sold)).map(t => {
-      const buyAmt = Number(t.price_bought) * Number(t.shares_bought);
-      const shares = Number(t.shares_sold || t.shares_bought);
-      const sellAmt = Number(t.price_sold) * shares;
-      const gross = sellAmt - buyAmt;
-      const fees = Number(t.buy_fees || 0) + Number(t.sell_fees || 0);
-      const net = gross - fees;
-      const pct = buyAmt > 0 ? (net / buyAmt * 100) : 0;
-      return `<tr>
-        <td class="stock-code">${escapeHtml(t.stock_code)}</td>
-        <td class="trade-compact"><div class="trade-date">${formatDateShort(t.date_bought)}</div><div class="trade-price">@ ${fmt(t.price_bought)}</div></td>
-        <td class="trade-compact"><div class="trade-date">${formatDateShort(t.date_sold)}</div><div class="trade-price">@ ${fmt(t.price_sold)}</div></td>
-        <td class="num">${shares.toLocaleString()}</td>
-        <td class="num ${gross >= 0 ? 'positive' : 'negative'}">${gross >= 0 ? '+' : ''}${fmt(gross)}</td>
-        <td class="num">${fmt(fees)}</td>
-        <td class="num ${net >= 0 ? 'positive' : 'negative'}">${net >= 0 ? '+' : ''}${fmt(net)}</td>
-        <td class="num ${pct >= 0 ? 'positive' : 'negative'}">${fmtPct(pct)}</td>
-        <td><div class="actions">
-          <button class="btn-icon" onclick="openEditTradeModal(${t.id})">Edit</button>
-          <button class="btn-icon delete" onclick="openDeleteModal(${t.id},'trade')">Del</button>
-        </div></td></tr>`;
-    }).join('');
-  }
-}
 
 // ---- Manage Categories Modal ----
 
@@ -1103,7 +1107,7 @@ function render() {
   renderTransactions();
   renderSummary();
   renderWeeklySnapshot();
-  renderStocks();
+  renderBreakdown();
 }
 
 // ============================================================
@@ -1176,16 +1180,15 @@ document.getElementById('txn-save').addEventListener('click', () => {
 });
 
 // ============================================================
-// DELETE MODAL (shared for transactions & trades)
+// DELETE MODAL
 // ============================================================
 
 const deleteModal = document.getElementById('delete-modal');
 
-function openDeleteModal(id, target) {
+function openDeleteModal(id) {
   deletingId = id;
-  deleteTarget = target;
-  document.getElementById('delete-modal-title').textContent = target === 'trade' ? 'Delete Trade' : 'Delete Transaction';
-  document.getElementById('delete-modal-msg').textContent = `Are you sure you want to delete this ${target}?`;
+  document.getElementById('delete-modal-title').textContent = 'Delete Transaction';
+  document.getElementById('delete-modal-msg').textContent = 'Are you sure you want to delete this transaction?';
   deleteModal.classList.remove('hidden');
 }
 
@@ -1196,8 +1199,7 @@ deleteModal.querySelector('.modal-overlay').addEventListener('click', closeDelet
 
 document.getElementById('delete-confirm').addEventListener('click', () => {
   if (deletingId !== null) {
-    if (deleteTarget === 'trade') deleteStockTrade(deletingId);
-    else deleteTransaction(deletingId);
+    deleteTransaction(deletingId);
     closeDeleteModal(); render();
   }
 });
@@ -1246,82 +1248,6 @@ function saveCatModal() {
 }
 
 // ============================================================
-// STOCK TRADE MODAL
-// ============================================================
-
-const tradeModal = document.getElementById('trade-modal');
-const tradeFields = {
-  stock: document.getElementById('trade-stock'),
-  dateBought: document.getElementById('trade-date-bought'),
-  priceBought: document.getElementById('trade-price-bought'),
-  sharesBought: document.getElementById('trade-shares-bought'),
-  buyFees: document.getElementById('trade-buy-fees'),
-  dateSold: document.getElementById('trade-date-sold'),
-  priceSold: document.getElementById('trade-price-sold'),
-  sharesSold: document.getElementById('trade-shares-sold'),
-  sellFees: document.getElementById('trade-sell-fees'),
-  notes: document.getElementById('trade-notes'),
-};
-
-function openAddTradeModal() {
-  editingTradeId = null;
-  document.getElementById('trade-modal-title').textContent = 'Add Trade';
-  tradeFields.stock.value = '';
-  tradeFields.dateBought.value = new Date().toISOString().slice(0, 10);
-  tradeFields.priceBought.value = ''; tradeFields.sharesBought.value = ''; tradeFields.buyFees.value = '';
-  tradeFields.dateSold.value = ''; tradeFields.priceSold.value = ''; tradeFields.sharesSold.value = '';
-  tradeFields.sellFees.value = ''; tradeFields.notes.value = '';
-  tradeModal.classList.remove('hidden');
-}
-
-function openEditTradeModal(id) {
-  const trade = loadStockTrades().find(t => t.id === id); if (!trade) return;
-  editingTradeId = id;
-  document.getElementById('trade-modal-title').textContent = 'Edit Trade';
-  tradeFields.stock.value = trade.stock_code;
-  tradeFields.dateBought.value = trade.date_bought;
-  tradeFields.priceBought.value = trade.price_bought;
-  tradeFields.sharesBought.value = trade.shares_bought;
-  tradeFields.buyFees.value = trade.buy_fees || '';
-  tradeFields.dateSold.value = trade.date_sold || '';
-  tradeFields.priceSold.value = trade.price_sold || '';
-  tradeFields.sharesSold.value = trade.shares_sold || '';
-  tradeFields.sellFees.value = trade.sell_fees || '';
-  tradeFields.notes.value = trade.notes || '';
-  tradeModal.classList.remove('hidden');
-}
-
-function closeTradeModal() { tradeModal.classList.add('hidden'); editingTradeId = null; }
-
-document.getElementById('add-trade-btn').addEventListener('click', openAddTradeModal);
-document.getElementById('trade-cancel').addEventListener('click', closeTradeModal);
-tradeModal.querySelector('.modal-overlay').addEventListener('click', closeTradeModal);
-
-document.getElementById('trade-save').addEventListener('click', () => {
-  const stock_code = tradeFields.stock.value.trim().toUpperCase();
-  const date_bought = tradeFields.dateBought.value;
-  const price_bought = parseFloat(tradeFields.priceBought.value);
-  const shares_bought = parseFloat(tradeFields.sharesBought.value);
-  const buy_fees = parseFloat(tradeFields.buyFees.value) || 0;
-  const date_sold = tradeFields.dateSold.value || null;
-  const price_sold = tradeFields.priceSold.value ? parseFloat(tradeFields.priceSold.value) : null;
-  const shares_sold = tradeFields.sharesSold.value ? parseFloat(tradeFields.sharesSold.value) : null;
-  const sell_fees = parseFloat(tradeFields.sellFees.value) || 0;
-  const notes = tradeFields.notes.value.trim() || null;
-
-  if (!stock_code || !date_bought || isNaN(price_bought) || isNaN(shares_bought) || price_bought <= 0 || shares_bought <= 0) {
-    alert('Please fill in stock code, date bought, price, and shares.'); return;
-  }
-
-  const trade = { stock_code, date_bought, price_bought, shares_bought, buy_fees, date_sold, price_sold, shares_sold, sell_fees, notes };
-
-  if (editingTradeId !== null) { trade.id = editingTradeId; updateStockTrade(trade); }
-  else { trade.id = Date.now(); saveStockTrade(trade); }
-
-  closeTradeModal(); render();
-});
-
-// ============================================================
 // KEYBOARD
 // ============================================================
 
@@ -1331,7 +1257,6 @@ document.addEventListener('keydown', e => {
     if (!deleteModal.classList.contains('hidden')) closeDeleteModal();
     if (!catModal.classList.contains('hidden')) closeCatModal();
     if (!expenseDetailModal.classList.contains('hidden')) closeExpenseDetailModal();
-    if (!tradeModal.classList.contains('hidden')) closeTradeModal();
     if (!manageCatsModal.classList.contains('hidden')) closeManageCatsModal();
   }
 });
@@ -1349,7 +1274,6 @@ async function startApp() {
   // server-preferred data, which would erase the record of offline changes.
   const snapshot = {
     transactions: localStorage.getItem('ft_transactions'),
-    stockTrades: localStorage.getItem('ft_stock_trades'),
     categories: localStorage.getItem('ft_categories'),
   };
   populateCategories();

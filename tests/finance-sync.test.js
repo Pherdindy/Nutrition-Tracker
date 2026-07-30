@@ -61,11 +61,11 @@ test("planResync: server-only rows are reported, never deleted", () => {
   assert.equal(plan.updates.length, 0);
 });
 
-test("planResync: empty server means everything inserts (stock_trades bootstrap)", () => {
+test("planResync: empty server means everything inserts (first-sync bootstrap)", () => {
   const local = [
-    { id: 111, stock_code: "ALI", date_bought: "2026-06-01", price_bought: 30, shares_bought: 100 },
-    { id: 222, stock_code: "BDO", date_bought: "2026-06-05", price_bought: 150, shares_bought: 10 },
+    { id: 111, date: "2026-06-01", type: "expense", category: "Groceries", amount: 30 },
+    { id: 222, date: "2026-06-05", type: "income", category: "Salary", amount: 150 },
   ];
-  const plan = FS.planResync([], local, ["stock_code", "date_bought", "price_bought", "shares_bought"]);
+  const plan = FS.planResync([], local, ["date", "type", "category", "amount"]);
   assert.equal(plan.inserts.length, 2);
 });
