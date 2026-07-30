@@ -39,7 +39,8 @@ async function callAi(feature, payload) {
     const status = error.context?.status ?? 500;
     throw { status, message: BillingView.aiErrorMessage(status) };
   }
-  if (typeof refreshCreditBar === "function") refreshCreditBar(); // defined in Task 7
+  try { if (typeof refreshCreditBar === "function") refreshCreditBar(); } // defined in Task 7
+  catch (e) { /* UI refresh must never fail the call */ }
   return data;
 }
 
@@ -580,20 +581,33 @@ async function runEstimateQueue() {
         filled = est && est.macros ? est.macros : null;
       } catch (err) {
         errStatus = err && err.status;
+        console.error("[AI] estimate failed:", err);
       }
       // Reload fresh AFTER the await so a concurrent user edit isn't overwritten.
       const fresh = loadFoodEntries();
       const t = fresh.find((e) => e.id === id);
-      if (!t) continue; // entry deleted while estimate was in flight
-      if (filled) {
-        if (!t.macros) t.macros = {};
-        for (const mid of ids) if (filled[mid]) t.macros[mid] = filled[mid];
-        t.estimateStatus = ids.every((mid) => filled[mid]) ? "done" : "error";
-      } else {
-        t.estimateStatus = "error";
+      // Quota exhausted (402): every remaining attempt would fail the same way —
+      // fail the rest of the queue without burning proxy calls, then show the
+      // paywall once. 429 is transient, so it does NOT drain: remaining entries
+      // keep their own attempts.
+      const drained = errStatus === 402 ? _estimateQueue.splice(0, _estimateQueue.length) : [];
+      for (const qid of drained) {
+        const q = fresh.find((e) => e.id === qid);
+        if (q && q.estimateStatus === "pending") q.estimateStatus = "error";
       }
-      saveFoodEntries(fresh);
-      renderFoodTable(); renderCalorieTracker();
+      if (t) { // current entry may have been deleted while the estimate was in flight
+        if (filled) {
+          if (!t.macros) t.macros = {};
+          for (const mid of ids) if (filled[mid]) t.macros[mid] = filled[mid];
+          t.estimateStatus = ids.every((mid) => filled[mid]) ? "done" : "error";
+        } else {
+          t.estimateStatus = "error";
+        }
+      }
+      if (t || drained.length) {
+        saveFoodEntries(fresh);
+        renderFoodTable(); renderCalorieTracker();
+      }
       if (errStatus === 402 && typeof openPaywall === "function") openPaywall(); // defined in Task 7
     }
   } finally { _estimateRunning = false; }
