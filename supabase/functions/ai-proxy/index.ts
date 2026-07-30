@@ -681,7 +681,11 @@ Deno.serve(async (req) => {
   const featureClass = feature.startsWith("assess") ? "assess" : feature;
   const [modelA, modelB] = planCfg.models[featureClass];
   for (const m of [modelA, modelB]) {
-    if (!cfg.prices[m]) return json(503, { error: `unpriced model ${m}` });
+    if (!cfg.prices[m]) {
+      // Spec: model names never reach the client — log the id, return generic.
+      console.error("unpriced model", m);
+      return json(503, { error: "not configured" });
+    }
   }
 
   // 6. Build prompts (ported verbatim from the pre-B client)
@@ -702,7 +706,11 @@ Deno.serve(async (req) => {
 
   // 8. Meter with real usage
   const { costUsd, unpriced } = computeCost(okA?.usage ?? null, okB?.usage ?? null, cfg.prices);
-  if (unpriced.length) return json(503, { error: `unpriced model ${unpriced[0]}` });
+  if (unpriced.length) {
+    // Spec: model names never reach the client — log the id, return generic.
+    console.error("unpriced model", unpriced[0]);
+    return json(503, { error: "not configured" });
+  }
   const ledger = {
     user_id: uid, feature,
     model_a: (okA ?? okB)!.usage.model, model_b: okA && okB ? okB.usage.model : null,
