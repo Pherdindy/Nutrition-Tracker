@@ -31,6 +31,18 @@ const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
   auth: { flowType: "pkce", persistSession: true, autoRefreshToken: true, detectSessionInUrl: true },
 });
 
+// All AI goes through the ai-proxy Edge Function; the server owns keys,
+// models, prompts, and metering. Throws { status, message } on failure.
+async function callAi(feature, payload) {
+  const { data, error } = await sb.functions.invoke("ai-proxy", { body: { feature, payload } });
+  if (error) {
+    const status = error.context?.status ?? 500;
+    throw { status, message: BillingView.aiErrorMessage(status) };
+  }
+  if (typeof refreshCreditBar === "function") refreshCreditBar(); // defined in Task 7
+  return data;
+}
+
 const _cache = { food: null, days: null, profile: null, assessments: null, settings: {}, ready: false };
 
 // ---- Mappers: snake_case DB ↔ camelCase JS ----
@@ -562,11 +574,12 @@ async function runEstimateQueue() {
         if (t) { t.estimateStatus = "manual"; saveFoodEntries(fresh); }
         continue;
       }
-      let filled = null, noKey = false;
+      let filled = null, errStatus = null;
       try {
-        filled = await estimateEntry(entry, ids);
+        const est = await callAi("estimate", { food: entry.food, qty: entry.qty, unit: entry.unit });
+        filled = est && est.macros ? est.macros : null;
       } catch (err) {
-        noKey = err && err.message === "no-api-key";
+        errStatus = err && err.status;
       }
       // Reload fresh AFTER the await so a concurrent user edit isn't overwritten.
       const fresh = loadFoodEntries();
@@ -577,10 +590,11 @@ async function runEstimateQueue() {
         for (const mid of ids) if (filled[mid]) t.macros[mid] = filled[mid];
         t.estimateStatus = ids.every((mid) => filled[mid]) ? "done" : "error";
       } else {
-        t.estimateStatus = noKey ? "manual" : "error";
+        t.estimateStatus = "error";
       }
       saveFoodEntries(fresh);
       renderFoodTable(); renderCalorieTracker();
+      if (errStatus === 402 && typeof openPaywall === "function") openPaywall(); // defined in Task 7
     }
   } finally { _estimateRunning = false; }
 }
@@ -689,27 +703,9 @@ function escapeHtml(str) {
 // ============================================================
 // MULTI-AI PROVIDER INTEGRATION
 // ============================================================
-
-function buildSystemPromptEstimate(ids) {
-  return `You are a precise nutrition database assistant. You base estimates on USDA FoodData Central, nutrition labels, and established food composition databases. Be consistent and deterministic.
-
-Respond with ONLY a JSON object (no markdown fences) in this exact format:
-{
-  "reasoning": "<step-by-step reasoning; not shown to the user>",
-${Macros.promptFields(ids)}
-}
-Units: calories in kcal, sodium in mg, all other macros in grams.`;
-}
-function buildSystemPromptReconcile(ids) {
-  return `You are a precise nutrition database assistant performing a reconciliation review. Two models disagreed. Analyze both, decide which is closer to database values, and return corrected values.
-
-Respond with ONLY a JSON object (no markdown fences) in this exact format:
-{
-  "reasoning": "<analysis; not shown to the user>",
-${Macros.promptFields(ids)}
-}
-Units: calories in kcal, sodium in mg, all other macros in grams.`;
-}
+// Estimates and photo reads now go through the ai-proxy Edge Function (callAi).
+// The PROVIDERS metadata and the helpers below remain only for the Diet
+// Assessment path and the provider settings UI (both removed/swapped in Task 7).
 
 // GPT-5+ and reasoning models use max_completion_tokens (includes thinking tokens) and don't support temperature
 function openaiModelParams(model, tokens) {
@@ -744,73 +740,6 @@ const PROVIDERS = [
     ],
     defaultPrimary: "gpt-5-mini",
     defaultSecondary: "gpt-5.2",
-    call: async (food, qty, unit, apiKey, model, ids) => {
-      const prompt = buildEstimatePrompt(food, qty, unit);
-      const res = await fetch("https://api.openai.com/v1/chat/completions", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${apiKey}`,
-        },
-        body: JSON.stringify({
-          model,
-          messages: [
-            { role: "system", content: buildSystemPromptEstimate(ids) },
-            { role: "user", content: prompt },
-          ],
-          ...openaiModelParams(model, 500),
-        }),
-      });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err.error?.message || `OpenAI API error ${res.status}`);
-      }
-      const data = await res.json();
-      return parseAIResponse(extractOpenAIContent(data), ids);
-    },
-    callReconciliation: async (food, qty, unit, apiKey, model, round1Results, ids) => {
-      const prompt = buildReconciliationPrompt(food, qty, unit, round1Results, ids);
-      const res = await fetch("https://api.openai.com/v1/chat/completions", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${apiKey}`,
-        },
-        body: JSON.stringify({
-          model,
-          messages: [
-            { role: "system", content: buildSystemPromptReconcile(ids) },
-            { role: "user", content: prompt },
-          ],
-          ...openaiModelParams(model, 600),
-        }),
-      });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err.error?.message || `OpenAI API error ${res.status}`);
-      }
-      const data = await res.json();
-      return parseAIResponse(extractOpenAIContent(data), ids);
-    },
-    callVision: async (apiKey, model, b64, mime, systemPrompt, userText) => {
-      const res = await fetch("https://api.openai.com/v1/chat/completions", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
-        body: JSON.stringify({
-          model,
-          messages: [
-            { role: "system", content: systemPrompt },
-            { role: "user", content: [
-              { type: "text", text: userText },
-              { type: "image_url", image_url: { url: `data:${mime};base64,${b64}` } },
-            ] },
-          ],
-          ...openaiModelParams(model, 1500),
-        }),
-      });
-      if (!res.ok) { const err = await res.json().catch(() => ({})); throw new Error(err.error?.message || `OpenAI API error ${res.status}`); }
-      return extractOpenAIContent(await res.json());
-    },
   },
   {
     id: "anthropic",
@@ -823,126 +752,8 @@ const PROVIDERS = [
     ],
     defaultPrimary: "claude-haiku-4-5-20251001",
     defaultSecondary: "claude-opus-4-6",
-    call: async (food, qty, unit, apiKey, model, ids) => {
-      const prompt = buildEstimatePrompt(food, qty, unit);
-      const res = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-api-key": apiKey,
-          "anthropic-version": "2023-06-01",
-          "anthropic-dangerous-direct-browser-access": "true",
-        },
-        body: JSON.stringify({
-          model,
-          max_tokens: 500,
-          messages: [
-            { role: "user", content: prompt },
-          ],
-          system: buildSystemPromptEstimate(ids),
-          temperature: 0,
-        }),
-      });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err.error?.message || `Claude API error ${res.status}`);
-      }
-      const data = await res.json();
-      return parseAIResponse(data.content[0].text, ids);
-    },
-    callReconciliation: async (food, qty, unit, apiKey, model, round1Results, ids) => {
-      const prompt = buildReconciliationPrompt(food, qty, unit, round1Results, ids);
-      const res = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-api-key": apiKey,
-          "anthropic-version": "2023-06-01",
-          "anthropic-dangerous-direct-browser-access": "true",
-        },
-        body: JSON.stringify({
-          model,
-          max_tokens: 600,
-          messages: [
-            { role: "user", content: prompt },
-          ],
-          system: buildSystemPromptReconcile(ids),
-          temperature: 0,
-        }),
-      });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err.error?.message || `Claude API error ${res.status}`);
-      }
-      const data = await res.json();
-      return parseAIResponse(data.content[0].text, ids);
-    },
-    callVision: async (apiKey, model, b64, mime, systemPrompt, userText) => {
-      const res = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01", "anthropic-dangerous-direct-browser-access": "true" },
-        body: JSON.stringify({
-          model, max_tokens: 1500,
-          messages: [ { role: "user", content: [
-            { type: "text", text: userText },
-            { type: "image", source: { type: "base64", media_type: mime, data: b64 } },
-          ] } ],
-          system: systemPrompt, temperature: 0,
-        }),
-      });
-      if (!res.ok) { const err = await res.json().catch(() => ({})); throw new Error(err.error?.message || `Claude API error ${res.status}`); }
-      const data = await res.json();
-      if (data.stop_reason === "max_tokens") throw new Error("Response truncated (token limit) — try a simpler photo");
-      const block = data.content && data.content[0];
-      if (!block || block.type !== "text") throw new Error("Empty or non-text response from Claude");
-      return block.text;
-    },
   },
 ];
-
-function buildEstimatePrompt(food, qty, unit) {
-  return `Estimate the nutritional content of this food:
-
-Food: ${food}
-Quantity: ${qty} ${unit}
-
-Instructions:
-1. Identify the exact food item and its standard preparation method
-2. Reference USDA FoodData Central or manufacturer nutrition data where possible
-3. Calculate per-unit nutritional values, then scale to the given quantity
-4. For well-known items with nutrition labels, use tight ranges (lower ≈ upper)
-5. For variable items (restaurant food, home-cooked), widen ranges but stay evidence-based
-6. Show your reasoning step by step in the "reasoning" field`;
-}
-
-function buildReconciliationPrompt(food, qty, unit, round1Results, ids) {
-  const estimateLines = round1Results.map((r) => {
-    const parts = ids.map((id) => {
-      const m = Macros.byId(id);
-      return `${m.label} ${r.data[id + "_lower"]}-${r.data[id + "_upper"]} ${m.unit}`;
-    }).join(", ");
-    return `${r.providerName} estimated: ${parts}`;
-  }).join("\n");
-  return `Two AI models estimated nutrition for this food and disagreed. Review and provide corrected values.
-
-Food: ${food}
-Quantity: ${qty} ${unit}
-
-Prior estimates:
-${estimateLines}
-
-Provide your single reconciled best estimate as the JSON object specified.`;
-}
-
-function parseAIResponse(content, ids) {
-  const cleaned = content.trim().replace(/```json?\s*/g, "").replace(/```/g, "").trim();
-  let parsed;
-  try { parsed = JSON.parse(cleaned); }
-  catch (e) { throw new Error(`Invalid JSON from AI: ${e.message}`); }
-  const flat = {};
-  Macros.macroFields(ids).forEach((f) => { flat[f] = parsed[f] == null ? null : Number(parsed[f]); });
-  return flat;
-}
 
 // --- Provider Settings ---
 
@@ -1041,58 +852,12 @@ function applyTheme() {
   }
 }
 
-// --- Macro-aware estimation engine ---
-
-async function estimateEntry(entry, ids) {
-  const active = PROVIDERS.filter((p) => getProviderSettings(p.id).apiKey.length > 0);
-  if (!active.length) throw new Error("no-api-key");
-
-  const round1 = await Promise.all(active.map(async (p) => {
-    const s = getProviderSettings(p.id);
-    try { return { providerId: p.id, providerName: p.name, data: await p.call(entry.food, entry.qty, entry.unit, s.apiKey, s.primaryModel, ids) }; }
-    catch { return { providerId: p.id, providerName: p.name, data: null }; }
-  }));
-  let ok = round1.filter((r) => r.data);
-  if (!ok.length) throw new Error("all-providers-failed");
-
-  let flat;
-  if (ok.length === 1 || getEstimationMode() === "single") {
-    flat = Macros.averageEstimates(ok.map((r) => r.data), ids);
-  } else if (Macros.spread(ok.map((r) => r.data), ids) <= getSpreadThreshold()) {
-    flat = Macros.averageEstimates(ok.map((r) => r.data), ids);
-  } else {
-    const MAX = 5; let prev = ok;
-    for (let round = 2; round <= MAX; round++) {
-      const recon = await Promise.all(active
-        .filter((p) => prev.some((s) => s.providerId === p.id))
-        .map(async (p) => {
-          const s = getProviderSettings(p.id);
-          try { return { providerId: p.id, providerName: p.name, data: await p.callReconciliation(entry.food, entry.qty, entry.unit, s.apiKey, s.secondaryModel, prev, ids) }; }
-          catch { return { providerId: p.id, providerName: p.name, data: null }; }
-        }));
-      const rok = recon.filter((r) => r.data);
-      if (!rok.length) break;
-      prev = rok;
-      if (prev.length === 1) break; // only one provider left — no point reconciling with itself
-      if (Macros.spread(rok.map((r) => r.data), ids) <= getSpreadThreshold()) break;
-    }
-    flat = Macros.averageEstimates(prev.map((r) => r.data), ids);
-  }
-  return Macros.parseMacros(flat, ids); // {id:{low,high}}
-}
+// --- AI estimation (via ai-proxy) ---
 
 async function estimatePhoto(image, history) {
-  const provider = getVisionProvider();
-  if (!provider) throw new Error("no-api-key");
-  const ids = getEnabledMacros();
-  const settings = getProviderSettings(provider.id);
-  const text = await provider.callVision(
-    settings.apiKey, settings.primaryModel,
-    image.base64, image.mimeType,
-    PhotoEstimate.buildVisionSystemPrompt(ids),
-    PhotoEstimate.buildVisionUserText(history),
-  );
-  return PhotoEstimate.parseVisionResponse(text, ids);
+  // hint carries the same {priorItems, correction} object the correction loop builds (null on first read)
+  const imageDataUrl = `data:${image.mimeType};base64,${image.base64}`;
+  return callAi("photo", { imageDataUrl, hint: history }); // -> {items, ai_thought_process}
 }
 
 async function capturePhoto() {
@@ -1159,14 +924,14 @@ async function runPhotoEstimate() {
     setPhotoStatus(items.length ? "" : "No foods detected.");
     renderPhotoItems();
   } catch (e) {
-    setPhotoStatus(e.message === "no-api-key" ? "No vision provider key — add one in Targets." : "Couldn't read that photo — try again or add manually.", true);
+    setPhotoStatus((e && e.message) || "Couldn't read that photo — try again or add manually.", true);
+    if (e && e.status === 402 && typeof openPaywall === "function") openPaywall(); // defined in Task 7
   } finally {
     document.getElementById("photo-correct-submit").disabled = false;
   }
 }
 async function startPhotoCapture() {
   if (!document.getElementById("photo-modal").classList.contains("hidden")) return; // already open
-  if (!getVisionProvider()) { alert("Add an AI provider API key in Targets to use photo capture."); return; }
   const image = await capturePhoto();
   if (!image) return;
   _photoImage = image; _photoHistory = null;
