@@ -664,6 +664,12 @@ Deno.serve(async (req) => {
     return json(503, { error: "not configured" });
   }
   const quota = quotaState({ plan, planCfg, usedUsd: Number(usedTotal) });
+  // A plan whose allowance is missing/zero is an owner config mistake — that's
+  // an outage (503), not a paywall (402); matches the RPC's `misconfigured`.
+  if (quota.misconfigured) {
+    console.error("misconfigured plan allowance", plan);
+    return json(503, { error: "not configured" });
+  }
   if (!quota.allowed) return json(402, { error: "quota exhausted", pct_used: quota.pctUsed });
 
   // 5. Model pair for this feature class

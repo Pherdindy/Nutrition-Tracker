@@ -1,9 +1,21 @@
 import test from "node:test";
 import assert from "node:assert";
+import { createRequire } from "node:module";
 import {
+  MACRO_IDS,
   extractEstimateFields, toNestedMacros, partialNestedMacros,
   mergeItemPair, mergePhotoItems, foodsAlign,
 } from "../supabase/functions/_shared/proxy-shapes.mjs";
+
+const require = createRequire(import.meta.url);
+const Macros = require("../www/macros.js");
+
+test("MACRO_IDS stays in parity with the client's macros.js CATALOG", () => {
+  // proxy-shapes.mjs hardcodes the id list server-side; www/macros.js CATALOG
+  // is the client truth. This fails loudly if the two ever drift.
+  const clientIds = Macros.CATALOG.map((m) => m.id);
+  assert.deepEqual([...MACRO_IDS].sort(), [...clientIds].sort());
+});
 
 // Complete flat item helper: calories 100-200, protein 10-20 (+ overrides).
 function flatItem(food, extra = {}) {
