@@ -6,6 +6,9 @@ revoke all on ai_usage from public, anon, authenticated;
 grant select on ai_usage to authenticated;
 revoke all on entitlements from public, anon, authenticated;
 grant select on entitlements to authenticated;
+-- Sequence grants are separate from table grants (Supabase defaults cover
+-- sequences too; UPDATE on a sequence = setval(), which could brick inserts).
+revoke all on sequence ai_usage_id_seq from public, anon, authenticated;
 revoke execute on function ai_usage_summary() from public, anon;
 grant execute on function ai_usage_summary() to authenticated;
 
@@ -51,6 +54,9 @@ end $$;
 --   generation; all three take text+image input (vision), per the models docs.
 --   (App's gpt-5-mini / gpt-5.2 are prior generations; luna/terra/sol are the
 --   modern equivalents.)
+-- WARNING: re-applying this seed RESETS live config edits (kill switch,
+-- tuned prices/limits, temporary plans). Part A is safe to re-run; Part B
+-- overwrites the whole ai_config row.
 insert into ai_config (id, value) values (1, '{
   "enabled": true,
   "rate_per_min": 10,
