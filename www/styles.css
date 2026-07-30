@@ -331,62 +331,6 @@ select {
   max-width: 95vw;
 }
 
-/* Manual mode */
-.manual-step {
-  margin-bottom: 18px;
-}
-
-.manual-step-label {
-  font-weight: 600;
-  font-size: 0.88rem;
-  margin-bottom: 8px;
-  color: var(--text);
-}
-
-.manual-prompt-actions {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
-.manual-prompt-preview {
-  background: var(--surface2);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 12px;
-  font-size: 0.72rem;
-  line-height: 1.4;
-  max-height: 200px;
-  overflow-y: auto;
-  white-space: pre-wrap;
-  word-break: break-word;
-  margin-top: 6px;
-}
-
-.manual-textarea {
-  width: 100%;
-  min-height: 150px;
-  background: var(--surface2);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 12px;
-  font-family: 'Fira Mono', 'Consolas', monospace;
-  font-size: 0.78rem;
-  color: var(--text);
-  resize: vertical;
-}
-
-.manual-textarea:focus {
-  border-color: var(--primary);
-  outline: none;
-}
-
-.manual-error {
-  color: var(--red);
-  font-size: 0.78rem;
-  margin-top: 6px;
-}
-
 .form-row {
   margin-bottom: 14px;
 }
@@ -542,19 +486,7 @@ input[type="password"]:focus {
   font-size: 0.82rem;
 }
 
-/* Provider settings */
-.provider-section {
-  margin-bottom: 20px;
-  padding-bottom: 16px;
-  border-bottom: 1px solid var(--border);
-}
-
-.provider-section:last-child {
-  margin-bottom: 0;
-  padding-bottom: 0;
-  border-bottom: none;
-}
-
+/* Settings section headings (used by the macro settings card) */
 .provider-name {
   font-size: 0.92rem;
   font-weight: 600;
@@ -562,18 +494,72 @@ input[type="password"]:focus {
   margin-bottom: 10px;
 }
 
-.key-row {
-  display: flex;
-  gap: 8px;
-}
-
-.key-row input[type="password"] {
-  flex: 1;
-}
-
 .btn-sm {
   padding: 6px 14px;
   font-size: 0.8rem;
+}
+
+/* AI usage credit bar (Targets tab) */
+.credit-bar-track {
+  width: 100%;
+  height: 8px;
+  background: var(--border, #333);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+#credit-bar-fill {
+  height: 100%;
+  width: 0;
+  border-radius: 4px;
+  transition: width .3s;
+}
+
+#credit-bar-fill.ok { background: var(--green); }
+#credit-bar-fill.warn { background: var(--yellow); }
+#credit-bar-fill.full { background: var(--red); }
+#credit-bar-fill.unknown { background: var(--text-dim); }
+
+#credit-bar-label {
+  margin-top: 8px;
+  font-size: 0.8rem;
+  color: var(--text-dim);
+}
+
+/* Paywall modal */
+.paywall-tiers {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 18px;
+}
+
+.paywall-tier {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.paywall-price {
+  min-width: 48px;
+  font-size: 1.3rem;
+  font-weight: 700;
+  color: var(--primary);
+}
+
+.paywall-tier p {
+  flex: 1;
+  margin: 0;
+  color: var(--text-dim);
+  font-size: 0.85rem;
+}
+
+.paywall-tier .btn[disabled] {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 
 /* Validation panel */
@@ -681,28 +667,6 @@ input[type="password"]:focus {
 
 .delta-same {
   color: var(--text-dim);
-}
-
-/* Spread summary */
-.spread-summary {
-  font-size: 0.82rem;
-  padding: 6px 0;
-  color: var(--text);
-}
-
-.spread-r1 {
-  color: var(--red);
-  font-weight: 600;
-}
-
-.spread-r2 {
-  color: var(--green);
-  font-weight: 600;
-}
-
-.spread-improved {
-  color: var(--green);
-  font-size: 0.78rem;
 }
 
 /* Final values row */
@@ -1721,12 +1685,6 @@ body.loading::after {
   #calorie-target input,
   #calorie-target select,
   #calorie-target .btn { min-height: 44px; font-size: 16px; }  /* 16px avoids mobile zoom; 44px tap target */
-}
-
-/* Contain the dense provider/validation settings blocks on mobile */
-@media (max-width: 720px) {
-  #provider-settings, #validation-settings { border: 1px solid var(--border, #2e3345); border-radius: 10px; }
-  #provider-settings > *:first-child, #validation-settings > *:first-child { padding: 12px; }
 }
 
 .score-card { padding: 16px; display: flex; flex-direction: column; gap: 12px; align-items: stretch; }

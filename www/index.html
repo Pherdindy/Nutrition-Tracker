@@ -138,9 +138,12 @@
           <p class="settings-hint">New here? Replay the quick tour of the app.</p>
           <button type="button" id="tutorial-replay-btn" class="btn btn-secondary">How to use</button>
         </div>
-        <div id="provider-settings"></div>
+        <div id="credit-bar-card" class="settings-card">
+          <h2>AI usage</h2>
+          <div class="credit-bar-track"><div id="credit-bar-fill"></div></div>
+          <p id="credit-bar-label"></p>
+        </div>
         <div id="macro-settings"></div>
-        <div id="validation-settings"></div>
         <div id="account-settings"></div>
       </div>
     </section>
@@ -252,15 +255,6 @@
         </form>
       </div>
     </div>
-    <!-- MANUAL MODE MODAL -->
-    <div id="manual-modal" class="modal hidden">
-      <div class="modal-overlay"></div>
-      <div class="modal-content modal-wide">
-        <h2 id="manual-modal-title">Manual Mode</h2>
-        <div id="manual-modal-body"></div>
-      </div>
-    </div>
-
     <!-- PHOTO MODAL -->
     <div id="photo-modal" class="modal hidden">
       <div class="modal-overlay"></div>
@@ -277,6 +271,34 @@
           <button type="button" class="btn btn-secondary" id="photo-cancel">Cancel</button>
           <button type="button" class="btn btn-secondary" id="photo-correct-toggle">Correct</button>
           <button type="button" class="btn btn-primary" id="photo-confirm">Confirm all</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- PAYWALL MODAL -->
+    <div id="paywall-modal" class="modal hidden">
+      <div class="modal-overlay"></div>
+      <div class="modal-content">
+        <h2>You've used your free AI credit</h2>
+        <div class="paywall-tiers">
+          <div class="paywall-tier">
+            <span class="paywall-price">$3</span>
+            <p>more AI credits &middot; smarter models</p>
+            <button type="button" class="btn btn-primary btn-sm" disabled>Coming soon</button>
+          </div>
+          <div class="paywall-tier">
+            <span class="paywall-price">$5</span>
+            <p>even more credits &middot; stronger models</p>
+            <button type="button" class="btn btn-primary btn-sm" disabled>Coming soon</button>
+          </div>
+          <div class="paywall-tier">
+            <span class="paywall-price">$10</span>
+            <p>most credits &middot; the best models</p>
+            <button type="button" class="btn btn-primary btn-sm" disabled>Coming soon</button>
+          </div>
+        </div>
+        <div class="modal-actions">
+          <button type="button" class="btn btn-secondary" id="paywall-dismiss">Keep logging manually</button>
         </div>
       </div>
     </div>

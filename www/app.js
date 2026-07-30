@@ -39,9 +39,39 @@ async function callAi(feature, payload) {
     const status = error.context?.status ?? 500;
     throw { status, message: BillingView.aiErrorMessage(status) };
   }
-  try { if (typeof refreshCreditBar === "function") refreshCreditBar(); } // defined in Task 7
+  try { if (typeof refreshCreditBar === "function") refreshCreditBar(); }
   catch (e) { /* UI refresh must never fail the call */ }
   return data;
+}
+
+// ---- AI credit bar + paywall (metering UI) ----
+
+let _aiExhausted = false;
+
+async function refreshCreditBar() {
+  try {
+    const { data } = await sb.rpc("ai_usage_summary");
+    if (!data || data.error) return;
+    const vm = BillingView.creditBar(data.pct_used, data.plan);
+    const fill = document.getElementById("credit-bar-fill");
+    if (!fill) return;
+    fill.style.width = vm.width;
+    fill.className = vm.cls;
+    document.getElementById("credit-bar-label").textContent = `${vm.label} · ${vm.planLabel}`;
+    _aiExhausted = !!data.exhausted;
+  } catch (e) { /* offline: keep last state */ }
+}
+
+// Idempotent: a 402 landing while the modal is already up is a no-op.
+function openPaywall() {
+  const modal = document.getElementById("paywall-modal");
+  if (!modal || !modal.classList.contains("hidden")) return;
+  modal.classList.remove("hidden");
+}
+
+function closePaywall() {
+  const modal = document.getElementById("paywall-modal");
+  if (modal) modal.classList.add("hidden");
 }
 
 const _cache = { food: null, days: null, profile: null, assessments: null, settings: {}, ready: false };
@@ -556,6 +586,19 @@ const _estimateQueue = [];
 let _estimateRunning = false;
 
 function enqueueEstimate(entryId) {
+  if (_aiExhausted) {
+    // Credit exhausted: the entry is already saved (manual logging untouched) —
+    // don't burn a proxy call; mark it retryable and show the paywall instead.
+    const entries = loadFoodEntries();
+    const t = entries.find((e) => e.id === entryId);
+    if (t && t.estimateStatus === "pending") {
+      t.estimateStatus = "error";
+      saveFoodEntries(entries);
+      renderFoodTable(); renderCalorieTracker();
+    }
+    openPaywall();
+    return;
+  }
   if (!_estimateQueue.includes(entryId)) _estimateQueue.push(entryId);
   runEstimateQueue();
 }
@@ -608,7 +651,7 @@ async function runEstimateQueue() {
         saveFoodEntries(fresh);
         renderFoodTable(); renderCalorieTracker();
       }
-      if (errStatus === 402 && typeof openPaywall === "function") openPaywall(); // defined in Task 7
+      if (errStatus === 402 && typeof openPaywall === "function") openPaywall();
     }
   } finally { _estimateRunning = false; }
 }
@@ -715,112 +758,8 @@ function escapeHtml(str) {
 }
 
 // ============================================================
-// MULTI-AI PROVIDER INTEGRATION
+// SETTINGS (key-value: _cache.settings + localStorage + Supabase)
 // ============================================================
-// Estimates and photo reads now go through the ai-proxy Edge Function (callAi).
-// The PROVIDERS metadata and the helpers below remain only for the Diet
-// Assessment path and the provider settings UI (both removed/swapped in Task 7).
-
-// GPT-5+ and reasoning models use max_completion_tokens (includes thinking tokens) and don't support temperature
-function openaiModelParams(model, tokens) {
-  if (model.startsWith("gpt-5") || model.startsWith("o1") || model.startsWith("o3") || model.startsWith("o4")) {
-    // Reasoning models need much higher limits — thinking/reasoning tokens count against the budget
-    return { max_completion_tokens: Math.max(tokens * 8, 8000) };
-  }
-  return { max_tokens: tokens, temperature: 0 };
-}
-
-function extractOpenAIContent(data) {
-  const choice = data.choices && data.choices[0];
-  if (!choice) throw new Error("No response from OpenAI");
-  if (choice.finish_reason === "length") {
-    throw new Error("Response truncated (token limit reached) — try a simpler query or fewer items");
-  }
-  const content = choice.message && choice.message.content;
-  if (!content) throw new Error("Empty response from OpenAI");
-  return content;
-}
-
-const PROVIDERS = [
-  {
-    id: "openai",
-    name: "OpenAI",
-    keyName: "nt_key_openai",
-    models: [
-      { id: "gpt-5-mini", label: "GPT-5 Mini" },
-      { id: "gpt-5.2", label: "GPT-5.2" },
-      { id: "gpt-4o-mini", label: "GPT-4o Mini (legacy)" },
-      { id: "gpt-4o", label: "GPT-4o (legacy)" },
-    ],
-    defaultPrimary: "gpt-5-mini",
-    defaultSecondary: "gpt-5.2",
-  },
-  {
-    id: "anthropic",
-    name: "Claude",
-    keyName: "nt_key_anthropic",
-    models: [
-      { id: "claude-haiku-4-5-20251001", label: "Haiku 4.5" },
-      { id: "claude-sonnet-4-5-20250929", label: "Sonnet 4.5" },
-      { id: "claude-opus-4-6", label: "Opus 4.6" },
-    ],
-    defaultPrimary: "claude-haiku-4-5-20251001",
-    defaultSecondary: "claude-opus-4-6",
-  },
-];
-
-// --- Provider Settings ---
-
-function getProviderSettings(providerId) {
-  const provider = PROVIDERS.find((p) => p.id === providerId);
-  if (!provider) return {};
-  return {
-    apiKey: localStorage.getItem(provider.keyName) || "",
-    primaryModel: _cache.settings[`${providerId}_primary`] || localStorage.getItem(`nt_${providerId}_primary`) || provider.defaultPrimary,
-    secondaryModel: _cache.settings[`${providerId}_secondary`] || localStorage.getItem(`nt_${providerId}_secondary`) || provider.defaultSecondary,
-    mode: _cache.settings[`${providerId}_mode`] || localStorage.getItem(`nt_${providerId}_mode`) || "api",
-  };
-}
-
-function saveProviderMode(providerId, mode) {
-  const key = `${providerId}_mode`;
-  _cache.settings[key] = mode;
-  localStorage.setItem(`nt_${providerId}_mode`, mode);
-  bgWrite(async () => {
-    const { error } = await sb.from('settings').upsert({ key, value: mode });
-    if (error) throw error;
-  });
-}
-
-function saveProviderKey(providerId, key) {
-  const provider = PROVIDERS.find((p) => p.id === providerId);
-  if (provider) localStorage.setItem(provider.keyName, key);
-  // API keys stay in localStorage only — never sent to Supabase
-}
-
-function saveProviderModel(providerId, role, modelId) {
-  const key = `${providerId}_${role}`;
-  _cache.settings[key] = modelId;
-  localStorage.setItem(`nt_${providerId}_${role}`, modelId);
-  bgWrite(async () => {
-    const { error } = await sb.from('settings').upsert({ key, value: modelId });
-    if (error) throw error;
-  });
-}
-
-function getSpreadThreshold() {
-  if (_cache.settings['spread_threshold']) return parseFloat(_cache.settings['spread_threshold']);
-  return parseFloat(localStorage.getItem("nt_spread_threshold") || "15");
-}
-
-function saveSpreadThreshold(val) {
-  _cache.settings['spread_threshold'] = String(val);
-  localStorage.setItem("nt_spread_threshold", String(val));
-  bgWrite(async () => {
-    const { error } = await sb.from('settings').upsert({ key: 'spread_threshold', value: String(val) });
-    if (error) throw error;
-  });
-}
 
 function getSetting(key, fallback) {
   if (_cache.settings[key] != null) return _cache.settings[key];
@@ -845,14 +784,6 @@ function getEnabledMacros() {
 function setEnabledMacros(ids) { setSetting("macros_enabled", JSON.stringify(Macros.resolveEnabled(ids))); }
 function getValueFormat() { return getSetting("value_format", "single") === "range" ? "range" : "single"; }
 function setValueFormat(fmt) { setSetting("value_format", fmt === "range" ? "range" : "single"); }
-function getEstimationMode() { return getSetting("estimation_mode", "reconcile") === "single" ? "single" : "reconcile"; }
-function setEstimationMode(mode) { setSetting("estimation_mode", mode === "single" ? "single" : "reconcile"); }
-function getVisionProvider() {
-  const pref = getSetting("vision_provider", "");
-  const withKeys = PROVIDERS.filter((p) => getProviderSettings(p.id).apiKey.length > 0);
-  return withKeys.find((p) => p.id === pref) || withKeys[0] || null;
-}
-function setVisionProvider(id) { setSetting("vision_provider", id); }
 function getTheme() { const t = getSetting("theme", "dark"); return (t === "light" || t === "system") ? t : "dark"; }
 function setTheme(t) { setSetting("theme", (t === "light" || t === "system") ? t : "dark"); }
 function applyTheme() {
@@ -939,12 +870,13 @@ async function runPhotoEstimate() {
     renderPhotoItems();
   } catch (e) {
     setPhotoStatus((e && e.message) || "Couldn't read that photo — try again or add manually.", true);
-    if (e && e.status === 402 && typeof openPaywall === "function") openPaywall(); // defined in Task 7
+    if (e && e.status === 402 && typeof openPaywall === "function") openPaywall();
   } finally {
     document.getElementById("photo-correct-submit").disabled = false;
   }
 }
 async function startPhotoCapture() {
+  if (_aiExhausted) { openPaywall(); return; }
   if (!document.getElementById("photo-modal").classList.contains("hidden")) return; // already open
   const image = await capturePhoto();
   if (!image) return;
@@ -992,87 +924,12 @@ async function signOut() {
   finally { wipe(); location.reload(); } // re-clear: catch writes that raced the network call
 }
 
-function renderProviderSettings() {
-  const container = document.getElementById("provider-settings");
-  if (!container) return;
-
-  let html = '<div class="settings-card"><h2>AI Providers</h2>';
-  html += '<p style="font-size:0.78rem;color:var(--text-dim);margin-bottom:16px;">API keys are stored locally in your browser. Food estimation always uses the API. Diet Assessment can use API or Manual mode (free — paste into your subscription).</p>';
-
-  for (const provider of PROVIDERS) {
-    const settings = getProviderSettings(provider.id);
-    html += `<div class="provider-section">`;
-    html += `<h3 class="provider-name">${escapeHtml(provider.name)}</h3>`;
-
-    // API key (always shown — needed for food estimation)
-    html += `<div class="form-row">
-      <label for="key-${provider.id}">API Key</label>
-      <div class="key-row">
-        <input type="password" id="key-${provider.id}" value="${escapeHtml(settings.apiKey)}" placeholder="${provider.id === 'openai' ? 'sk-...' : 'sk-ant-...'}">
-        <button class="btn btn-primary btn-sm" onclick="saveProviderKeyUI('${provider.id}')">Save</button>
-      </div>
-    </div>`;
-
-    // Primary model
-    html += `<div class="form-row">
-      <label for="primary-${provider.id}">Primary model (fast/cheap)</label>
-      <select id="primary-${provider.id}" onchange="saveProviderModelUI('${provider.id}','primary',this.value)">`;
-    for (const m of provider.models) {
-      html += `<option value="${m.id}" ${settings.primaryModel === m.id ? 'selected' : ''}>${escapeHtml(m.label)}</option>`;
-    }
-    html += `</select></div>`;
-
-    // Secondary model
-    html += `<div class="form-row">
-      <label for="secondary-${provider.id}">Secondary model (reconciliation)</label>
-      <select id="secondary-${provider.id}" onchange="saveProviderModelUI('${provider.id}','secondary',this.value)">`;
-    for (const m of provider.models) {
-      html += `<option value="${m.id}" ${settings.secondaryModel === m.id ? 'selected' : ''}>${escapeHtml(m.label)}</option>`;
-    }
-    html += `</select></div>`;
-
-    // Diet Assessment mode toggle
-    html += `<div class="form-row">
-      <label for="mode-${provider.id}">Diet Assessment mode</label>
-      <select id="mode-${provider.id}" onchange="saveProviderModeUI('${provider.id}',this.value)">
-        <option value="api" ${settings.mode === 'api' ? 'selected' : ''}>API (automatic)</option>
-        <option value="manual" ${settings.mode === 'manual' ? 'selected' : ''}>Manual (free — use your subscription)</option>
-      </select>
-    </div>`;
-
-    html += `</div>`;
-  }
-
-  html += '</div>';
-  container.innerHTML = html;
-
-  // Validation settings
-  const valContainer = document.getElementById("validation-settings");
-  if (!valContainer) return;
-
-  const threshold = getSpreadThreshold();
-  let valHtml = '<div class="settings-card"><h2>Validation Settings</h2>';
-  valHtml += `<div class="form-row">
-    <label for="spread-threshold">Spread threshold</label>
-    <select id="spread-threshold" onchange="saveSpreadThresholdUI(this.value)">
-      <option value="5" ${threshold === 5 ? 'selected' : ''}>5%</option>
-      <option value="10" ${threshold === 10 ? 'selected' : ''}>10%</option>
-      <option value="15" ${threshold === 15 ? 'selected' : ''}>15%</option>
-      <option value="20" ${threshold === 20 ? 'selected' : ''}>20%</option>
-    </select>
-  </div>`;
-  valHtml += '<p style="font-size:0.78rem;color:var(--text-dim);">If any nutrition field\'s spread between providers exceeds this threshold, models reconcile using their secondary (smarter) models.</p>';
-  valHtml += '</div>';
-  valContainer.innerHTML = valHtml;
-}
-
 function renderMacroSettings() {
   const c = document.getElementById("macro-settings");
   if (!c) return;
   const enabled = new Set(getEnabledMacros());
   const fmt = getValueFormat();
-  const mode = getEstimationMode();
-  let html = '<div class="settings-card"><h2>Macros &amp; estimation</h2>';
+  let html = '<div class="settings-card"><h2>Macros &amp; display</h2>';
   html += '<h3 class="provider-name">Macros to track</h3><div class="macro-toggle-list">';
   for (const m of Macros.CATALOG) {
     const checked = enabled.has(m.id) ? "checked" : "";
@@ -1083,16 +940,6 @@ function renderMacroSettings() {
   html += `<div class="form-row"><label>Value format</label><select id="set-value-format">
     <option value="single" ${fmt === "single" ? "selected" : ""}>Single value</option>
     <option value="range" ${fmt === "range" ? "selected" : ""}>Low–high range</option></select></div>`;
-  html += `<div class="form-row"><label>Estimation</label><select id="set-estimation-mode">
-    <option value="reconcile" ${mode === "reconcile" ? "selected" : ""}>Dual-AI cross-check (accurate)</option>
-    <option value="single" ${mode === "single" ? "selected" : ""}>Single fast call</option></select></div>`;
-  const visionId = (getVisionProvider() || {}).id || "";
-  html += `<div class="form-row"><label>Photo (vision) provider</label><select id="set-vision-provider">`;
-  html += PROVIDERS.map((p) => {
-    const hasKey = getProviderSettings(p.id).apiKey.length > 0;
-    return `<option value="${escapeHtml(p.id)}" ${p.id === visionId ? "selected" : ""}>${escapeHtml(p.name)}${hasKey ? "" : " (no key)"}</option>`;
-  }).join("");
-  html += `</select></div>`;
   const _theme = getTheme();
   html += `<div class="form-row"><label>Theme</label><select id="set-theme">
     <option value="dark" ${_theme === "dark" ? "selected" : ""}>Dark</option>
@@ -1107,256 +954,13 @@ function renderMacroSettings() {
     renderFoodTable();
   }));
   c.querySelector("#set-value-format").addEventListener("change", (e) => { setValueFormat(e.target.value); renderFoodTable(); });
-  c.querySelector("#set-estimation-mode").addEventListener("change", (e) => setEstimationMode(e.target.value));
-  const vp = c.querySelector("#set-vision-provider");
-  if (vp) vp.addEventListener("change", (e) => setVisionProvider(e.target.value));
   const _ts = c.querySelector("#set-theme");
   if (_ts) _ts.addEventListener("change", (e) => { setTheme(e.target.value); applyTheme(); });
 }
 
-window.saveProviderKeyUI = function (providerId) {
-  const input = document.getElementById(`key-${providerId}`);
-  if (input) {
-    saveProviderKey(providerId, input.value.trim());
-    alert(`${PROVIDERS.find((p) => p.id === providerId)?.name || providerId} API key saved!`);
-  }
-};
-
-window.saveProviderModelUI = function (providerId, role, modelId) {
-  saveProviderModel(providerId, role, modelId);
-};
-
-window.saveSpreadThresholdUI = function (val) {
-  saveSpreadThreshold(parseFloat(val));
-};
-
-window.saveProviderModeUI = function (providerId, mode) {
-  saveProviderMode(providerId, mode);
-  renderProviderSettings();
-  renderMacroSettings();
-};
-
 // ============================================================
 // DIET ASSESSMENT
 // ============================================================
-
-const SYSTEM_PROMPT_DIET_ASSESSMENT = `You are a registered dietitian analyzing a food diary. Evaluate the diet based on the food log provided. Be specific and evidence-based.
-
-CRITICAL for calorie_assessment: The user may be on a calorie deficit plan. You will be given per-day data: each day's activity level, TDEE (total daily energy expenditure = maintenance calories), planned deficit, calorie intake target (= TDEE minus deficit), and actual calories eaten. TDEE varies daily based on activity (gym day vs sedentary day). Use these definitions:
-- "surplus" = eating ABOVE TDEE (would gain weight). Only use this if intake consistently exceeds TDEE.
-- "on_target" = eating near the calorie intake target (within ~10% of target), still well below TDEE
-- "deficit" = eating significantly below the calorie intake target (undereating beyond the planned deficit)
-Being slightly above the intake target but still well below TDEE is NOT a surplus — it just means the deficit is smaller than planned. Compare intake to EACH DAY'S TDEE individually, not to an average.
-
-Food group status definitions:
-- "missing" = literally zero foods from this group in the entire period
-- "critically_low" = trace amounts present but far below recommended (e.g. a splash of milk in coffee for dairy, a small garnish of vegetables)
-- "low" = some intake but still below recommended servings
-- "adequate" = meeting or near recommended servings
-- "good" = meeting or exceeding recommended servings consistently
-
-IMPORTANT: Keep your response concise to stay within token limits. The reasoning field should be brief (3-5 sentences max). Keep summaries to 1-2 sentences. Limit concerns, suggestions, and positive_observations to 3-4 items each.
-
-You MUST respond with ONLY a JSON object (no markdown fences, no extra text) in this exact format:
-{
-  "reasoning": "<brief analysis: key findings on food groups, macros, and calorie intake vs TDEE and target>",
-  "overall_score": <1-10 integer>,
-  "calorie_assessment": {
-    "score": <1-10>,
-    "status": "<deficit|on_target|surplus>",
-    "summary": "<brief explanation referencing both TDEE and intake target>"
-  },
-  "protein_assessment": {
-    "score": <1-10>,
-    "status": "<deficient|adequate|good|excellent>",
-    "summary": "<brief explanation>"
-  },
-  "food_groups": {
-    "fruits": { "score": <1-10>, "servings_estimated": <number>, "recommended": <number>, "status": "<missing|critically_low|low|adequate|good>" },
-    "vegetables": { "score": <1-10>, "servings_estimated": <number>, "recommended": <number>, "status": "<missing|critically_low|low|adequate|good>" },
-    "whole_grains": { "score": <1-10>, "servings_estimated": <number>, "recommended": <number>, "status": "<missing|critically_low|low|adequate|good>" },
-    "lean_protein": { "score": <1-10>, "servings_estimated": <number>, "recommended": <number>, "status": "<missing|critically_low|low|adequate|good>" },
-    "dairy_calcium": { "score": <1-10>, "servings_estimated": <number>, "recommended": <number>, "status": "<missing|critically_low|low|adequate|good>" },
-    "healthy_fats": { "score": <1-10>, "servings_estimated": <number>, "recommended": <number>, "status": "<missing|critically_low|low|adequate|good>" }
-  },
-  "fiber_assessment": {
-    "estimated_daily_g": <number>,
-    "recommended_daily_g": <number>,
-    "status": "<deficient|low|adequate|good>"
-  },
-  "concerns": ["<specific concern 1>", "<specific concern 2>"],
-  "suggestions": [
-    { "food": "<specific food>", "reason": "<why>", "when": "<meal timing suggestion>" }
-  ],
-  "positive_observations": ["<what is going well 1>", "<what is going well 2>"],
-  "action_plan": {
-    "daily_targets": [
-      { "group": "<food group name>", "current": <current daily servings number>, "target": <recommended daily servings number>, "add": "<what to add>" }
-    ],
-    "grocery_add": [
-      {
-        "category": "<category name, e.g. Leafy Greens>",
-        "weekly_target": "<total weekly target, e.g. 14 cups cooked (2-3 bundles)>",
-        "pick": "<how many to pick, e.g. Pick 2-3 varieties>",
-        "options": [
-          { "item": "<specific food>", "portion": "<serving size + weekly qty>", "note": "<brief benefit or tip>" }
-        ]
-      }
-    ],
-    "grocery_keep": [
-      {
-        "category": "<category name, e.g. Protein>",
-        "options": [
-          { "item": "<food (optimal version)>", "portion": "<weekly quantity>", "note": "<upgrade tip if any>" }
-        ]
-      }
-    ],
-    "stop_and_replace": [
-      { "stop": "<food to reduce or stop>", "why": "<health reason>", "replace_with": "<better alternative>" }
-    ],
-    "sourcing_guide": [
-      { "food": "<food item>", "risk": "<contamination or quality risk>", "what_to_look_for": "<PH buying tips>" }
-    ],
-    "meal_ideas": ["<simple meal or snack idea>"]
-  }
-}
-
-IMPORTANT for action_plan:
-- daily_targets: Include ALL food groups that can be improved — missing, critically_low, low, AND adequate groups that could reach optimal. Only skip groups already at "good" with no room to improve. "current" is estimated daily average servings from the food log. "target" is the optimal recommended daily servings.
-- grocery_add: Foods to ADD, organized by CATEGORY. Each category should have a weekly_target (total amount needed), a "pick" hint (e.g. "Pick 2-3 varieties to mix and match"), and 3-6 specific options the user can choose from. Categories should cover: Leafy Greens, Cruciferous Vegetables, Other Vegetables, Fruits, Whole Grains/Legumes, Dairy/Calcium, Healthy Fats, Nuts/Seeds, Brain Foods, etc. — only include categories relevant to the user's gaps. Each option needs a specific portion size and weekly quantity. Give EXHAUSTIVE options so the user has variety. Aim for 5-8 categories.
-- grocery_keep: Foods to KEEP BUYING, organized by category. Each option should suggest the most health-optimal version with upgrade tips. 2-4 categories.
-- stop_and_replace: Foods the user is currently eating that should be REDUCED or REPLACED. Look for: processed foods, seed/vegetable oils, excess refined carbs, sugary drinks, processed meats (hotdog, spam, tocino, longganisa), instant noodles, white bread, margarine. Be specific about WHY it's harmful and WHAT to replace it with. 2-5 items. Only include items actually found in the food log.
-- sourcing_guide: For EACH recommended food in the grocery lists, note contamination risks and Philippines-specific buying guidance. 5-8 items covering the most important foods.
-- meal_ideas: 3-5 simple, practical ideas that address both gaps and areas that can be optimized.
-
-EVIDENCE-BASED OPTIMAL FOOD REFERENCE — Use this to make grocery recommendations precise and top-tier:
-
-BRAIN HEALTH & COGNITIVE FUNCTION (prioritize these):
-- Wild-caught salmon or sardines: richest source of DHA/EPA omega-3 (2-3 servings/week). DHA is 40% of brain polyunsaturated fat. Sardines also provide vitamin D + calcium.
-- Blueberries: highest antioxidant fruit, anthocyanins cross blood-brain barrier, improve memory consolidation (BDNF). 1 cup/day ideal.
-- Walnuts: only nut with significant ALA omega-3 + polyphenols. 1 oz (7 halves)/day linked to slower cognitive decline.
-- Dark leafy greens (spinach, kale, Swiss chard): folate + lutein + vitamin K1. 2+ cups/day. Lutein accumulates in brain tissue and is linked to neural efficiency.
-- Eggs (whole, pasture-raised): choline (1 egg = 147mg, need 550mg/day). Choline is precursor to acetylcholine (memory neurotransmitter). Also lutein + zeaxanthin.
-- Extra virgin olive oil (cold-pressed): oleocanthal has ibuprofen-like anti-neuroinflammatory effect. 2-4 tbsp/day. Central to Mediterranean diet brain benefits.
-- Dark chocolate (85%+ cacao): flavanols increase cerebral blood flow. 1-2 squares/day.
-- Turmeric (with black pepper): curcumin crosses blood-brain barrier, boosts BDNF, clears amyloid. 1 tsp/day with piperine for 2000% absorption increase.
-- Green tea: L-theanine + EGCG. L-theanine promotes alpha brain waves (calm focus). 2-3 cups/day.
-- Avocado: monounsaturated fat improves blood flow to brain. Also potassium + folate.
-
-LONGEVITY & ANTI-INFLAMMATORY:
-- Cruciferous vegetables (broccoli, cauliflower, Brussels sprouts): sulforaphane activates Nrf2 pathway, most potent natural Phase 2 enzyme inducer. Broccoli sprouts have 50x more sulforaphane than mature broccoli.
-- Legumes (lentils, chickpeas, black beans): fiber + plant protein + resistant starch. Blue Zone staple. 1 cup cooked/day.
-- Berries (blueberries, strawberries, blackberries, raspberries): polyphenols reduce inflammatory markers (CRP, IL-6). 1-2 cups/day.
-- Fermented foods (plain Greek yogurt, kefir, kimchi, sauerkraut): diverse probiotics for gut-brain axis. Gut produces 95% of serotonin. 1-2 servings/day.
-- Garlic (fresh, crushed, wait 10 min before cooking): allicin is antimicrobial + cardioprotective. 2-3 cloves/day.
-- Sweet potato: beta-carotene (converted to vitamin A) + complex carbs + fiber. Better than white potato.
-- Tomatoes (cooked): lycopene bioavailability increases 5x when cooked with olive oil. Neuroprotective.
-
-OPTIMAL PROTEIN SOURCES (ranked by bioavailability + nutrient density):
-1. Wild-caught salmon (omega-3 + astaxanthin + protein)
-2. Pasture-raised eggs (complete amino acids + choline + D3)
-3. Grass-fed beef (CLA + creatine + B12 + heme iron) — 2-3x/week max
-4. Sardines/mackerel (omega-3 + calcium from bones + low mercury)
-5. Free-range chicken breast/thigh (lean complete protein)
-6. Plain Greek yogurt (probiotics + casein + whey)
-7. Lentils/chickpeas (fiber + iron + folate)
-
-HEART & METABOLIC HEALTH:
-- Oats (steel-cut or rolled): beta-glucan fiber lowers LDL cholesterol. 1/2 cup dry/day.
-- Almonds: vitamin E + magnesium + monounsaturated fat. 1 oz (23 almonds)/day.
-- Flaxseed (ground): ALA omega-3 + lignans. 2 tbsp/day. Must be ground for absorption.
-- Beets: dietary nitrates convert to nitric oxide, improve blood flow + exercise performance.
-
-MICRONUTRIENT GAPS TO WATCH:
-- Magnesium (most people deficient): pumpkin seeds, dark chocolate, spinach, almonds
-- Vitamin D: fatty fish, egg yolks, mushrooms (UV-exposed), or supplement
-- Vitamin K2 (different from K1): natto, grass-fed butter, egg yolks — directs calcium to bones not arteries
-- Zinc: oysters (highest food source), pumpkin seeds, beef, lentils
-- B12: animal products only — critical for methylation + nerve function
-
-UPGRADE RULES for grocery_keep items:
-- White rice → brown rice or quinoa (fiber + complete protein for quinoa)
-- Regular chicken → free-range/pasture-raised (better omega-6:3 ratio)
-- Regular eggs → pasture-raised (2x omega-3, 3x vitamin D, 6x vitamin E)
-- Conventional olive oil → cold-pressed extra virgin (retains polyphenols)
-- Regular yogurt → plain Greek yogurt (2x protein, live cultures)
-- White bread → sourdough whole grain (lower glycemic, better mineral absorption from fermentation)
-- Regular butter → grass-fed butter (vitamin K2 + CLA)
-- Canola/vegetable oil → extra virgin olive oil or avocado oil (no seed oil oxidation)
-
-FOODS TO FLAG FOR stop_and_replace (only if found in food log):
-- Hotdog/processed meats (nitrites + sodium nitrate → nitrosamines, WHO Group 1 carcinogen)
-- Instant noodles (TBHQ preservative + high sodium + trans fats + zero nutrition)
-- Margarine/vegetable shortening (trans fats, inflammatory omega-6)
-- Seed/vegetable oils (soybean, canola, corn oil — oxidize at high heat, inflammatory)
-- White bread/pandesal (refined flour, high glycemic, stripped of fiber/nutrients)
-- Sugary drinks/juice (fructose overload → fatty liver, insulin resistance)
-- Processed cheese (fillers, emulsifiers, minimal real dairy)
-- Fried street food (reused oil = oxidized lipids + acrylamide)
-- Tocino/longganisa/spam (nitrites + excess sugar + sodium + preservatives)
-
-CONTAMINATION RISKS & PHILIPPINES SOURCING GUIDE (use for sourcing_guide field):
-- Turmeric powder: HIGH RISK of lead contamination (lead chromate added for color in South/Southeast Asia). Look for: whole turmeric root from local palengke (safest), or branded organic powder with third-party testing. Avoid loose/unbranded powder. Grate fresh root yourself.
-- Salmon: Farm-raised has PCBs, dioxins, antibiotics, artificial color (astaxanthin added). In PH: frozen wild-caught Alaskan salmon from S&R, Landers, or specialty stores. Check label says "wild-caught" not "Atlantic" (Atlantic = farmed). Alternative: local sardinas (galunggong family) are wild, cheap, low mercury, high omega-3.
-- Chicken/poultry: PH commercial poultry uses antibiotics as growth promoters. Look for: "antibiotic-free" or "free-range" labels — brands like Bounty Fresh Free Range, or buy from known free-range farms at weekend markets (Salcedo, Legazpi, etc.). Backyard/native chicken (manok bisaya/native) from palengke is often antibiotic-free but verify.
-- Eggs: Commercial PH eggs from battery cages, hens fed antibiotics + soy feed. Look for: "free-range" or "pasture-raised" — Sunnyside Farms, Happy Egg, or local farm eggs from weekend markets. Native/itlog ng pugo are less contaminated.
-- Fish (general): Mercury risk in large predatory fish (tuna, swordfish, shark). PH-safe choices: galunggong (round scad), bangus (milkfish — farmed but relatively clean), sardines, tilapia (local pond-raised). Avoid: imported tuna steaks, large yellowfin.
-- Vegetables: Pesticide residues common in PH conventional produce. Prioritize: local organic from Good Food Community, The Green Grocer, or farmers markets. Wash all produce in vinegar-water solution (1:3 ratio, soak 15 min). Leafy greens (kangkong, pechay, malunggay) from backyard gardens are ideal.
-- Rice: PH rice may have arsenic (absorbed from soil/water). Rinse thoroughly (3-4 washes), cook with excess water and drain (reduces arsenic 40-60%). Brown rice has more arsenic than white due to bran — still worth it for fiber but wash well.
-- Olive oil: Widespread fraud/adulteration globally. In PH: buy from reputable stores (S&R, Landers). Look for: dark glass bottle, harvest date (not just expiry), specific origin (e.g. "Product of Spain/Italy/Greece" not just "packed in"). Brands: Colavita, California Olive Ranch, Cobram Estate. Avoid: suspiciously cheap EVOO, clear plastic bottles.
-- Dark chocolate: Cadmium + lead contamination in cacao. Look for: European-sourced (stricter limits). Brands available in PH: Lindt 85%, Endangered Species, Hu Kitchen. Avoid: cheap unbranded tablea unless verified source.
-- Peanut butter: Aflatoxin risk from mold in peanuts (PH climate = high risk). Buy: sealed branded jars (no-stir natural PB), not loose palengke ground peanuts. Brands: organic/natural PB from Healthy Options, or almond butter as alternative.
-- Honey: Widely adulterated with corn syrup in PH. Buy from verified local beekeepers or brands with traceability (e.g. Bohol Bee Farm, Milea).
-- Supplements (if recommended): Buy from reputable pharmacies (Mercury Drug, Watsons) or Healthy Options. Check for FDA-PH registration. Avoid: Shopee/Lazada unverified sellers.`;
-
-const SYSTEM_PROMPT_DIET_RECONCILE = `You are a senior registered dietitian acting as a NEUTRAL JUDGE. Two independent analyses of the same food diary disagreed. Your job is to determine which analysis is more accurate by checking claims against the raw food data.
-
-CRITICAL DEBIASING RULES:
-- Do NOT compromise or average between the two analyses. Splitting the difference is WRONG.
-- For EACH disagreement, re-examine the raw food data yourself and determine which analysis is correct.
-- If Analysis A says "low" and Analysis B says "critically_low", check the actual food log: count real servings, then decide which label is accurate. Pick one.
-- If both analyses are wrong on a point, give your own independent assessment.
-- The analyses are labeled A and B — you do not know which AI produced which. Treat them equally.
-- Your reasoning MUST cite specific foods from the log to justify each decision (e.g. "pechay appeared twice in 7 days = ~0.3 servings/day, which is critically_low not low").
-
-Food group status definitions:
-- "missing" = literally zero foods from this group in the entire period
-- "critically_low" = trace amounts present but far below recommended
-- "low" = some intake but still below recommended servings
-- "adequate" = meeting or near recommended servings
-- "good" = meeting or exceeding recommended servings consistently
-
-Keep your response concise. Reasoning: 4-6 sentences citing specific foods. Summaries: 1-2 sentences. Limit concerns, suggestions, positive_observations to 3-4 items each.
-
-You MUST respond with ONLY a JSON object (no markdown fences, no extra text) in the same format as the original assessment:
-{
-  "reasoning": "<brief: where the two analyses agreed/disagreed and how you resolved each>",
-  "overall_score": <1-10 integer>,
-  "calorie_assessment": { "score": <1-10>, "status": "<deficit|on_target|surplus>", "summary": "<explanation>" },
-  "protein_assessment": { "score": <1-10>, "status": "<deficient|adequate|good|excellent>", "summary": "<explanation>" },
-  "food_groups": {
-    "fruits": { "score": <1-10>, "servings_estimated": <number>, "recommended": <number>, "status": "<missing|critically_low|low|adequate|good>" },
-    "vegetables": { "score": <1-10>, "servings_estimated": <number>, "recommended": <number>, "status": "<missing|critically_low|low|adequate|good>" },
-    "whole_grains": { "score": <1-10>, "servings_estimated": <number>, "recommended": <number>, "status": "<missing|critically_low|low|adequate|good>" },
-    "lean_protein": { "score": <1-10>, "servings_estimated": <number>, "recommended": <number>, "status": "<missing|critically_low|low|adequate|good>" },
-    "dairy_calcium": { "score": <1-10>, "servings_estimated": <number>, "recommended": <number>, "status": "<missing|critically_low|low|adequate|good>" },
-    "healthy_fats": { "score": <1-10>, "servings_estimated": <number>, "recommended": <number>, "status": "<missing|critically_low|low|adequate|good>" }
-  },
-  "fiber_assessment": { "estimated_daily_g": <number>, "recommended_daily_g": <number>, "status": "<deficient|low|adequate|good>" },
-  "concerns": ["<concern>"],
-  "suggestions": [{ "food": "<food>", "reason": "<why>", "when": "<timing>" }],
-  "positive_observations": ["<observation>"],
-  "action_plan": {
-    "daily_targets": [{ "group": "<food group>", "current": <number>, "target": <number>, "add": "<what to add>" }],
-    "grocery_add": [{ "category": "<name>", "weekly_target": "<total>", "pick": "<hint>", "options": [{ "item": "<food>", "portion": "<qty>", "note": "<tip>" }] }],
-    "grocery_keep": [{ "category": "<name>", "options": [{ "item": "<food>", "portion": "<qty>", "note": "<tip>" }] }],
-    "stop_and_replace": [{ "stop": "<food>", "why": "<reason>", "replace_with": "<alternative>" }],
-    "sourcing_guide": [{ "food": "<food>", "risk": "<risk>", "what_to_look_for": "<PH tips>" }],
-    "meal_ideas": ["<idea>"]
-  }
-}
-
-For action_plan: grocery_add = categorized with 3-6 options per category for variety/mix-and-match. grocery_keep = categorized with optimal upgrade tips. stop_and_replace = foods from the log to cut. sourcing_guide = PH-specific contamination/buying tips. Be exhaustive with options.`;
 
 // --- Data Aggregation ---
 
@@ -1493,138 +1097,7 @@ function getAssessmentData(period) {
   return { period, ...rangeData };
 }
 
-// --- Prompt Builder ---
-
-function buildAssessmentPrompt(data) {
-  let prompt = `Analyze this food diary for nutritional completeness and diet quality.\n\n`;
-  prompt += `Period: ${data.startDate} to ${data.endDate} (${data.numDays} days tracked)\n`;
-  prompt += `Total food entries: ${data.totalEntries}\n\n`;
-
-  prompt += `Daily averages:\n`;
-  prompt += `- Calories eaten: ${data.avgCalLow}-${data.avgCalHigh} kcal/day\n`;
-  prompt += `- Protein eaten: ${data.avgProLow}-${data.avgProHigh} g/day\n`;
-  if (data.avgProTargetLow) prompt += `- Protein target: ${data.avgProTargetLow}-${data.avgProTargetHigh} g/day\n`;
-
-  // Per-day calorie context
-  const ctxDates = Object.keys(data.dailyContext || {}).sort();
-  if (ctxDates.length > 0) {
-    prompt += `\nCalorie context (IMPORTANT for calorie_assessment):\n`;
-    prompt += `TDEE varies per day based on activity level. Each day's TDEE, planned deficit, and calorie intake target are listed below.\n`;
-    prompt += `"Surplus" means eating ABOVE that day's TDEE (would gain weight). Being above the intake target but below TDEE is NOT surplus — it just means the deficit is smaller than planned.\n\n`;
-    prompt += `Per-day breakdown:\n`;
-    for (const date of ctxDates) {
-      const ctx = data.dailyContext[date];
-      const dayFoods = data.foodByDate[date] || [];
-      const _eat = Macros.sumMacro(dayFoods, "calories");
-      const eatLow = _eat.low;
-      const eatHigh = _eat.high;
-      prompt += `  ${date}: Activity="${ctx.activity}" | TDEE=${ctx.tdee} | Deficit=${ctx.deficit} | Target=${ctx.calorieTarget} | Eaten=${Math.round(eatLow)}-${Math.round(eatHigh)} kcal\n`;
-    }
-  }
-
-  // Year-over-year: include previous year summary for comparison
-  if (data.isYoY && data.previousYear && data.previousYear.totalEntries > 0) {
-    const py = data.previousYear;
-    prompt += `\n--- Previous Year Comparison (${py.label}) ---\n`;
-    prompt += `Days tracked: ${py.numDays}, Food entries: ${py.totalEntries}\n`;
-    prompt += `Daily averages: ${py.avgCalLow}-${py.avgCalHigh} kcal, ${py.avgProLow}-${py.avgProHigh}g protein\n`;
-    const pyCtx = Object.values(py.dailyContext || {});
-    if (pyCtx.length > 0) {
-      const pyAvgTDEE = Math.round(pyCtx.reduce((s, c) => s + c.tdee, 0) / pyCtx.length);
-      const pyAvgTarget = Math.round(pyCtx.reduce((s, c) => s + c.calorieTarget, 0) / pyCtx.length);
-      prompt += `Avg TDEE: ${pyAvgTDEE} kcal, Avg calorie target: ${pyAvgTarget} kcal\n`;
-    }
-    prompt += `\nCompare the current year's diet against the previous year and note improvements or regressions.\n`;
-  }
-
-  prompt += `\n--- Complete Food Log ---\n`;
-  const sortedDates = data.dates.sort();
-  for (const date of sortedDates) {
-    prompt += `\n${date}:\n`;
-    const items = data.foodByDate[date];
-    for (const item of items) {
-      const _c = Macros.getMacro(item, "calories"), _p = Macros.getMacro(item, "protein");
-      const calStr = _c ? `${_c.low}-${_c.high}` : "?";
-      const proStr = _p ? `${_p.low}-${_p.high}` : "?";
-      prompt += `  ${item.time} - ${item.food}, ${item.qty} ${item.unit} (${calStr} cal, ${proStr}g protein)\n`;
-    }
-  }
-
-  return prompt;
-}
-
-function buildAssessmentReconciliationPrompt(data, round1Results) {
-  let prompt = buildAssessmentPrompt(data);
-  prompt += `\n\n--- Two Independent Analyses (anonymized) ---\n`;
-  // Anonymize: shuffle order randomly so judge can't infer which is which
-  const shuffled = [...round1Results].sort(() => Math.random() - 0.5);
-  prompt += `\nAnalysis A:\n`;
-  prompt += JSON.stringify(shuffled[0].data, null, 2);
-  prompt += `\n\nAnalysis B:\n`;
-  prompt += JSON.stringify(shuffled[1].data, null, 2);
-  prompt += `\n\nFor each category where A and B disagree, re-examine the raw food data above and determine which is correct. Do NOT average or compromise — pick the answer supported by the data, or give your own if both are wrong. Cite specific foods from the log in your reasoning.`;
-  return prompt;
-}
-
-// --- API Call Wrapper ---
-
-async function callProviderForAssessment(provider, prompt, model, systemPrompt) {
-  const settings = getProviderSettings(provider.id);
-  const apiKey = settings.apiKey;
-
-  if (provider.id === "openai") {
-    const res = await fetch("https://api.openai.com/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        model,
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: prompt },
-        ],
-        ...openaiModelParams(model, 8000),
-      }),
-    });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.error?.message || `OpenAI API error ${res.status}`);
-    }
-    const data = await res.json();
-    return parseAssessmentResponse(extractOpenAIContent(data));
-  } else if (provider.id === "anthropic") {
-    const res = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": apiKey,
-        "anthropic-version": "2023-06-01",
-        "anthropic-dangerous-direct-browser-access": "true",
-      },
-      body: JSON.stringify({
-        model,
-        max_tokens: 8000,
-        messages: [
-          { role: "user", content: prompt },
-        ],
-        system: systemPrompt,
-        temperature: 0,
-      }),
-    });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.error?.message || `Claude API error ${res.status}`);
-    }
-    const data = await res.json();
-    if (data.stop_reason === "max_tokens") {
-      throw new Error("Response truncated (token limit reached)");
-    }
-    return parseAssessmentResponse(data.content[0].text);
-  }
-  throw new Error(`Unknown provider: ${provider.id}`);
-}
+// --- Response parsing (raw model texts arrive from the ai-proxy) ---
 
 function parseAssessmentResponse(content) {
   const cleaned = content.trim().replace(/```json?\s*/g, "").replace(/```/g, "").trim();
@@ -1743,8 +1216,20 @@ function averageAssessmentScores(results) {
 }
 
 // --- Main Flow ---
+// Round 1 is ONE proxy call that fans out to both models server-side and
+// returns their raw texts as { a, b }. Each side is parsed exactly like the
+// old per-provider path, so the result objects (and everything downstream:
+// agreement check, merging, renderers, saved history) keep the same shape.
+
+function assessResultFromRaw(id, name, model, raw) {
+  const base = { providerId: id, providerName: name, model };
+  if (typeof raw !== "string" || !raw.trim()) return { ...base, data: null, error: "no answer from the model" };
+  try { return { ...base, data: parseAssessmentResponse(raw), error: null }; }
+  catch (e) { return { ...base, data: null, error: "unreadable model response" }; }
+}
 
 async function runDietAssessment() {
+  if (_aiExhausted) { openPaywall(); return; }
   const period = document.getElementById("assessment-period").value;
   const data = getAssessmentData(period);
 
@@ -1753,13 +1238,9 @@ async function runDietAssessment() {
     return;
   }
 
-  const activeProviders = PROVIDERS.filter(p => {
-    const settings = getProviderSettings(p.id);
-    return settings.mode === "manual" || settings.apiKey.length > 0;
-  });
-
-  if (activeProviders.length === 0) {
-    setAssessmentStatus("Configure at least one AI provider (API key or manual mode) in the Calorie Target tab.", true);
+  // The proxy caps assess payloads at 250k chars of JSON — refuse early instead of burning a call.
+  if (JSON.stringify({ data }).length > 250000) {
+    setAssessmentStatus("Too much data for a single assessment — try a shorter period.", true);
     return;
   }
 
@@ -1770,163 +1251,91 @@ async function runDietAssessment() {
 
   renderAssessmentDataSummary(data);
 
-  const prompt = buildAssessmentPrompt(data);
-
   try {
-    // --- Round 1: Manual providers first (need user interaction), then API in parallel ---
-    const apiProviders = activeProviders.filter(p => getProviderSettings(p.id).mode === "api");
-    const manualProviders = activeProviders.filter(p => getProviderSettings(p.id).mode === "manual");
-
-    const fullPrompt = SYSTEM_PROMPT_DIET_ASSESSMENT + "\n\n" + prompt;
-
-    // Run manual providers first so user isn't blocked by API calls
-    const manualResults = [];
-    for (const provider of manualProviders) {
-      setAssessmentStatus(`Waiting for manual input (${provider.name})...`);
-      try {
-        const result = await promptManualResponse(`Round 1 — ${provider.name}`, fullPrompt);
-        manualResults.push({ providerId: provider.id, providerName: provider.name + " (manual)", model: "your AI", data: result, error: null });
-      } catch (err) {
-        manualResults.push({ providerId: provider.id, providerName: provider.name + " (manual)", model: "your AI", data: null, error: err.message });
-      }
-    }
-
-    // Then run API providers in parallel
-    if (apiProviders.length > 0) setAssessmentStatus("Analyzing your diet...");
-    const apiPromises = apiProviders.map(async provider => {
-      const settings = getProviderSettings(provider.id);
-      try {
-        const result = await callProviderForAssessment(provider, prompt, settings.primaryModel, SYSTEM_PROMPT_DIET_ASSESSMENT);
-        return { providerId: provider.id, providerName: provider.name, model: settings.primaryModel, data: result, error: null };
-      } catch (err) {
-        return { providerId: provider.id, providerName: provider.name, model: settings.primaryModel, data: null, error: err.message };
-      }
-    });
-
-    const apiResults = await Promise.all(apiPromises);
-
-    const round1Results = [...manualResults, ...apiResults];
+    // --- Round 1 ---
+    const r1 = await callAi("assess-round1", { data });
+    const round1Results = [
+      assessResultFromRaw("model-a", "Model A", "round 1", r1 && r1.a),
+      assessResultFromRaw("model-b", "Model B", "round 1", r1 && r1.b),
+    ];
     const successful = round1Results.filter(r => r.data !== null);
     const failed = round1Results.filter(r => r.error !== null);
 
     if (successful.length === 0) {
       const errMsgs = failed.map(f => `${f.providerName}: ${f.error}`).join("; ");
-      setAssessmentStatus(`All providers failed: ${errMsgs}`, true);
-      btn.disabled = false;
+      setAssessmentStatus(`Analysis failed — ${errMsgs}. Try again.`, true);
       return;
     }
 
-    // Single provider
+    const dataSummary = { startDate: data.startDate, endDate: data.endDate, numDays: data.numDays, totalEntries: data.totalEntries, avgCalLow: data.avgCalLow, avgCalHigh: data.avgCalHigh };
+
+    // Only one usable analysis — no cross-validation possible
     if (successful.length === 1) {
-      const warning = failed.length > 0
-        ? `${failed[0].providerName} failed. Using ${successful[0].providerName} only.`
-        : `Only ${successful[0].providerName} configured. No cross-validation.`;
-
+      const warning = `${failed[0].providerName} failed. Using ${successful[0].providerName} only.`;
       const resultObj = {
-        timestamp: new Date().toISOString(),
-        period,
-        dataSummary: { startDate: data.startDate, endDate: data.endDate, numDays: data.numDays, totalEntries: data.totalEntries, avgCalLow: data.avgCalLow, avgCalHigh: data.avgCalHigh },
-        round: 1,
-        round1: successful,
-        failed,
-        final: successful[0].data,
-        verdict: "single",
-        warning,
+        timestamp: new Date().toISOString(), period, dataSummary,
+        round: 1, round1: successful, failed,
+        final: successful[0].data, verdict: "single", warning,
       };
-
       renderAssessmentResults(resultObj);
       saveAssessment(resultObj);
       renderAssessmentHistory();
       setAssessmentStatus("Done!");
-      btn.disabled = false;
       return;
     }
 
-    // Two providers — check agreement
+    // Two analyses — check agreement
     const agreement = checkAssessmentAgreement(successful[0].data, successful[1].data);
 
-    if (!agreement.needsEscalation) {
-      // Consensus
+    // Round 2 reconciles the two RAW Round-1 texts; the server rejects the call
+    // unless BOTH are present — the old "need two analyses to reconcile" rule.
+    const canReconcile = typeof r1.a === "string" && typeof r1.b === "string";
+
+    if (!agreement.needsEscalation || !canReconcile) {
       const merged = averageAssessmentScores(successful.map(r => r.data));
       const resultObj = {
-        timestamp: new Date().toISOString(),
-        period,
-        dataSummary: { startDate: data.startDate, endDate: data.endDate, numDays: data.numDays, totalEntries: data.totalEntries, avgCalLow: data.avgCalLow, avgCalHigh: data.avgCalHigh },
-        round: 1,
-        round1: successful,
-        failed,
-        agreement,
-        final: merged,
-        verdict: "consensus",
+        timestamp: new Date().toISOString(), period, dataSummary,
+        round: 1, round1: successful, failed, agreement,
+        final: merged, verdict: "consensus",
       };
-
       renderAssessmentResults(resultObj);
       saveAssessment(resultObj);
       renderAssessmentHistory();
       setAssessmentStatus("Done!");
-      btn.disabled = false;
       return;
     }
 
-    // --- Round 2: Both providers re-evaluate with debiased prompt ---
-    setAssessmentStatus(`Providers disagreed on ${agreement.disagreements}/${agreement.total} categories — both re-evaluating...`);
+    // --- Round 2: debiased re-evaluation (one proxy call, both models) ---
+    setAssessmentStatus(`Models disagreed on ${agreement.disagreements}/${agreement.total} categories — re-evaluating...`);
 
-    const reconPrompt = buildAssessmentReconciliationPrompt(data, successful);
-    const fullReconPrompt = SYSTEM_PROMPT_DIET_RECONCILE + "\n\n" + reconPrompt;
-
-    const r2ActiveProviders = activeProviders.filter(p => successful.some(s => s.providerId === p.id));
-    const r2ApiProviders = r2ActiveProviders.filter(p => getProviderSettings(p.id).mode === "api");
-    const r2ManualProviders = r2ActiveProviders.filter(p => getProviderSettings(p.id).mode === "manual");
-
-    // Run manual R2 first so user isn't blocked by API calls
-    const r2ManualResults = [];
-    for (const provider of r2ManualProviders) {
-      setAssessmentStatus(`Waiting for manual Round 2 input (${provider.name})...`);
-      try {
-        const result = await promptManualResponse(`Round 2 — ${provider.name} (Debiased Re-evaluation)`, fullReconPrompt);
-        r2ManualResults.push({ providerId: provider.id, providerName: provider.name + " (manual)", model: "your AI", data: result, error: null });
-      } catch (err) {
-        r2ManualResults.push({ providerId: provider.id, providerName: provider.name + " (manual)", model: "your AI", data: null, error: err.message });
-      }
+    let r2 = null, r2CallError = null;
+    try {
+      r2 = await callAi("assess-round2", { round1A: r1.a, round1B: r1.b, data });
+    } catch (err) {
+      r2CallError = err;
+      if (err && err.status === 402) openPaywall();
     }
 
-    // Then run API R2 in parallel
-    if (r2ApiProviders.length > 0) setAssessmentStatus(`Providers disagreed on ${agreement.disagreements}/${agreement.total} categories — both re-evaluating...`);
-    const r2ApiPromises = r2ApiProviders.map(async provider => {
-      const settings = getProviderSettings(provider.id);
-      try {
-        const result = await callProviderForAssessment(provider, reconPrompt, settings.secondaryModel, SYSTEM_PROMPT_DIET_RECONCILE);
-        return { providerId: provider.id, providerName: provider.name, model: settings.secondaryModel, data: result, error: null };
-      } catch (err) {
-        return { providerId: provider.id, providerName: provider.name, model: settings.secondaryModel, data: null, error: err.message };
-      }
-    });
-
-    const r2ApiResults = await Promise.all(r2ApiPromises);
-
-    const round2Results = [...r2ManualResults, ...r2ApiResults];
+    const round2Results = r2 ? [
+      assessResultFromRaw("model-a", "Model A", "round 2", r2.a),
+      assessResultFromRaw("model-b", "Model B", "round 2", r2.b),
+    ] : [];
     const r2Successful = round2Results.filter(r => r.data !== null);
     const r2Failed = round2Results.filter(r => r.error !== null);
 
     if (r2Successful.length === 0) {
-      // Both R2 failed — fall back to R1 average
+      // Round 2 failed entirely — fall back to the Round 1 average.
       const merged = averageAssessmentScores(successful.map(r => r.data));
       const resultObj = {
-        timestamp: new Date().toISOString(),
-        period,
-        dataSummary: { startDate: data.startDate, endDate: data.endDate, numDays: data.numDays, totalEntries: data.totalEntries, avgCalLow: data.avgCalLow, avgCalHigh: data.avgCalHigh },
-        round: 1,
-        round1: successful,
-        failed,
-        agreement,
-        final: merged,
-        verdict: "r2_failed",
+        timestamp: new Date().toISOString(), period, dataSummary,
+        round: 1, round1: successful, failed, agreement,
+        final: merged, verdict: "r2_failed",
       };
       renderAssessmentResults(resultObj);
       saveAssessment(resultObj);
       renderAssessmentHistory();
-      setAssessmentStatus("Round 2 failed — using Round 1 average.", true);
-      btn.disabled = false;
+      const detail = r2CallError && r2CallError.message ? ` (${r2CallError.message})` : "";
+      setAssessmentStatus(`Round 2 failed${detail} — using Round 1 average.`, true);
       return;
     }
 
@@ -1934,26 +1343,18 @@ async function runDietAssessment() {
     const r2Agreement = r2Successful.length >= 2 ? checkAssessmentAgreement(r2Successful[0].data, r2Successful[1].data) : null;
 
     const resultObj = {
-      timestamp: new Date().toISOString(),
-      period,
-      dataSummary: { startDate: data.startDate, endDate: data.endDate, numDays: data.numDays, totalEntries: data.totalEntries, avgCalLow: data.avgCalLow, avgCalHigh: data.avgCalHigh },
-      round: 2,
-      round1: successful,
-      round2: r2Successful,
-      failed,
-      r2Failed,
-      agreement,
-      r2Agreement,
-      final: r2Merged,
-      verdict: "reconciled",
+      timestamp: new Date().toISOString(), period, dataSummary,
+      round: 2, round1: successful, round2: r2Successful, failed, r2Failed,
+      agreement, r2Agreement,
+      final: r2Merged, verdict: "reconciled",
     };
-
     renderAssessmentResults(resultObj);
     saveAssessment(resultObj);
     renderAssessmentHistory();
     setAssessmentStatus("Done!");
   } catch (err) {
-    setAssessmentStatus(err.message, true);
+    setAssessmentStatus((err && err.message) || "Something went wrong with the AI service.", true);
+    if (err && err.status === 402) openPaywall();
   } finally {
     btn.disabled = false;
   }
@@ -1964,85 +1365,6 @@ function setAssessmentStatus(msg, isError = false) {
   if (!el) return;
   el.textContent = msg;
   el.className = "estimate-status" + (isError ? " error" : "");
-}
-
-// --- Manual Mode ---
-
-function promptManualResponse(title, fullPrompt) {
-  return new Promise((resolve, reject) => {
-    const modal = document.getElementById("manual-modal");
-    const titleEl = document.getElementById("manual-modal-title");
-    const body = document.getElementById("manual-modal-body");
-
-    titleEl.textContent = title;
-
-    let html = '<div class="manual-step">';
-    html += '<div class="manual-step-label">Step 1: Copy the prompt and paste into your AI</div>';
-    html += '<div class="manual-prompt-actions">';
-    html += '<button class="btn btn-primary btn-sm" id="manual-copy-btn">Copy Prompt to Clipboard</button>';
-    html += '<button class="btn btn-secondary btn-sm" id="manual-open-claude">Open claude.ai</button>';
-    html += '<button class="btn btn-secondary btn-sm" id="manual-open-chatgpt">Open chatgpt.com</button>';
-    html += '</div>';
-    html += '<details class="food-log-details" style="margin-top:8px"><summary class="food-log-toggle">View full prompt</summary>';
-    html += `<pre class="manual-prompt-preview">${escapeHtml(fullPrompt)}</pre>`;
-    html += '</details>';
-    html += '</div>';
-
-    html += '<div class="manual-step">';
-    html += '<div class="manual-step-label">Step 2: Paste the JSON response below</div>';
-    html += '<textarea id="manual-response-input" class="manual-textarea" placeholder="Paste the full JSON response here..."></textarea>';
-    html += '<div id="manual-parse-error" class="manual-error hidden"></div>';
-    html += '</div>';
-
-    html += '<div class="modal-actions">';
-    html += '<button class="btn btn-secondary" id="manual-cancel">Cancel</button>';
-    html += '<button class="btn btn-primary" id="manual-submit">Submit Response</button>';
-    html += '</div>';
-
-    body.innerHTML = html;
-    modal.classList.remove("hidden");
-
-    document.getElementById("manual-copy-btn").addEventListener("click", () => {
-      navigator.clipboard.writeText(fullPrompt).then(() => {
-        const btn = document.getElementById("manual-copy-btn");
-        btn.textContent = "Copied!";
-        setTimeout(() => btn.textContent = "Copy Prompt to Clipboard", 2000);
-      });
-    });
-
-    document.getElementById("manual-open-claude").addEventListener("click", () => {
-      navigator.clipboard.writeText(fullPrompt).then(() => {
-        window.open("https://claude.ai/new", "_blank");
-      });
-    });
-
-    document.getElementById("manual-open-chatgpt").addEventListener("click", () => {
-      navigator.clipboard.writeText(fullPrompt).then(() => {
-        window.open("https://chatgpt.com", "_blank");
-      });
-    });
-
-    document.getElementById("manual-cancel").addEventListener("click", () => {
-      modal.classList.add("hidden");
-      reject(new Error("Cancelled by user"));
-    });
-
-    document.getElementById("manual-submit").addEventListener("click", () => {
-      const input = document.getElementById("manual-response-input").value.trim();
-      const errorEl = document.getElementById("manual-parse-error");
-      errorEl.classList.add("hidden");
-
-      try {
-        const cleaned = input.replace(/```json?\s*/g, "").replace(/```/g, "").trim();
-        const parsed = JSON.parse(cleaned);
-        modal.classList.add("hidden");
-        resolve(parsed);
-      } catch (e) {
-        errorEl.textContent = "Failed to parse JSON: " + e.message;
-        errorEl.classList.remove("hidden");
-      }
-    });
-  });
 }
 
 // --- Rendering ---
@@ -3174,19 +2496,13 @@ async function startApp() {
   document.getElementById("profile-form").addEventListener("submit", saveProfileForm);
   document.getElementById("onboarding-form").addEventListener("submit", completeOnboarding);
 
-  // Provider settings
-  renderProviderSettings();
+  // Settings cards
   renderMacroSettings();
   renderAccountSettings();
 
-  // Migrate old API key if present
-  const oldKey = localStorage.getItem("nt_openai_key");
-  if (oldKey && !localStorage.getItem("nt_key_openai")) {
-    localStorage.setItem("nt_key_openai", oldKey);
-    localStorage.removeItem("nt_openai_key");
-    renderProviderSettings();
-    renderMacroSettings();
-  }
+  // Paywall modal
+  document.getElementById("paywall-dismiss").addEventListener("click", closePaywall);
+  document.querySelector("#paywall-modal .modal-overlay").addEventListener("click", closePaywall);
 
   // Batch pane (inside unified food modal)
   document.getElementById("batch-add-row").addEventListener("click", addBatchRow);
@@ -3268,6 +2584,9 @@ async function startApp() {
   renderCalorieTracker();
   renderCalorieTarget();
 
+  // AI credit bar (callAi also refreshes it after every proxy call)
+  refreshCreditBar();
+
   // Apply the saved theme (sets data-theme + native status bar) and track OS light/dark changes
   applyTheme();
   if (window.matchMedia) {
@@ -3280,6 +2599,10 @@ async function startApp() {
 }
 
 document.addEventListener("DOMContentLoaded", async () => {
+  // B-spec migration: BYOK is gone; remove any keys from this device.
+  localStorage.removeItem("nt_key_openai");
+  localStorage.removeItem("nt_key_anthropic");
+  localStorage.removeItem("nt_openai_key");
   wireAuthUi();
   initTutorialUi();
   const { data: { session } } = await sb.auth.getSession();
