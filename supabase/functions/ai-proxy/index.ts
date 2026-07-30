@@ -3,6 +3,7 @@
 // www/macros.js) — do not rewrite the prompt text; it's the tested product voice.
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { computeCost, quotaState, mergeEstimates, rateLimited } from "../_shared/metering.mjs";
+import { MACRO_IDS, extractEstimateFields, toNestedMacros, mergePhotoItems } from "../_shared/proxy-shapes.mjs";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -27,13 +28,10 @@ function json(status: number, body: unknown) {
 }
 
 // ============================================================
-// Macro catalog (ported from www/macros.js CATALOG — ids + prompt fields).
-// The client no longer sends its enabled-macro list; the server always asks
-// for the full catalog and the client keeps whatever it displays.
+// Macro catalog: MACRO_IDS comes from _shared/proxy-shapes.mjs (www/macros.js
+// CATALOG order). The client no longer sends its enabled-macro list; the
+// server always asks for the full catalog and the client keeps what it shows.
 // ============================================================
-
-const MACRO_IDS = ["calories", "protein", "carbs", "fat", "fiber", "sugar", "saturatedFat", "sodium"];
-const OTHER_MACRO_IDS = MACRO_IDS.filter((id) => id !== "calories" && id !== "protein");
 
 // Ported verbatim from www/macros.js promptFields()
 function promptFields(ids: string[]) {
@@ -464,10 +462,12 @@ function buildAssessR2Prompt(payload: any) {
 }
 
 // ============================================================
-// Model-output parsing — ported from www/app.js parseAIResponse() and
-// www/photo.js parseVisionResponse(), with the review addition: a partial
-// estimate (any of the four core range fields missing/non-finite) returns
-// null so it degrades to the single-model path instead of poisoning the merge.
+// Model-output parsing — fence-stripping + JSON extraction ported from
+// www/app.js parseAIResponse() and www/photo.js parseVisionResponse(). The
+// pure shape helpers (field extraction, nested-macros conversion, item merge
+// with count/name guards) live in _shared/proxy-shapes.mjs, unit-tested by
+// the node --test suite. parseEstimate returns null on any partial estimate
+// so it degrades to the single-model path instead of poisoning the merge.
 // ============================================================
 
 // Fence-stripping ported verbatim from each source.
@@ -478,40 +478,11 @@ function stripFencesPhoto(content: string) {
   return String(content).trim().replace(/```[a-zA-Z]*\s*/g, "").replace(/```/g, "").trim();
 }
 
-// Pull { cal_low, cal_high, pro_low, pro_high, macros } out of a flat
-// <id>_lower/<id>_upper object (a top-level estimate or one photo item).
-// macros stays FLAT here (what mergeEstimates averages per field).
-function extractEstimateFields(o: any) {
-  const cal_low = Number(o.calories_lower), cal_high = Number(o.calories_upper);
-  const pro_low = Number(o.protein_lower), pro_high = Number(o.protein_upper);
-  if (![cal_low, cal_high, pro_low, pro_high].every(Number.isFinite)) return null;
-  const macros: Record<string, number> = {};
-  for (const id of OTHER_MACRO_IDS) {
-    const lo = Number(o[id + "_lower"]), hi = Number(o[id + "_upper"]);
-    if (Number.isFinite(lo) && Number.isFinite(hi)) { macros[id + "_lower"] = lo; macros[id + "_upper"] = hi; }
-  }
-  return { cal_low, cal_high, pro_low, pro_high, macros };
-}
-
 function parseEstimate(text: string) {
   const cleaned = stripFencesApp(text);
   let parsed: any;
   try { parsed = JSON.parse(cleaned); } catch { return null; }
   return extractEstimateFields(parsed);
-}
-
-// Convert a merged/parsed estimate (flat macros) into the nested
-// { id: { low, high } } shape the client stores (Macros.parseMacros shape).
-function toNestedMacros(est: any) {
-  const nested: Record<string, { low: number; high: number }> = {
-    calories: { low: est.cal_low, high: est.cal_high },
-    protein: { low: est.pro_low, high: est.pro_high },
-  };
-  for (const id of OTHER_MACRO_IDS) {
-    const lo = est.macros && est.macros[id + "_lower"], hi = est.macros && est.macros[id + "_upper"];
-    if (lo != null && hi != null) nested[id] = { low: Number(lo), high: Number(hi) };
-  }
-  return nested;
 }
 
 // Ported from www/photo.js parseVisionResponse() item extraction. Returns the
@@ -523,45 +494,6 @@ function parsePhotoItems(text: string) {
   return Array.isArray(parsed.items)
     ? parsed.items.filter((it: any) => it !== null && typeof it === "object" && !Array.isArray(it))
     : [];
-}
-
-// Ported from www/photo.js parseVisionResponse() per-item normalization +
-// Macros.parseMacros over the full catalog (tolerates missing fields).
-function itemFoodPortion(it: any) {
-  return {
-    food: String(it.food || "").trim() || "Unknown item",
-    portion: String(it.portion || "").trim() || "1 serving",
-  };
-}
-function partialNestedMacros(o: any) {
-  const out: Record<string, { low: number; high: number }> = {};
-  for (const id of MACRO_IDS) {
-    const lo = o[id + "_lower"], hi = o[id + "_upper"];
-    if (lo != null && hi != null) out[id] = { low: Number(lo), high: Number(hi) };
-  }
-  return out;
-}
-
-// Photo pair merge: when both models read the same number of items, merge each
-// aligned item's ranges with the shared mergeEstimates rule; when their reads
-// disagree structurally (different item counts), keep the A-side read whole —
-// mixing two different scene interpretations item-by-item would be nonsense.
-function mergeItemPair(a: any, b: any, widenThreshold: number) {
-  const { food, portion } = itemFoodPortion(a);
-  const ea = extractEstimateFields(a), eb = extractEstimateFields(b);
-  if (ea && eb) return { food, portion, macros: toNestedMacros(mergeEstimates(ea, eb, widenThreshold)) };
-  const e = ea ?? eb;
-  if (e) return { food, portion, macros: toNestedMacros(e) };
-  return { food, portion, macros: partialNestedMacros(a) }; // neither side complete — keep A's partial read (client tolerates gaps)
-}
-function mergePhotoItems(itemsA: any[] | null, itemsB: any[] | null, widenThreshold: number) {
-  if (!itemsA) return (itemsB || []).map((b) => ({ ...itemFoodPortion(b), macros: partialNestedMacros(b) }));
-  if (!itemsB) return itemsA.map((a) => ({ ...itemFoodPortion(a), macros: partialNestedMacros(a) }));
-  if (itemsA.length === 0) return itemsB.map((b) => ({ ...itemFoodPortion(b), macros: partialNestedMacros(b) }));
-  if (itemsB.length === 0 || itemsA.length !== itemsB.length) {
-    return itemsA.map((a) => ({ ...itemFoodPortion(a), macros: partialNestedMacros(a) }));
-  }
-  return itemsA.map((a, i) => mergeItemPair(a, itemsB[i], widenThreshold));
 }
 
 // ============================================================
