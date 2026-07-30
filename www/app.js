@@ -34,14 +34,18 @@ const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
 // All AI goes through the ai-proxy Edge Function; the server owns keys,
 // models, prompts, and metering. Throws { status, message } on failure.
 async function callAi(feature, payload) {
-  const { data, error } = await sb.functions.invoke("ai-proxy", { body: { feature, payload } });
-  if (error) {
-    const status = error.context?.status ?? 500;
-    throw { status, message: BillingView.aiErrorMessage(status) };
+  try {
+    const { data, error } = await sb.functions.invoke("ai-proxy", { body: { feature, payload } });
+    if (error) {
+      const status = error.context?.status ?? 500;
+      throw { status, message: BillingView.aiErrorMessage(status) };
+    }
+    return data;
+  } finally {
+    // Success OR failure, the ledger may have moved (a 402 especially must
+    // flip _aiExhausted). Insulated: the ping must never fail the call.
+    try { refreshCreditBar(); } catch (e) { /* ignore */ }
   }
-  try { if (typeof refreshCreditBar === "function") refreshCreditBar(); }
-  catch (e) { /* UI refresh must never fail the call */ }
-  return data;
 }
 
 // ---- AI credit bar + paywall (metering UI) ----
@@ -51,19 +55,24 @@ let _aiExhausted = false;
 async function refreshCreditBar() {
   try {
     const { data } = await sb.rpc("ai_usage_summary");
-    if (!data || data.error) return;
-    const vm = BillingView.creditBar(data.pct_used, data.plan);
+    // RPC failure or an {error} payload renders the explicit unknown state —
+    // never a stale/blank bar. _aiExhausted only moves on good data.
+    const ok = data && !data.error;
+    const vm = ok ? BillingView.creditBar(data.pct_used, data.plan) : BillingView.creditBar(undefined, "");
     const fill = document.getElementById("credit-bar-fill");
     if (!fill) return;
     fill.style.width = vm.width;
     fill.className = vm.cls;
-    document.getElementById("credit-bar-label").textContent = `${vm.label} · ${vm.planLabel}`;
-    _aiExhausted = !!data.exhausted;
+    document.getElementById("credit-bar-label").textContent = vm.planLabel ? `${vm.label} · ${vm.planLabel}` : vm.label;
+    if (ok) _aiExhausted = !!data.exhausted;
   } catch (e) { /* offline: keep last state */ }
 }
 
 // Idempotent: a 402 landing while the modal is already up is a no-op.
 function openPaywall() {
+  // Fire-and-forget re-check: a server-side upgrade (or the monthly reset)
+  // flips _aiExhausted back without requiring an app restart.
+  refreshCreditBar();
   const modal = document.getElementById("paywall-modal");
   if (!modal || !modal.classList.contains("hidden")) return;
   modal.classList.remove("hidden");
@@ -651,7 +660,7 @@ async function runEstimateQueue() {
         saveFoodEntries(fresh);
         renderFoodTable(); renderCalorieTracker();
       }
-      if (errStatus === 402 && typeof openPaywall === "function") openPaywall();
+      if (errStatus === 402) openPaywall();
     }
   } finally { _estimateRunning = false; }
 }
@@ -870,7 +879,7 @@ async function runPhotoEstimate() {
     renderPhotoItems();
   } catch (e) {
     setPhotoStatus((e && e.message) || "Couldn't read that photo — try again or add manually.", true);
-    if (e && e.status === 402 && typeof openPaywall === "function") openPaywall();
+    if (e && e.status === 402) openPaywall();
   } finally {
     document.getElementById("photo-correct-submit").disabled = false;
   }
@@ -1287,11 +1296,7 @@ async function runDietAssessment() {
     // Two analyses — check agreement
     const agreement = checkAssessmentAgreement(successful[0].data, successful[1].data);
 
-    // Round 2 reconciles the two RAW Round-1 texts; the server rejects the call
-    // unless BOTH are present — the old "need two analyses to reconcile" rule.
-    const canReconcile = typeof r1.a === "string" && typeof r1.b === "string";
-
-    if (!agreement.needsEscalation || !canReconcile) {
+    if (!agreement.needsEscalation) {
       const merged = averageAssessmentScores(successful.map(r => r.data));
       const resultObj = {
         timestamp: new Date().toISOString(), period, dataSummary,
@@ -1306,14 +1311,21 @@ async function runDietAssessment() {
     }
 
     // --- Round 2: debiased re-evaluation (one proxy call, both models) ---
+    // Round 2 reconciles the two RAW Round-1 texts; the server rejects the call
+    // unless BOTH are present — guaranteed here because both sides parsed.
     setAssessmentStatus(`Models disagreed on ${agreement.disagreements}/${agreement.total} categories — re-evaluating...`);
 
     let r2 = null, r2CallError = null;
-    try {
-      r2 = await callAi("assess-round2", { round1A: r1.a, round1B: r1.b, data });
-    } catch (err) {
-      r2CallError = err;
-      if (err && err.status === 402) openPaywall();
+    if (JSON.stringify({ round1A: r1.a, round1B: r1.b, data }).length > 250000) {
+      // Same 250k proxy cap as Round 1 — degrade to the R1 average, don't lose the run.
+      r2CallError = { message: "too much data to reconcile — try a shorter period" };
+    } else {
+      try {
+        r2 = await callAi("assess-round2", { round1A: r1.a, round1B: r1.b, data });
+      } catch (err) {
+        r2CallError = err;
+        if (err && err.status === 402) openPaywall();
+      }
     }
 
     const round2Results = r2 ? [
@@ -1817,7 +1829,7 @@ function renderAssessmentResults(result) {
   if (result.verdict === "single") {
     html += `<div class="verdict verdict-warning" style="margin-bottom:12px">&#9888; ${escapeHtml(result.warning)}</div>`;
   } else if (result.verdict === "consensus") {
-    html += `<div class="verdict verdict-consensus" style="margin-bottom:12px">&#10003; Both providers agreed (${result.agreement.total - result.agreement.disagreements}/${result.agreement.total} categories match)</div>`;
+    html += `<div class="verdict verdict-consensus" style="margin-bottom:12px">&#10003; Both models agreed (${result.agreement.total - result.agreement.disagreements}/${result.agreement.total} categories match)</div>`;
   } else if (result.verdict === "reconciled") {
     html += `<div class="verdict verdict-escalated" style="margin-bottom:12px">&#9888; Round 1: ${result.agreement.disagreements}/${result.agreement.total} categories disagreed — debiased re-evaluation in Round 2</div>`;
   } else if (result.verdict === "r2_failed") {
@@ -1829,7 +1841,7 @@ function renderAssessmentResults(result) {
     html += renderAgreementSummary(result.agreement, result.round1[0].providerName, result.round1[1].providerName);
   }
 
-  // Round 2 — Both providers re-evaluated with debiased prompt
+  // Round 2 — both models re-evaluated with debiased prompt
   if (result.verdict === "reconciled" && result.round2) {
     html += '<div class="assessment-round-label r2">Round 2 — Debiased Re-evaluation</div>';
     html += `<p class="grocery-hint" style="margin-bottom:8px">Both models re-evaluated the data with anonymized Round 1 analyses (A/B). Instructed to not compromise — cite specific foods to justify each decision.</p>`;
@@ -2463,9 +2475,6 @@ async function startApp() {
 
   maybeShowOnboarding();
 
-  // Resume any estimates left pending from a previous session
-  resumePendingEstimates();
-
   // Tab switching (top tabs + bottom nav share one activator)
   document.querySelectorAll(".tab, .bottom-nav-item").forEach((el) => {
     el.addEventListener("click", () => activateTab(el.dataset.tab));
@@ -2584,8 +2593,10 @@ async function startApp() {
   renderCalorieTracker();
   renderCalorieTarget();
 
-  // AI credit bar (callAi also refreshes it after every proxy call)
-  refreshCreditBar();
+  // AI credit bar first (callAi also refreshes it after every proxy call),
+  // THEN resume pending estimates from a previous session — an exhausted
+  // user's leftovers must hit the _aiExhausted gate, not fire doomed calls.
+  refreshCreditBar().finally(() => resumePendingEstimates());
 
   // Apply the saved theme (sets data-theme + native status bar) and track OS light/dark changes
   applyTheme();

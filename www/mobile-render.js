@@ -1,7 +1,7 @@
 // Mobile renderers. Loaded after app.js + assessment-view.js; relies on globals:
 //  renderFoodCards:        loadFoodEntries, getDailyFoodTotals, formatDate, formatTime,
 //                          escapeHtml, renderNum, isMobile, editFood, deleteFood,
-//                          getEnabledMacros, getValueFormat, Macros
+//                          retryEstimate, getEnabledMacros, getValueFormat, Macros
 //  renderDayCards:         loadDayEntries, loadProfile, loadFoodEntries, calcBMR, calcTDEE,
 //                          Targets, getDailyFoodTotals, formatDate, escapeHtml, renderNum,
 //                          isMobile, editDay, deleteDay
@@ -36,7 +36,7 @@ function renderFoodCards() {
         .map((id) => `<div class="food-card-row"><span>${escapeHtml(Macros.byId(id).label)}</span><b>${Macros.formatMacro(Macros.getMacro(e, id), fmt)} ${escapeHtml(Macros.byId(id).unit)}</b></div>`)
         .join("");
       const badge = e.estimateStatus === "pending" ? '<span class="est-badge est-pending" title="Estimating…">…</span>'
-        : (e.estimateStatus === "error" ? '<span class="est-badge est-error" title="Estimate failed">!</span>' : "");
+        : (e.estimateStatus === "error" ? '<button class="btn-icon est-badge est-error" title="Estimate failed — tap to retry">!</button>' : "");
       html += `<div class="food-card" data-id="${e.id}">
         <div class="food-card-main">
           <div class="food-card-name">${escapeHtml(e.food)}</div>
@@ -53,10 +53,12 @@ function renderFoodCards() {
   }
   host.innerHTML = html;
 
-  // Tap card body to edit
+  // Tap card body to edit; tap the error badge to retry the estimate (same
+  // retryEstimate path as the desktop table's badge button).
   host.querySelectorAll(".food-card").forEach((card) => {
     card.addEventListener("click", (ev) => {
       if (ev.target.closest(".card-menu-btn")) return; // handled below
+      if (ev.target.closest(".est-error")) { retryEstimate(Number(card.dataset.id)); return; }
       editFood(Number(card.dataset.id));
     });
   });
