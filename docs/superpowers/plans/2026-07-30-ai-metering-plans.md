@@ -576,6 +576,8 @@ Deno.serve(async (req) => {
 **Files:**
 - Modify: `www/app.js` (provider adapters ~730–890; assessment calls ~1790–1830 untouched until Task 7)
 
+**401 note (from Task 4 review):** an expired session is handled by the existing auth machinery (supabase refresh failure → session-loss reload → gate); `aiErrorMessage(401)` exists as accurate fallback text only — `callAi` needs no special 401 routing.
+
 - [ ] **Step 1: Add `callAi`** near the top of the data layer (after the `sb` client):
 
 ```js
