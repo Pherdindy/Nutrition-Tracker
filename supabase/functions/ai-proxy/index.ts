@@ -608,6 +608,9 @@ Deno.serve(async (req) => {
   if (feature === "estimate" && JSON.stringify(payload).length > 10_000) {
     return json(400, { error: "payload too large" });
   }
+  if (feature === "photo" && JSON.stringify(payload.hint ?? null).length > 10_000) {
+    return json(400, { error: "payload too large" });
+  }
   if (feature.startsWith("assess") && JSON.stringify(payload).length > 250_000) {
     return json(400, { error: "payload too large" });
   }
@@ -641,7 +644,10 @@ Deno.serve(async (req) => {
     console.error("rate-limit query failed", rateErr);
     return json(503, { error: "not configured" });
   }
-  if (rateLimited(recent ?? 0, cfg.rate_per_min)) return json(429, { error: "rate limited" });
+  // Guard the config key: `recent >= undefined` is false, which would silently
+  // DISABLE rate limiting if rate_per_min were ever dropped from ai_config.
+  if (cfg.rate_per_min == null) console.warn("rate_per_min missing from ai_config; defaulting to 5");
+  if (rateLimited(recent ?? 0, cfg.rate_per_min ?? 5)) return json(429, { error: "rate limited" });
 
   // 4. Quota pre-check — summed SQL-side by the ai_usage_total RPC (a JS-side
   // row fetch silently truncates at PostgREST max-rows, which would stop the
@@ -690,18 +696,28 @@ Deno.serve(async (req) => {
   ]);
   const okA = ra.status === "fulfilled" ? ra.value : null;
   const okB = rb.status === "fulfilled" ? rb.value : null;
+  // Usage can come from a fulfilled call OR ride on a truncation rejection —
+  // either way we paid for those tokens and they must hit the ledger, even
+  // when the other side succeeds (degraded path). A rejection-carried usage
+  // with malformed token counts is dropped (null) rather than allowed to turn
+  // a surviving model's success into an unpriced 503.
+  const settledUsage = (s: PromiseSettledResult<{ text: string; usage: Usage }>): Usage | null => {
+    if (s.status === "fulfilled") return s.value.usage;
+    const u = (s.reason as any)?.usage;
+    return u && Number.isFinite(u.inputTokens) && Number.isFinite(u.outputTokens) ? u : null;
+  };
+  const usageA = settledUsage(ra);
+  const usageB = settledUsage(rb);
   if (!okA && !okB) {
     // Failures still count toward the trailing-60s rate limit, and a truncated
     // response carries real token usage we already paid for — ledger it before
     // the 502 (cost 0 when neither rejection carries usage).
-    const failUsageA: Usage | null = ra.status === "rejected" ? ((ra.reason as any)?.usage ?? null) : null;
-    const failUsageB: Usage | null = rb.status === "rejected" ? ((rb.reason as any)?.usage ?? null) : null;
-    const { costUsd: failCost } = computeCost(failUsageA, failUsageB, cfg.prices);
+    const { costUsd: failCost } = computeCost(usageA, usageB, cfg.prices);
     const failLedger = {
       user_id: uid, feature,
       model_a: modelA, model_b: modelB,
-      tokens_in_a: failUsageA?.inputTokens ?? null, tokens_out_a: failUsageA?.outputTokens ?? null,
-      tokens_in_b: failUsageB?.inputTokens ?? null, tokens_out_b: failUsageB?.outputTokens ?? null,
+      tokens_in_a: usageA?.inputTokens ?? null, tokens_out_a: usageA?.outputTokens ?? null,
+      tokens_in_b: usageB?.inputTokens ?? null, tokens_out_b: usageB?.outputTokens ?? null,
       cost_usd: failCost,
     };
     let { error: failErr } = await admin.from("ai_usage").insert(failLedger);
@@ -710,8 +726,12 @@ Deno.serve(async (req) => {
     return json(502, { error: "both models failed" });
   }
 
-  // 8. Meter with real usage
-  const { costUsd, unpriced } = computeCost(okA?.usage ?? null, okB?.usage ?? null, cfg.prices);
+  // 8. Meter with real usage from BOTH sides — a truncated-but-billed side is
+  // metered alongside the survivor; only the response building below is
+  // restricted to the fulfilled side's text. Ledger slots are positional
+  // (A = modelA, B = modelB); model_b stays null only when side B produced
+  // no billable usage at all.
+  const { costUsd, unpriced } = computeCost(usageA, usageB, cfg.prices);
   if (unpriced.length) {
     // Spec: model names never reach the client — log the id, return generic.
     console.error("unpriced model", unpriced[0]);
@@ -719,10 +739,9 @@ Deno.serve(async (req) => {
   }
   const ledger = {
     user_id: uid, feature,
-    model_a: (okA ?? okB)!.usage.model, model_b: okA && okB ? okB.usage.model : null,
-    tokens_in_a: (okA ?? okB)!.usage.inputTokens, tokens_out_a: (okA ?? okB)!.usage.outputTokens,
-    tokens_in_b: okA && okB ? okB.usage.inputTokens : null,
-    tokens_out_b: okA && okB ? okB.usage.outputTokens : null,
+    model_a: modelA, model_b: usageB ? modelB : null,
+    tokens_in_a: usageA?.inputTokens ?? null, tokens_out_a: usageA?.outputTokens ?? null,
+    tokens_in_b: usageB?.inputTokens ?? null, tokens_out_b: usageB?.outputTokens ?? null,
     cost_usd: costUsd,
   };
   // One retry; if the first insert actually landed despite reporting an error

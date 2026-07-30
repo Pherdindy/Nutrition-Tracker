@@ -130,6 +130,14 @@ test("mergePhotoItems: count mismatch falls back to A-side whole", () => {
   assert.deepEqual(out[0].macros.calories, { low: 100, high: 200 });
 });
 
+test("mergePhotoItems: empty B (but parsed) falls back to A-side whole", () => {
+  const out = mergePhotoItems([flatItem("egg"), flatItem("rice")], [], 0.4);
+  assert.equal(out.length, 2);
+  assert.equal(out[0].food, "egg");
+  assert.equal(out[1].food, "rice");
+  assert.deepEqual(out[0].macros.calories, { low: 100, high: 200 });
+});
+
 test("mergePhotoItems: null/degraded arms use the surviving side, normalized", () => {
   const fromB = mergePhotoItems(null, [flatItem("  Egg  ")], 0.4);
   assert.equal(fromB[0].food, "Egg");
