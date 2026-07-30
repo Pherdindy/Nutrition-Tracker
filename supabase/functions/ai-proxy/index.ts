@@ -82,6 +82,7 @@ function buildEstimatePrompt(payload: any) {
     userOpenAI: user,
     userAnthropic: user,
     tokens: 500,
+    timeoutMs: 30_000,
   };
 }
 
@@ -135,6 +136,7 @@ function buildPhotoPrompt(payload: any) {
       { type: "image", source: { type: "base64", media_type: mediaType, data: b64 } },
     ],
     tokens: 1500,
+    timeoutMs: 30_000,
   };
 }
 
@@ -435,7 +437,7 @@ function buildAssessmentPromptText(data: any) {
 
 function buildAssessR1Prompt(payload: any) {
   const user = buildAssessmentPromptText(payload.data);
-  return { system: SYSTEM_PROMPT_DIET_ASSESSMENT, userOpenAI: user, userAnthropic: user, tokens: 8000 };
+  return { system: SYSTEM_PROMPT_DIET_ASSESSMENT, userOpenAI: user, userAnthropic: user, tokens: 8000, timeoutMs: 90_000 };
 }
 
 // R1 analyses arrive back as raw model texts; pretty-print them as JSON when
@@ -458,7 +460,7 @@ function buildAssessR2Prompt(payload: any) {
   prompt += `\n\nAnalysis B:\n`;
   prompt += prettyAnalysis(shuffled[1]);
   prompt += `\n\nFor each category where A and B disagree, re-examine the raw food data above and determine which is correct. Do NOT average or compromise — pick the answer supported by the data, or give your own if both are wrong. Cite specific foods from the log in your reasoning.`;
-  return { system: SYSTEM_PROMPT_DIET_RECONCILE, userOpenAI: prompt, userAnthropic: prompt, tokens: 8000 };
+  return { system: SYSTEM_PROMPT_DIET_RECONCILE, userOpenAI: prompt, userAnthropic: prompt, tokens: 8000, timeoutMs: 90_000 };
 }
 
 // ============================================================
@@ -578,7 +580,7 @@ function openaiModelParams(model: string, tokens: number) {
   return { max_tokens: tokens, temperature: 0 };
 }
 
-async function callOpenAI(model: string, system: string, user: unknown, tokens: number): Promise<{ text: string; usage: Usage }> {
+async function callOpenAI(model: string, system: string, user: unknown, tokens: number, timeoutMs: number): Promise<{ text: string; usage: Usage }> {
   const res = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${OPENAI_KEY}` },
@@ -587,42 +589,63 @@ async function callOpenAI(model: string, system: string, user: unknown, tokens: 
       messages: [{ role: "system", content: system }, { role: "user", content: user }],
       ...openaiModelParams(model, tokens),
     }),
+    signal: AbortSignal.timeout(timeoutMs),
   });
-  if (!res.ok) throw new Error(`openai ${res.status}`);
+  if (!res.ok) {
+    const errBody = await res.text().catch(() => "");
+    console.error("openai error", res.status, errBody.slice(0, 200));
+    throw new Error(`openai ${res.status}`);
+  }
   const j = await res.json();
-  // Ported guards from www/app.js extractOpenAIContent()
+  const usage: Usage | null = j.usage
+    ? { model, inputTokens: j.usage.prompt_tokens, outputTokens: j.usage.completion_tokens }
+    : null;
+  // Ported guards from www/app.js extractOpenAIContent(). Failures after a
+  // usage block carry it so truncated output still gets metered (the ledger
+  // should know what we actually paid for).
+  const fail = (message: string): never => { throw usage ? { message, usage } : new Error(message); };
   const choice = j.choices && j.choices[0];
-  if (!choice) throw new Error("No response from OpenAI");
-  if (choice.finish_reason === "length") throw new Error("openai truncated (token limit reached)");
+  if (!choice) fail("No response from OpenAI");
+  if (choice.finish_reason === "length") fail("openai truncated (token limit reached)");
   const content = choice.message && choice.message.content;
-  if (!content) throw new Error("Empty response from OpenAI");
-  return {
-    text: content,
-    usage: { model, inputTokens: j.usage.prompt_tokens, outputTokens: j.usage.completion_tokens },
-  };
+  if (!content) fail("Empty response from OpenAI");
+  if (!usage) throw new Error("openai missing usage");
+  return { text: content, usage };
 }
 
-async function callAnthropic(model: string, system: string, user: unknown, tokens: number): Promise<{ text: string; usage: Usage }> {
+async function callAnthropic(model: string, system: string, user: unknown, tokens: number, timeoutMs: number): Promise<{ text: string; usage: Usage }> {
   const res = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: { "Content-Type": "application/json", "x-api-key": ANTHROPIC_KEY, "anthropic-version": "2023-06-01" },
     body: JSON.stringify({ model, max_tokens: tokens, system, messages: [{ role: "user", content: user }], temperature: 0 }),
+    signal: AbortSignal.timeout(timeoutMs),
   });
-  if (!res.ok) throw new Error(`anthropic ${res.status}`);
+  if (!res.ok) {
+    const errBody = await res.text().catch(() => "");
+    console.error("anthropic error", res.status, errBody.slice(0, 200));
+    throw new Error(`anthropic ${res.status}`);
+  }
   const j = await res.json();
-  // Ported truncation guard (client's vision/assessment adapters)
-  if (j.stop_reason === "max_tokens") throw new Error("anthropic truncated (token limit)");
+  const usage: Usage | null = j.usage
+    ? { model, inputTokens: j.usage.input_tokens, outputTokens: j.usage.output_tokens }
+    : null;
+  // Ported truncation guard (client's vision/assessment adapters); carries the
+  // usage block so truncated output still gets metered.
+  if (j.stop_reason === "max_tokens") {
+    throw usage ? { message: "anthropic truncated (token limit)", usage } : new Error("anthropic truncated (token limit)");
+  }
+  if (!usage) throw new Error("anthropic missing usage");
   return {
     text: j.content.map((b: { text?: string }) => b.text ?? "").join(""),
-    usage: { model, inputTokens: j.usage.input_tokens, outputTokens: j.usage.output_tokens },
+    usage,
   };
 }
 
 // Dispatch by model id prefix: claude-* → Anthropic, everything else → OpenAI.
-function callModel(model: string, system: string, userOpenAI: unknown, userAnthropic: unknown, tokens: number) {
+function callModel(model: string, system: string, userOpenAI: unknown, userAnthropic: unknown, tokens: number, timeoutMs: number) {
   return model.startsWith("claude-")
-    ? callAnthropic(model, system, userAnthropic, tokens)
-    : callOpenAI(model, system, userOpenAI, tokens);
+    ? callAnthropic(model, system, userAnthropic, tokens, timeoutMs)
+    : callOpenAI(model, system, userOpenAI, tokens, timeoutMs);
 }
 
 // ============================================================
@@ -638,12 +661,27 @@ Deno.serve(async (req) => {
   if (authErr || !userData?.user) return json(401, { error: "unauthenticated" });
   const uid = userData.user.id;
 
-  const { feature, payload } = await req.json();
+  let reqBody: any;
+  try { reqBody = await req.json(); } catch { return json(400, { error: "bad request" }); }
+  const feature = reqBody?.feature;
+  const payload = (reqBody && typeof reqBody.payload === "object" && reqBody.payload !== null && !Array.isArray(reqBody.payload))
+    ? reqBody.payload : {};
   if (!["estimate", "photo", "assess-round1", "assess-round2"].includes(feature)) {
     return json(400, { error: "unknown feature" });
   }
   if (feature === "photo" && (payload.imageDataUrl?.length ?? 0) > 5_000_000) {
     return json(400, { error: "image too large" });
+  }
+  // Size caps mirroring the photo cap — bound what a client can make us relay.
+  if (feature === "estimate" && JSON.stringify(payload).length > 10_000) {
+    return json(400, { error: "payload too large" });
+  }
+  if (feature.startsWith("assess") && JSON.stringify(payload).length > 250_000) {
+    return json(400, { error: "payload too large" });
+  }
+  // R2 reconciles exactly two analyses — the old client refused fewer; enforce it here.
+  if (feature === "assess-round2" && (payload.round1A == null || payload.round1B == null)) {
+    return json(400, { error: "bad request" });
   }
 
   // 2. Config + entitlement (+ default-free upsert) + kill switch
@@ -651,6 +689,9 @@ Deno.serve(async (req) => {
   if (!cfgRow) return json(503, { error: "not configured" });
   const cfg = cfgRow.value;
   if (!cfg.enabled) return json(503, { error: "ai disabled" });
+  // Read the merge dial up front with a safe default — it's consumed in step 9,
+  // AFTER the ledger insert, and a bad config edit must not 500 post-billing.
+  const widenThreshold = cfg.merge?.widen_threshold ?? 0.4;
 
   await admin.from("entitlements").upsert({ user_id: uid }, { onConflict: "user_id", ignoreDuplicates: true });
   const { data: ent } = await admin.from("entitlements").select("plan").eq("user_id", uid).single();
@@ -689,7 +730,12 @@ Deno.serve(async (req) => {
 
   // 5. Model pair for this feature class
   const featureClass = feature.startsWith("assess") ? "assess" : feature;
-  const [modelA, modelB] = planCfg.models[featureClass];
+  const pair = planCfg.models?.[featureClass];
+  if (!Array.isArray(pair) || pair.length < 2) {
+    console.error("missing model pair", plan, featureClass);
+    return json(503, { error: "not configured" });
+  }
+  const [modelA, modelB] = pair;
   for (const m of [modelA, modelB]) {
     if (!cfg.prices[m]) {
       // Spec: model names never reach the client — log the id, return generic.
@@ -699,7 +745,7 @@ Deno.serve(async (req) => {
   }
 
   // 6. Build prompts (ported verbatim from the pre-B client)
-  const { system, userOpenAI, userAnthropic, tokens } =
+  const { system, userOpenAI, userAnthropic, tokens, timeoutMs } =
     feature === "estimate" ? buildEstimatePrompt(payload)
     : feature === "photo" ? buildPhotoPrompt(payload)
     : feature === "assess-round1" ? buildAssessR1Prompt(payload)
@@ -707,12 +753,30 @@ Deno.serve(async (req) => {
 
   // 7. Run the pair in parallel; degrade to single-model if one fails
   const [ra, rb] = await Promise.allSettled([
-    callModel(modelA, system, userOpenAI, userAnthropic, tokens),
-    callModel(modelB, system, userOpenAI, userAnthropic, tokens),
+    callModel(modelA, system, userOpenAI, userAnthropic, tokens, timeoutMs),
+    callModel(modelB, system, userOpenAI, userAnthropic, tokens, timeoutMs),
   ]);
   const okA = ra.status === "fulfilled" ? ra.value : null;
   const okB = rb.status === "fulfilled" ? rb.value : null;
-  if (!okA && !okB) return json(502, { error: "both models failed" });
+  if (!okA && !okB) {
+    // Failures still count toward the trailing-60s rate limit, and a truncated
+    // response carries real token usage we already paid for — ledger it before
+    // the 502 (cost 0 when neither rejection carries usage).
+    const failUsageA: Usage | null = ra.status === "rejected" ? ((ra.reason as any)?.usage ?? null) : null;
+    const failUsageB: Usage | null = rb.status === "rejected" ? ((rb.reason as any)?.usage ?? null) : null;
+    const { costUsd: failCost } = computeCost(failUsageA, failUsageB, cfg.prices);
+    const failLedger = {
+      user_id: uid, feature,
+      model_a: modelA, model_b: modelB,
+      tokens_in_a: failUsageA?.inputTokens ?? null, tokens_out_a: failUsageA?.outputTokens ?? null,
+      tokens_in_b: failUsageB?.inputTokens ?? null, tokens_out_b: failUsageB?.outputTokens ?? null,
+      cost_usd: failCost,
+    };
+    let { error: failErr } = await admin.from("ai_usage").insert(failLedger);
+    if (failErr) ({ error: failErr } = await admin.from("ai_usage").insert(failLedger));
+    if (failErr) console.error("FAIL-LEDGER INSERT FAILED TWICE", failErr, failLedger);
+    return json(502, { error: "both models failed" });
+  }
 
   // 8. Meter with real usage
   const { costUsd, unpriced } = computeCost(okA?.usage ?? null, okB?.usage ?? null, cfg.prices);
@@ -729,6 +793,8 @@ Deno.serve(async (req) => {
     tokens_out_b: okA && okB ? okB.usage.outputTokens : null,
     cost_usd: costUsd,
   };
+  // One retry; if the first insert actually landed despite reporting an error
+  // (false negative), this double-bills a few cents — rare, accepted.
   let { error: insErr } = await admin.from("ai_usage").insert(ledger);
   if (insErr) ({ error: insErr } = await admin.from("ai_usage").insert(ledger));
   if (insErr) console.error("LEDGER INSERT FAILED TWICE", insErr, ledger);
@@ -738,7 +804,7 @@ Deno.serve(async (req) => {
     const estA = okA ? parseEstimate(okA.text) : null;
     const estB = okB ? parseEstimate(okB.text) : null;
     if (!estA && !estB) return json(502, { error: "unparseable model output" });
-    const merged = mergeEstimates(estA, estB, cfg.merge.widen_threshold);
+    const merged = mergeEstimates(estA, estB, widenThreshold);
     return json(200, {
       cal_low: merged.cal_low, cal_high: merged.cal_high,
       pro_low: merged.pro_low, pro_high: merged.pro_high,
@@ -755,7 +821,7 @@ Deno.serve(async (req) => {
     const itemsB = okB ? parsePhotoItems(okB.text) : null;
     if (!itemsA && !itemsB) return json(502, { error: "unparseable model output" });
     return json(200, {
-      items: mergePhotoItems(itemsA, itemsB, cfg.merge.widen_threshold),
+      items: mergePhotoItems(itemsA, itemsB, widenThreshold),
       ai_thought_process: { a: okA?.text ?? null, b: okB?.text ?? null },
     });
   }
