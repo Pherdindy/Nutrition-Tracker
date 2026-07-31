@@ -512,6 +512,22 @@ function openaiModelParams(model: string, tokens: number) {
   return { max_tokens: tokens, temperature: 0 };
 }
 
+// Claude 5-family models (claude-opus-5, claude-sonnet-5 — no "-4-" in the id)
+// reject `temperature` (400 invalid_request_error) and think by default, with
+// thinking tokens counting against max_tokens — so they get the same headroom
+// treatment as OpenAI reasoning models plus an effort dial (small structured
+// extractions run at "low", assessments at "medium"). `output_config.effort`
+// itself 400s on 4.x models (e.g. claude-haiku-4-5), hence the split.
+function anthropicModelParams(model: string, tokens: number) {
+  if (!model.includes("-4-")) {
+    return {
+      max_tokens: Math.max(tokens * 8, 8000),
+      output_config: { effort: tokens >= 8000 ? "medium" : "low" },
+    };
+  }
+  return { max_tokens: tokens, temperature: 0 };
+}
+
 async function callOpenAI(model: string, system: string, user: unknown, tokens: number, timeoutMs: number): Promise<{ text: string; usage: Usage }> {
   const res = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
@@ -549,7 +565,7 @@ async function callAnthropic(model: string, system: string, user: unknown, token
   const res = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: { "Content-Type": "application/json", "x-api-key": ANTHROPIC_KEY, "anthropic-version": "2023-06-01" },
-    body: JSON.stringify({ model, max_tokens: tokens, system, messages: [{ role: "user", content: user }], temperature: 0 }),
+    body: JSON.stringify({ model, system, messages: [{ role: "user", content: user }], ...anthropicModelParams(model, tokens) }),
     signal: AbortSignal.timeout(timeoutMs),
   });
   if (!res.ok) {
