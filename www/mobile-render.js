@@ -91,9 +91,9 @@ function renderDayCards() {
     const overLow = t.calLow - target, overHigh = t.calHigh - target;
     const calDisp = Targets.calDeltaDisplay(overLow, overHigh);
     const proDisp = Targets.proteinStatusDisplay(t.proLow, t.proHigh, profile.proteinLow, profile.proteinHigh);
-    html += `<div class="day-card">
+    html += `<div class="day-card${day.incomplete ? " day-incomplete" : ""}">
       <button class="day-card-head" data-id="${day.id}">
-        <span class="day-card-date">${formatDate(day.date)}</span>
+        <span class="day-card-date">${formatDate(day.date)}</span>${day.incomplete ? `<span class="day-incomplete-pill">Incomplete</span>` : ""}
         <span class="day-card-kcal">${renderNum(t.calLow, 0)}–${renderNum(t.calHigh, 0)} / ${renderNum(target, 0)} cal</span>
         <span class="day-card-caret">&#9656;</span>
       </button>

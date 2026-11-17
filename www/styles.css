@@ -354,6 +354,11 @@ select {
   gap: 12px;
 }
 
+.form-row.form-check { display: flex; align-items: flex-start; gap: 10px; }
+.form-row.form-check input[type="checkbox"] { width: 18px; height: 18px; margin-top: 2px; flex: none; accent-color: var(--primary); cursor: pointer; }
+.form-row.form-check label { margin: 0; color: var(--text); cursor: pointer; }
+.form-row.form-check .form-hint { display: block; font-size: 0.75rem; color: var(--text-dim); font-weight: 400; margin-top: 2px; }
+
 .modal-actions {
   display: flex;
   gap: 8px;
@@ -1668,6 +1673,11 @@ body.loading::after {
 .day-card-head { width: 100%; display: flex; align-items: center; gap: 8px; background: none; border: none;
   padding: 12px 14px; cursor: pointer; text-align: left; color: var(--text, #e4e6ed); }
 .day-card-date { font-weight: 700; }
+.day-incomplete-pill { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 0.7rem; font-weight: 600;
+  background: var(--surface2); border: 1px solid var(--border); color: var(--text-dim); vertical-align: middle; white-space: nowrap; }
+tr.day-summary.day-incomplete td { opacity: 0.6; }
+tr.day-summary.day-incomplete td:first-child { opacity: 1; }
+.day-card.day-incomplete .day-card-kcal { opacity: 0.6; }
 .day-card-kcal { margin-left: auto; font-size: 13px; color: var(--text-dim, #8b8fa3); }
 .day-card-caret { transition: transform .15s; color: var(--text-dim, #8b8fa3); }
 .day-card.expanded .day-card-caret { transform: rotate(90deg); }

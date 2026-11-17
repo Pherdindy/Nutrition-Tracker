@@ -106,13 +106,13 @@ function foodJsToRow(e) {
 }
 
 function dayRowToJs(r) {
-  return Targets.migrateDay({ id: r.id, date: r.date, weight: Number(r.weight), activity: r.activity });
+  return Targets.migrateDay({ id: r.id, date: r.date, weight: Number(r.weight), activity: r.activity, incomplete: r.incomplete === true });
 }
 function dayJsToRow(e) {
   // Keep legacy day columns populated from the current global profile so old rows stay valid
   // (no days-table schema change) and any reader that still expects them works. Reads ignore them.
   const p = (typeof loadProfile === "function") ? loadProfile() : {};
-  return { id: e.id, date: e.date, weight: e.weight, activity: e.activity,
+  return { id: e.id, date: e.date, weight: e.weight, activity: e.activity, incomplete: !!e.incomplete,
     age: p.age != null ? p.age : DEFAULT_PROFILE.age, deficit: Targets.deficitForGoal(p.weightLossGoal),
     protein_target_low: p.proteinLow != null ? p.proteinLow : DEFAULT_PROFILE.proteinLow, protein_target_high: p.proteinHigh != null ? p.proteinHigh : DEFAULT_PROFILE.proteinHigh };
 }
@@ -444,8 +444,9 @@ function renderCalorieTracker() {
     const totals = getDailyFoodTotals(day.date, food);
     const surpLow = totals.calLow - target, surpHigh = totals.calHigh - target;
     const proSurpLow = totals.proLow - profile.proteinLow, proSurpHigh = totals.proHigh - profile.proteinHigh;
-    html += `<tr class="day-summary">
-      <td>${formatDate(day.date)}</td>
+    const incPill = day.incomplete ? ` <span class="day-incomplete-pill" title="Excluded from averages and AI assessments">Incomplete</span>` : "";
+    html += `<tr class="day-summary${day.incomplete ? " day-incomplete" : ""}">
+      <td>${formatDate(day.date)}${incPill}</td>
       <td class="num">${day.weight}</td>
       <td class="num">${renderNum(bmr, 1)}</td>
       <td>${escapeHtml(day.activity)}</td>
@@ -702,6 +703,7 @@ function openDayModal(entry) {
   document.getElementById("day-date").value = entry.date;
   document.getElementById("day-weight").value = entry.weight;
   document.getElementById("day-activity").value = entry.activity;
+  document.getElementById("day-incomplete").checked = entry.incomplete === true;
   modal.classList.remove("hidden");
 }
 
@@ -715,7 +717,7 @@ function saveDay(e) {
   const id = document.getElementById("day-id").value;
   const idx = entries.findIndex((x) => x.id === parseInt(id));
   if (idx === -1) { console.warn("saveDay: day not found", id); return; }
-  entries[idx] = { ...entries[idx], weight: parseFloat(document.getElementById("day-weight").value), activity: document.getElementById("day-activity").value };
+  entries[idx] = { ...entries[idx], weight: parseFloat(document.getElementById("day-weight").value), activity: document.getElementById("day-activity").value, incomplete: document.getElementById("day-incomplete").checked };
   saveDayEntries(entries);
   closeDayModal();
   renderCalorieTracker();
@@ -1011,8 +1013,11 @@ function getDateRangeForPeriod(period) {
 }
 
 function buildRangeData(foodEntries, dayEntries, profile, startDate, endDate) {
-  const filteredFood = foodEntries.filter(f => f.date >= startDate && f.date <= endDate);
-  const filteredDays = dayEntries.filter(d => d.date >= startDate && d.date <= endDate);
+  const inRange = Targets.excludeIncompleteDays(
+    foodEntries.filter(f => f.date >= startDate && f.date <= endDate),
+    dayEntries.filter(d => d.date >= startDate && d.date <= endDate));
+  const filteredFood = inRange.food;
+  const filteredDays = inRange.days;
 
   const foodByDate = {};
   filteredFood.forEach(f => {
@@ -1052,6 +1057,7 @@ function buildRangeData(foodEntries, dayEntries, profile, startDate, endDate) {
 
   return {
     startDate, endDate, dates, numDays,
+    excludedIncompleteDays: inRange.excludedDates.length,
     totalEntries: filteredFood.length,
     foodByDate, dailyContext,
     totalCalLow, totalCalHigh, totalProLow, totalProHigh,
@@ -1090,6 +1096,7 @@ function getAssessmentData(period) {
       dates: currentYear.dates,
       numDays: currentYear.numDays,
       totalEntries: currentYear.totalEntries,
+      excludedIncompleteDays: currentYear.excludedIncompleteDays,
       foodByDate: currentYear.foodByDate,
       dailyContext: currentYear.dailyContext,
       avgCalLow: currentYear.avgCalLow, avgCalHigh: currentYear.avgCalHigh,
@@ -1243,7 +1250,9 @@ async function runDietAssessment() {
   const data = getAssessmentData(period);
 
   if (data.totalEntries === 0) {
-    setAssessmentStatus("No food entries found for this period. Add food entries first.", true);
+    setAssessmentStatus(data.excludedIncompleteDays > 0
+      ? "Every logged day in this period is tagged incomplete. Untag a day or pick a different period."
+      : "No food entries found for this period. Add food entries first.", true);
     return;
   }
 
@@ -1276,7 +1285,7 @@ async function runDietAssessment() {
       return;
     }
 
-    const dataSummary = { startDate: data.startDate, endDate: data.endDate, numDays: data.numDays, totalEntries: data.totalEntries, avgCalLow: data.avgCalLow, avgCalHigh: data.avgCalHigh };
+    const dataSummary = { startDate: data.startDate, endDate: data.endDate, numDays: data.numDays, excludedIncompleteDays: data.excludedIncompleteDays || 0, totalEntries: data.totalEntries, avgCalLow: data.avgCalLow, avgCalHigh: data.avgCalHigh };
 
     // Only one usable analysis — no cross-validation possible
     if (successful.length === 1) {
@@ -1388,6 +1397,10 @@ function renderAssessmentDataSummary(data) {
   let html = '<div class="assessment-meta">';
   html += `<span class="meta-pill"><strong>${data.startDate}</strong> to <strong>${data.endDate}</strong></span>`;
   html += `<span class="meta-pill"><strong>${data.numDays}</strong> days</span>`;
+  if (data.excludedIncompleteDays > 0) {
+    const n = data.excludedIncompleteDays;
+    html += `<span class="meta-pill"><strong>${n}</strong> incomplete day${n === 1 ? "" : "s"} excluded</span>`;
+  }
   html += `<span class="meta-pill"><strong>${data.totalEntries}</strong> food entries</span>`;
   html += '</div>';
 
@@ -2005,7 +2018,7 @@ function renderAssessmentHistory() {
     html += `<tr>
       <td>${escapeHtml(date)}</td>
       <td>${escapeHtml(periodLabel)}</td>
-      <td class="num">${a.dataSummary?.numDays ?? "-"}</td>
+      <td class="num">${a.dataSummary?.numDays ?? "-"}${a.dataSummary?.excludedIncompleteDays > 0 ? ` <span class="day-incomplete-pill" title="Incomplete days excluded">−${a.dataSummary.excludedIncompleteDays}</span>` : ""}</td>
       <td class="num">${a.dataSummary?.totalEntries ?? "-"}</td>
       <td><span class="score-badge ${scoreCls}">${score}</span></td>
       <td><span class="badge ${a.verdict === 'consensus' ? 'badge-green' : a.verdict === 'reconciled' ? 'badge-blue' : 'badge-yellow'}">${escapeHtml(verdictLabel)}</span></td>

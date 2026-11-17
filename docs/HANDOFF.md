@@ -16,6 +16,21 @@ airplane-mode relaunch serves the namespaced offline cache; sign-out
 double-wipes (theme/API keys kept); fresh `+test2` account → onboarding →
 empty app, sees 0 owner rows (client RLS probe + server ledger both checked).
 
+**Incomplete-log day tag — DONE + emulator-verified 2026-11-17** on branch
+`feat/incomplete-days` (cut from `feat/metering`; **merge after metering**).
+Spec `docs/superpowers/specs/2026-11-17-incomplete-days-design.md`, plan
+`docs/superpowers/plans/2026-11-17-incomplete-days.md`. Edit Day modal checkbox
+→ `days.incomplete`; "Incomplete" pill on tracker row / day card; tagged days
+excluded from averages + AI assessments via `Targets.excludeIncompleteDays` in
+`buildRangeData()` (no ai-proxy change); assessment meta + history show the
+excluded count. Migration `incomplete_days_01` APPLIED (column
+`incomplete boolean not null default false`). Verified live: tag via real
+modal → server row `incomplete=true`; survives force-stop/relaunch; all-tagged
+week → new early-return message; year range 12→11 days with "1 incomplete day
+excluded" pill. Test tag removed afterwards (server: 0 tagged / 11 days).
+Known limitation: stale-cache second device re-sends
+`incomplete=false` on its next full upsert (same last-write-wins as weight).
+
 ## Supabase production state (project `wcbpvvyhswaricoadqbb`)
 
 - Owner: `robertmessi123456@gmail.com` = UID

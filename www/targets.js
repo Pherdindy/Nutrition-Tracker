@@ -20,7 +20,20 @@
 
   function migrateDay(day) {
     if (!day) return day;
-    return { id: day.id, date: day.date, weight: day.weight, activity: day.activity };
+    return { id: day.id, date: day.date, weight: day.weight, activity: day.activity, incomplete: day.incomplete === true };
+  }
+
+  // Drop tagged "incomplete log" days (and their food) before computing stats.
+  // Food on dates with no day row is kept. Returns new arrays; inputs untouched.
+  function excludeIncompleteDays(foodEntries, dayEntries) {
+    const days = dayEntries || [];
+    const food = foodEntries || [];
+    const tagged = new Set(days.filter((d) => d && d.incomplete === true).map((d) => d.date));
+    return {
+      food: food.filter((f) => !tagged.has(f.date)),
+      days: days.filter((d) => !tagged.has(d.date)),
+      excludedDates: [...tagged].sort(),
+    };
   }
 
   function goalForDeficit(daily) {
@@ -77,5 +90,5 @@
     return { text, tone: "warn", icon: "~" };
   }
 
-  return { GOALS, deficitForGoal, migrateDay, migrateProfile, calDeltaDisplay, proteinStatusDisplay };
+  return { GOALS, deficitForGoal, migrateDay, excludeIncompleteDays, migrateProfile, calDeltaDisplay, proteinStatusDisplay };
 });
