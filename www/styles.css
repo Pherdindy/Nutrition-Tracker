@@ -354,6 +354,11 @@ select {
   gap: 12px;
 }
 
+.form-row.form-check { display: flex; align-items: flex-start; gap: 10px; }
+.form-row.form-check input[type="checkbox"] { width: 18px; height: 18px; margin-top: 2px; flex: none; accent-color: var(--primary); cursor: pointer; }
+.form-row.form-check label { margin: 0; color: var(--text); cursor: pointer; }
+.form-row.form-check .form-hint { display: block; font-size: 0.75rem; color: var(--text-dim); font-weight: 400; margin-top: 2px; }
+
 .modal-actions {
   display: flex;
   gap: 8px;

@@ -702,6 +702,7 @@ function openDayModal(entry) {
   document.getElementById("day-date").value = entry.date;
   document.getElementById("day-weight").value = entry.weight;
   document.getElementById("day-activity").value = entry.activity;
+  document.getElementById("day-incomplete").checked = entry.incomplete === true;
   modal.classList.remove("hidden");
 }
 
@@ -715,7 +716,7 @@ function saveDay(e) {
   const id = document.getElementById("day-id").value;
   const idx = entries.findIndex((x) => x.id === parseInt(id));
   if (idx === -1) { console.warn("saveDay: day not found", id); return; }
-  entries[idx] = { ...entries[idx], weight: parseFloat(document.getElementById("day-weight").value), activity: document.getElementById("day-activity").value };
+  entries[idx] = { ...entries[idx], weight: parseFloat(document.getElementById("day-weight").value), activity: document.getElementById("day-activity").value, incomplete: document.getElementById("day-incomplete").checked };
   saveDayEntries(entries);
   closeDayModal();
   renderCalorieTracker();

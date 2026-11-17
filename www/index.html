@@ -248,6 +248,11 @@
             <label for="day-activity">Activity Type</label>
             <select id="day-activity" required></select>
           </div>
+          <div class="form-row form-check">
+            <input type="checkbox" id="day-incomplete">
+            <label for="day-incomplete">Incomplete log — I didn't record everything this day
+              <span class="form-hint">Excluded from averages and AI assessments</span></label>
+          </div>
           <div class="modal-actions">
             <button type="button" class="btn btn-secondary" id="day-cancel">Cancel</button>
             <button type="submit" class="btn btn-primary">Save</button>
