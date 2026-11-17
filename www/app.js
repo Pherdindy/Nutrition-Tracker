@@ -1013,8 +1013,11 @@ function getDateRangeForPeriod(period) {
 }
 
 function buildRangeData(foodEntries, dayEntries, profile, startDate, endDate) {
-  const filteredFood = foodEntries.filter(f => f.date >= startDate && f.date <= endDate);
-  const filteredDays = dayEntries.filter(d => d.date >= startDate && d.date <= endDate);
+  const inRange = Targets.excludeIncompleteDays(
+    foodEntries.filter(f => f.date >= startDate && f.date <= endDate),
+    dayEntries.filter(d => d.date >= startDate && d.date <= endDate));
+  const filteredFood = inRange.food;
+  const filteredDays = inRange.days;
 
   const foodByDate = {};
   filteredFood.forEach(f => {
@@ -1054,6 +1057,7 @@ function buildRangeData(foodEntries, dayEntries, profile, startDate, endDate) {
 
   return {
     startDate, endDate, dates, numDays,
+    excludedIncompleteDays: inRange.excludedDates.length,
     totalEntries: filteredFood.length,
     foodByDate, dailyContext,
     totalCalLow, totalCalHigh, totalProLow, totalProHigh,
@@ -1092,6 +1096,7 @@ function getAssessmentData(period) {
       dates: currentYear.dates,
       numDays: currentYear.numDays,
       totalEntries: currentYear.totalEntries,
+      excludedIncompleteDays: currentYear.excludedIncompleteDays,
       foodByDate: currentYear.foodByDate,
       dailyContext: currentYear.dailyContext,
       avgCalLow: currentYear.avgCalLow, avgCalHigh: currentYear.avgCalHigh,
@@ -1245,7 +1250,9 @@ async function runDietAssessment() {
   const data = getAssessmentData(period);
 
   if (data.totalEntries === 0) {
-    setAssessmentStatus("No food entries found for this period. Add food entries first.", true);
+    setAssessmentStatus(data.excludedIncompleteDays > 0
+      ? "Every logged day in this period is tagged incomplete. Untag a day or pick a different period."
+      : "No food entries found for this period. Add food entries first.", true);
     return;
   }
 
@@ -1390,6 +1397,10 @@ function renderAssessmentDataSummary(data) {
   let html = '<div class="assessment-meta">';
   html += `<span class="meta-pill"><strong>${data.startDate}</strong> to <strong>${data.endDate}</strong></span>`;
   html += `<span class="meta-pill"><strong>${data.numDays}</strong> days</span>`;
+  if (data.excludedIncompleteDays > 0) {
+    const n = data.excludedIncompleteDays;
+    html += `<span class="meta-pill"><strong>${n}</strong> incomplete day${n === 1 ? "" : "s"} excluded</span>`;
+  }
   html += `<span class="meta-pill"><strong>${data.totalEntries}</strong> food entries</span>`;
   html += '</div>';
 
