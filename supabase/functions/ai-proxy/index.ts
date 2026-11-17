@@ -51,7 +51,7 @@ function buildSystemPromptEstimate(ids: string[]) {
 
 Respond with ONLY a JSON object (no markdown fences) in this exact format:
 {
-  "reasoning": "<step-by-step reasoning; not shown to the user>",
+  "reasoning": "<one short sentence naming the reference food and serving you scaled from>",
 ${promptFields(ids)}
 }
 Units: calories in kcal, sodium in mg, all other macros in grams.`;
@@ -69,8 +69,7 @@ Instructions:
 2. Reference USDA FoodData Central or manufacturer nutrition data where possible
 3. Calculate per-unit nutritional values, then scale to the given quantity
 4. For well-known items with nutrition labels, use tight ranges (lower ≈ upper)
-5. For variable items (restaurant food, home-cooked), widen ranges but stay evidence-based
-6. Show your reasoning step by step in the "reasoning" field`;
+5. For variable items (restaurant food, home-cooked), widen ranges but stay evidence-based`;
 }
 
 function buildEstimatePrompt(payload: any) {
@@ -90,7 +89,7 @@ function buildVisionSystemPrompt(macroIds: string[]) {
 
 Respond with ONLY a JSON object (no markdown fences) in this exact format:
 {
-  "reasoning": "<brief reasoning; not shown to the user>",
+  "reasoning": "<one short sentence on how you judged the portions>",
   "items": [
     {
       "food": "<short food name>",
@@ -561,11 +560,25 @@ async function callOpenAI(model: string, system: string, user: unknown, tokens: 
   return { text: content, usage };
 }
 
+// Opus/Sonnet 5.x: opt into Anthropic's server-side refusal fallback so a
+// classifier decline is re-run on Anthropic's recommended fallback model inside
+// the same call. (Haiku 5.5 has no server-side fallback; 4.x doesn't need it.)
+function anthropicFallback(model: string) {
+  return /^claude-(opus|sonnet)-5/.test(model);
+}
+
 async function callAnthropic(model: string, system: string, user: unknown, tokens: number, timeoutMs: number): Promise<{ text: string; usage: Usage }> {
+  const fallback = anthropicFallback(model);
   const res = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
-    headers: { "Content-Type": "application/json", "x-api-key": ANTHROPIC_KEY, "anthropic-version": "2023-06-01" },
-    body: JSON.stringify({ model, system, messages: [{ role: "user", content: user }], ...anthropicModelParams(model, tokens) }),
+    headers: {
+      "Content-Type": "application/json", "x-api-key": ANTHROPIC_KEY, "anthropic-version": "2023-06-01",
+      ...(fallback ? { "anthropic-beta": "server-side-fallback-2026-07-01" } : {}),
+    },
+    body: JSON.stringify({
+      model, system, messages: [{ role: "user", content: user }], ...anthropicModelParams(model, tokens),
+      ...(fallback ? { fallbacks: "default" } : {}),
+    }),
     signal: AbortSignal.timeout(timeoutMs),
   });
   if (!res.ok) {
@@ -582,11 +595,21 @@ async function callAnthropic(model: string, system: string, user: unknown, token
   if (j.stop_reason === "max_tokens") {
     throw usage ? { message: "anthropic truncated (token limit)", usage } : new Error("anthropic truncated (token limit)");
   }
+  // Claude 5-family safety classifiers decline with HTTP 200 + stop_reason
+  // "refusal" (often 0 output tokens). Treat it as a failed side so the pair
+  // degrades to the other model instead of returning empty text.
+  if (j.stop_reason === "refusal") {
+    console.error("anthropic refusal", model, JSON.stringify(j.stop_details ?? null).slice(0, 300));
+    throw usage ? { message: "anthropic refusal", usage } : new Error("anthropic refusal");
+  }
   if (!usage) throw new Error("anthropic missing usage");
-  return {
-    text: j.content.map((b: { text?: string }) => b.text ?? "").join(""),
-    usage,
-  };
+  // Only text blocks carry the answer (thinking blocks have no .text).
+  const text = (j.content || []).map((b: { type?: string; text?: string }) => (b.type === "text" ? b.text ?? "" : "")).join("");
+  if (!text.trim()) {
+    console.error("anthropic empty text", model, j.stop_reason, (j.content || []).map((b: { type?: string }) => b.type).join(","));
+    throw { message: "anthropic empty response", usage };
+  }
+  return { text, usage };
 }
 
 // Dispatch by model id prefix: claude-* → Anthropic, everything else → OpenAI.

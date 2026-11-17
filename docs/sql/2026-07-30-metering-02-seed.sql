@@ -49,6 +49,9 @@ end $$;
 -- Anthropic ids/prices from the claude-api skill (models table, cached 2026-06-24):
 --   claude-haiku-4-5 $1/$5, claude-sonnet-5 $3/$15 (sticker; intro $2/$10 ends
 --   2026-08-31 — seeding sticker so costs are never under-counted), claude-opus-5 $5/$25.
+-- 2026-11-16: paid tiers moved to claude-sonnet-5-5 ($2/$10) and claude-opus-5-5
+--   ($4/$20) per the claude-api skill models table (cached 2026-11-03); the old
+--   5.0 prices stay so historical ledger rows remain priceable.
 -- OpenAI ids/prices from developers.openai.com/api/docs/pricing (fetched 2026-07-30):
 --   gpt-5.6-luna $1/$6, gpt-5.6-terra $2.50/$15, gpt-5.6-sol $5/$30 — the current
 --   generation; all three take text+image input (vision), per the models docs.
@@ -67,22 +70,24 @@ insert into ai_config (id, value) values (1, '{
                   "photo":    ["claude-haiku-4-5", "gpt-5.6-luna"],
                   "assess":   ["claude-haiku-4-5", "gpt-5.6-luna"] } },
     "t3":  { "allowance_usd": 1.20,
-      "models": { "estimate": ["claude-sonnet-5", "gpt-5.6-terra"],
-                  "photo":    ["claude-sonnet-5", "gpt-5.6-terra"],
-                  "assess":   ["claude-sonnet-5", "gpt-5.6-terra"] } },
+      "models": { "estimate": ["claude-sonnet-5-5", "gpt-5.6-terra"],
+                  "photo":    ["claude-sonnet-5-5", "gpt-5.6-terra"],
+                  "assess":   ["claude-sonnet-5-5", "gpt-5.6-terra"] } },
     "t5":  { "allowance_usd": 2.25,
-      "models": { "estimate": ["claude-sonnet-5", "gpt-5.6-terra"],
-                  "photo":    ["claude-sonnet-5", "gpt-5.6-terra"],
-                  "assess":   ["claude-opus-5", "gpt-5.6-sol"] } },
+      "models": { "estimate": ["claude-sonnet-5-5", "gpt-5.6-terra"],
+                  "photo":    ["claude-sonnet-5-5", "gpt-5.6-terra"],
+                  "assess":   ["claude-opus-5-5", "gpt-5.6-sol"] } },
     "t10": { "allowance_usd": 5.00,
-      "models": { "estimate": ["claude-opus-5", "gpt-5.6-sol"],
-                  "photo":    ["claude-opus-5", "gpt-5.6-sol"],
-                  "assess":   ["claude-opus-5", "gpt-5.6-sol"] } }
+      "models": { "estimate": ["claude-opus-5-5", "gpt-5.6-sol"],
+                  "photo":    ["claude-opus-5-5", "gpt-5.6-sol"],
+                  "assess":   ["claude-opus-5-5", "gpt-5.6-sol"] } }
   },
   "prices": {
     "claude-haiku-4-5": { "in_per_mtok": 1.00, "out_per_mtok": 5.00 },
     "claude-sonnet-5":  { "in_per_mtok": 3.00, "out_per_mtok": 15.00 },
     "claude-opus-5":    { "in_per_mtok": 5.00, "out_per_mtok": 25.00 },
+    "claude-sonnet-5-5": { "in_per_mtok": 2.00, "out_per_mtok": 10.00 },
+    "claude-opus-5-5":  { "in_per_mtok": 4.00, "out_per_mtok": 20.00 },
     "gpt-5.6-luna":     { "in_per_mtok": 1.00, "out_per_mtok": 6.00 },
     "gpt-5.6-terra":    { "in_per_mtok": 2.50, "out_per_mtok": 15.00 },
     "gpt-5.6-sol":      { "in_per_mtok": 5.00, "out_per_mtok": 30.00 }
