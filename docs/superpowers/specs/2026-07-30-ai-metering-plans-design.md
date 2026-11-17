@@ -171,8 +171,11 @@ app releases.
 | 503 | kill switch off / unpriced model in config | friendly outage message |
 
 **Partial failure:** one model fails → return the survivor's result,
-`model_b = null` in the ledger, charge only actual usage. Both fail → 502,
-nothing charged.
+`model_b = null` in the ledger, charge only actual usage. Both fail → 502 —
+and (amended by Task 5 review) a ledger row IS written: at the real cost of
+any usage the failures carried (truncated output is provider-billed and must
+be metered), or $0 otherwise, so failures count toward the rate limit and
+can't form a free unmetered retry loop.
 
 **Metering order:** ledger row written AFTER provider responses (real token
 counts). Insert failure → one retry → loud function log. Worst case loses
