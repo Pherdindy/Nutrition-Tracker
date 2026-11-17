@@ -16,9 +16,17 @@ test("deficitForGoal maps label to daily deficit; unknown/blank -> 550", () => {
   assert.equal(T.deficitForGoal(null), 550);
 });
 
-test("migrateDay keeps date/weight/activity, strips age/deficit/protein", () => {
+test("migrateDay keeps date/weight/activity/incomplete, strips age/deficit/protein", () => {
   const d = { id: 1, date: "2026-02-05", age: 32, weight: 166, activity: "Gym", deficit: 550, proteinTargetLow: 135, proteinTargetHigh: 150 };
-  assert.deepEqual(T.migrateDay(d), { id: 1, date: "2026-02-05", weight: 166, activity: "Gym" });
+  assert.deepEqual(T.migrateDay(d), { id: 1, date: "2026-02-05", weight: 166, activity: "Gym", incomplete: false });
+});
+
+test("migrateDay keeps incomplete:true; non-true values coerce to false", () => {
+  const base = { id: 2, date: "2026-02-06", weight: 165, activity: "Gym" };
+  assert.equal(T.migrateDay({ ...base, incomplete: true }).incomplete, true);
+  assert.equal(T.migrateDay({ ...base, incomplete: "true" }).incomplete, false);
+  assert.equal(T.migrateDay({ ...base, incomplete: 1 }).incomplete, false);
+  assert.equal(T.migrateDay({ ...base, incomplete: null }).incomplete, false);
 });
 
 test("migrateProfile seeds age/weightLossGoal from days when missing; leaves populated profile", () => {
@@ -122,4 +130,44 @@ test("calDeltaDisplay: exact ±50 band edges are neutral", () => {
 test("proteinStatusDisplay: reversed intake arguments are normalized", () => {
   assert.deepEqual(T.proteinStatusDisplay(147, 136, 135, 150),
     { text: "136–147 g (target 135–150)", tone: "good", icon: "✓" });
+});
+
+test("excludeIncompleteDays drops food + day rows for tagged dates only", () => {
+  const days = [
+    { id: 1, date: "2026-03-01", incomplete: false },
+    { id: 2, date: "2026-03-02", incomplete: true },
+    { id: 3, date: "2026-03-03" },
+  ];
+  const food = [
+    { id: 10, date: "2026-03-01" }, { id: 11, date: "2026-03-02" },
+    { id: 12, date: "2026-03-02" }, { id: 13, date: "2026-03-03" },
+    { id: 14, date: "2026-03-04" }, // food with no day row is kept
+  ];
+  const r = T.excludeIncompleteDays(food, days);
+  assert.deepEqual(r.food.map((f) => f.id), [10, 13, 14]);
+  assert.deepEqual(r.days.map((d) => d.id), [1, 3]);
+  assert.deepEqual(r.excludedDates, ["2026-03-02"]);
+});
+
+test("excludeIncompleteDays: no tagged days -> same contents, empty excludedDates", () => {
+  const days = [{ id: 1, date: "2026-03-01" }];
+  const food = [{ id: 10, date: "2026-03-01" }];
+  const r = T.excludeIncompleteDays(food, days);
+  assert.deepEqual(r.food, food);
+  assert.deepEqual(r.days, days);
+  assert.deepEqual(r.excludedDates, []);
+});
+
+test("excludeIncompleteDays: all tagged -> empty food/days; excludedDates sorted", () => {
+  const days = [{ id: 2, date: "2026-03-05", incomplete: true }, { id: 1, date: "2026-03-01", incomplete: true }];
+  const food = [{ id: 10, date: "2026-03-01" }, { id: 11, date: "2026-03-05" }];
+  const r = T.excludeIncompleteDays(food, days);
+  assert.deepEqual(r.food, []);
+  assert.deepEqual(r.days, []);
+  assert.deepEqual(r.excludedDates, ["2026-03-01", "2026-03-05"]);
+});
+
+test("excludeIncompleteDays tolerates null/undefined inputs", () => {
+  const r = T.excludeIncompleteDays(null, undefined);
+  assert.deepEqual(r, { food: [], days: [], excludedDates: [] });
 });
