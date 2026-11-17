@@ -106,13 +106,13 @@ function foodJsToRow(e) {
 }
 
 function dayRowToJs(r) {
-  return Targets.migrateDay({ id: r.id, date: r.date, weight: Number(r.weight), activity: r.activity });
+  return Targets.migrateDay({ id: r.id, date: r.date, weight: Number(r.weight), activity: r.activity, incomplete: r.incomplete === true });
 }
 function dayJsToRow(e) {
   // Keep legacy day columns populated from the current global profile so old rows stay valid
   // (no days-table schema change) and any reader that still expects them works. Reads ignore them.
   const p = (typeof loadProfile === "function") ? loadProfile() : {};
-  return { id: e.id, date: e.date, weight: e.weight, activity: e.activity,
+  return { id: e.id, date: e.date, weight: e.weight, activity: e.activity, incomplete: !!e.incomplete,
     age: p.age != null ? p.age : DEFAULT_PROFILE.age, deficit: Targets.deficitForGoal(p.weightLossGoal),
     protein_target_low: p.proteinLow != null ? p.proteinLow : DEFAULT_PROFILE.proteinLow, protein_target_high: p.proteinHigh != null ? p.proteinHigh : DEFAULT_PROFILE.proteinHigh };
 }
