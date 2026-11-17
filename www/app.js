@@ -1285,7 +1285,7 @@ async function runDietAssessment() {
       return;
     }
 
-    const dataSummary = { startDate: data.startDate, endDate: data.endDate, numDays: data.numDays, totalEntries: data.totalEntries, avgCalLow: data.avgCalLow, avgCalHigh: data.avgCalHigh };
+    const dataSummary = { startDate: data.startDate, endDate: data.endDate, numDays: data.numDays, excludedIncompleteDays: data.excludedIncompleteDays || 0, totalEntries: data.totalEntries, avgCalLow: data.avgCalLow, avgCalHigh: data.avgCalHigh };
 
     // Only one usable analysis — no cross-validation possible
     if (successful.length === 1) {
@@ -2018,7 +2018,7 @@ function renderAssessmentHistory() {
     html += `<tr>
       <td>${escapeHtml(date)}</td>
       <td>${escapeHtml(periodLabel)}</td>
-      <td class="num">${a.dataSummary?.numDays ?? "-"}</td>
+      <td class="num">${a.dataSummary?.numDays ?? "-"}${a.dataSummary?.excludedIncompleteDays > 0 ? ` <span class="day-incomplete-pill" title="Incomplete days excluded">−${a.dataSummary.excludedIncompleteDays}</span>` : ""}</td>
       <td class="num">${a.dataSummary?.totalEntries ?? "-"}</td>
       <td><span class="score-badge ${scoreCls}">${score}</span></td>
       <td><span class="badge ${a.verdict === 'consensus' ? 'badge-green' : a.verdict === 'reconciled' ? 'badge-blue' : 'badge-yellow'}">${escapeHtml(verdictLabel)}</span></td>
