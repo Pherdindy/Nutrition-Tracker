@@ -444,8 +444,9 @@ function renderCalorieTracker() {
     const totals = getDailyFoodTotals(day.date, food);
     const surpLow = totals.calLow - target, surpHigh = totals.calHigh - target;
     const proSurpLow = totals.proLow - profile.proteinLow, proSurpHigh = totals.proHigh - profile.proteinHigh;
-    html += `<tr class="day-summary">
-      <td>${formatDate(day.date)}</td>
+    const incPill = day.incomplete ? ` <span class="day-incomplete-pill" title="Excluded from averages and AI assessments">Incomplete</span>` : "";
+    html += `<tr class="day-summary${day.incomplete ? " day-incomplete" : ""}">
+      <td>${formatDate(day.date)}${incPill}</td>
       <td class="num">${day.weight}</td>
       <td class="num">${renderNum(bmr, 1)}</td>
       <td>${escapeHtml(day.activity)}</td>
