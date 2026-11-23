@@ -309,7 +309,9 @@ class FakeElement {
 // ---- Boot ----------------------------------------------------------------------
 
 // freezeClock: the app sees one fixed instant and no randomness.
-async function bootApp({ server = createFakeServer(), device = createDevice(), uid = OWNER, confirm = () => true, freezeClock = false } = {}) {
+// now: the app's clock stands still at this instant (an ISO string); the time
+// zone is process.env.TZ.
+async function bootApp({ server = createFakeServer(), device = createDevice(), uid = OWNER, confirm = () => true, freezeClock = false, now = null } = {}) {
   const byId = new Map();
   const el = (id) => {
     if (!byId.has(id)) byId.set(id, new FakeElement());
@@ -366,6 +368,15 @@ async function bootApp({ server = createFakeServer(), device = createDevice(), u
   sandbox.window = sandbox;
   sandbox.self = sandbox;
   const context = vm.createContext(sandbox);
+  if (now) {
+    vm.runInContext(`{
+      const RealDate = Date, at = ${Date.parse(now)};
+      Date = class extends RealDate {
+        constructor(...args) { if (args.length) super(...args); else super(at); }
+        static now() { return at; }
+      };
+    }`, context);
+  }
   if (freezeClock) vm.runInContext("Date.now = () => 1795400000000; Math.random = () => 0;", context);
   for (const { name, code } of SOURCES) vm.runInContext(code, context, { filename: `www/${name}` });
 

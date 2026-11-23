@@ -454,6 +454,13 @@ function getDailyFoodTotals(date, foodEntries) {
 // RENDERING
 // ============================================================
 
+// The calendar date where the user is. toISOString() would give the UTC date, which
+// is a different day for part of every day.
+function localDate(d = new Date()) {
+  const two = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${two(d.getMonth() + 1)}-${two(d.getDate())}`;
+}
+
 function formatDate(dateStr) {
   const [y, m, d] = dateStr.split("-");
   return `${m}-${d}-${y.slice(2)}`;
@@ -636,7 +643,7 @@ function openFoodModal(entry) {
   const modal = document.getElementById("food-modal");
   document.getElementById("food-modal-title").textContent = entry ? "Edit Food Entry" : "Add Food Entry";
   document.getElementById("food-id").value = entry ? entry.id : "";
-  document.getElementById("food-date").value = entry ? entry.date : new Date().toISOString().slice(0, 10);
+  document.getElementById("food-date").value = entry ? entry.date : localDate();
   document.getElementById("food-time").value = entry ? entry.time : new Date().toTimeString().slice(0, 5);
   document.getElementById("food-name").value = entry ? entry.food : "";
   document.getElementById("food-qty").value = entry ? entry.qty : "";
@@ -648,7 +655,7 @@ function openFoodModal(entry) {
     tabs.classList.add("hidden");
   } else {
     tabs.classList.remove("hidden");
-    document.getElementById("batch-date").value = new Date().toISOString().slice(0, 10);
+    document.getElementById("batch-date").value = localDate();
     document.getElementById("batch-time").value = new Date().toTimeString().slice(0, 5);
     document.getElementById("batch-items").innerHTML = "";
     for (let i = 0; i < 3; i++) addBatchRow();
@@ -1024,7 +1031,7 @@ function confirmPhotoItems() {
   document.getElementById("photo-confirm").disabled = true;
   const entries = loadFoodEntries();
   const now = new Date();
-  const date = now.toISOString().slice(0, 10), time = now.toTimeString().slice(0, 5);
+  const date = localDate(now), time = now.toTimeString().slice(0, 5);
   const created = PhotoEstimate.itemsToEntries(_photoItems, date, time, newId(_photoItems.length));
   if (!created.length) return;
   saveFoodEntries([...entries, ...created]);
@@ -1123,28 +1130,28 @@ function getDateRangeForPeriod(period) {
   // Exclude today — the current day's data is incomplete (meals still pending)
   const yesterday = new Date();
   yesterday.setDate(yesterday.getDate() - 1);
-  const yesterdayStr = yesterday.toISOString().slice(0, 10);
+  const yesterdayStr = localDate(yesterday);
 
   if (period === "today") return { startDate: yesterdayStr, endDate: yesterdayStr };
   if (period === "week") {
     const d = new Date(); d.setDate(d.getDate() - 7);
-    return { startDate: d.toISOString().slice(0, 10), endDate: yesterdayStr };
+    return { startDate: localDate(d), endDate: yesterdayStr };
   }
   if (period === "month") {
     const d = new Date(); d.setDate(d.getDate() - 30);
-    return { startDate: d.toISOString().slice(0, 10), endDate: yesterdayStr };
+    return { startDate: localDate(d), endDate: yesterdayStr };
   }
   if (period === "quarter") {
     const d = new Date(); d.setDate(d.getDate() - 90);
-    return { startDate: d.toISOString().slice(0, 10), endDate: yesterdayStr };
+    return { startDate: localDate(d), endDate: yesterdayStr };
   }
   if (period === "semi") {
     const d = new Date(); d.setDate(d.getDate() - 180);
-    return { startDate: d.toISOString().slice(0, 10), endDate: yesterdayStr };
+    return { startDate: localDate(d), endDate: yesterdayStr };
   }
   if (period === "year") {
     const d = new Date(); d.setDate(d.getDate() - 365);
-    return { startDate: d.toISOString().slice(0, 10), endDate: yesterdayStr };
+    return { startDate: localDate(d), endDate: yesterdayStr };
   }
   if (period === "custom") {
     const from = document.getElementById("assessment-date-from")?.value;
@@ -1153,7 +1160,7 @@ function getDateRangeForPeriod(period) {
   }
   // fallback
   const d = new Date(); d.setDate(d.getDate() - 7);
-  return { startDate: d.toISOString().slice(0, 10), endDate: yesterdayStr };
+  return { startDate: localDate(d), endDate: yesterdayStr };
 }
 
 function buildRangeData(foodEntries, dayEntries, profile, startDate, endDate) {
@@ -1221,7 +1228,7 @@ function getAssessmentData(period) {
   if (period === "yoy") {
     // Year over Year: current year vs previous year (same calendar dates)
     const today = new Date();
-    const todayStr = today.toISOString().slice(0, 10);
+    const todayStr = localDate(today);
     const janFirst = `${today.getFullYear()}-01-01`;
     const prevYearStart = `${today.getFullYear() - 1}-01-01`;
     const prevYearEnd = `${today.getFullYear() - 1}-12-31`;
@@ -2605,7 +2612,7 @@ function completeOnboarding(ev) {
   const weight = parseFloat(document.getElementById("ob-weight").value);
   const activity = document.getElementById("ob-activity").value;
   if (Number.isFinite(weight)) {
-    const today = new Date().toISOString().slice(0, 10);
+    const today = localDate();
     saveDayEntries([...loadDayEntries(), { id: newId(), date: today, weight, activity }]);
   }
   _cache.profileMissing = false;
@@ -2705,9 +2712,9 @@ async function startApp() {
   const dateTo = document.getElementById("assessment-date-to");
 
   // Default custom dates
-  const todayStr = new Date().toISOString().slice(0, 10);
+  const todayStr = localDate();
   const weekAgo = new Date(); weekAgo.setDate(weekAgo.getDate() - 6);
-  dateFrom.value = weekAgo.toISOString().slice(0, 10);
+  dateFrom.value = localDate(weekAgo);
   dateTo.value = todayStr;
 
   function refreshAssessmentPreview() {
