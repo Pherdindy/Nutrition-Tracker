@@ -51,5 +51,27 @@
     return out.slice(0, n || 3);
   }
 
-  return { verdictLine, calorieChip, proteinChip, varietyChip, topActions };
+  // What an assessment sends: only what its prompt reads (buildAssessmentPromptText in
+  // supabase/functions/ai-proxy/index.ts), because the proxy limits the size.
+  const PERIOD = ["startDate", "endDate", "numDays", "totalEntries", "dates", "dailyContext", "isYoY",
+    "avgCalLow", "avgCalHigh", "avgProLow", "avgProHigh", "avgProTargetLow", "avgProTargetHigh"];
+  const PREVIOUS_YEAR = ["label", "numDays", "totalEntries", "dailyContext", "avgCalLow", "avgCalHigh", "avgProLow", "avgProHigh"];
+  const pick = (o, keys) => Object.fromEntries(keys.filter((k) => o[k] !== undefined).map((k) => [k, o[k]]));
+
+  function payload(data) {
+    const entry = (e) => {
+      const macros = {};
+      for (const id of ["calories", "protein"]) {
+        const m = e.macros && e.macros[id];
+        if (m && m.low != null && m.high != null) macros[id] = { low: m.low, high: m.high };
+      }
+      return { ...pick(e, ["time", "food", "qty", "unit"]), macros };
+    };
+    const out = pick(data, PERIOD);
+    out.foodByDate = Object.fromEntries(Object.entries(data.foodByDate).map(([date, entries]) => [date, entries.map(entry)]));
+    if (data.previousYear) out.previousYear = pick(data.previousYear, PREVIOUS_YEAR);
+    return out;
+  }
+
+  return { verdictLine, calorieChip, proteinChip, varietyChip, topActions, payload };
 });

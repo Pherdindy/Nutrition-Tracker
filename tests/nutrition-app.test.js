@@ -521,3 +521,24 @@ test("closing the form forgets what was typed in it", async () => {
   await app.settle();
   assert.deepEqual(app.entry("Tofu").macros.protein, range(10));
 });
+
+// ---- assessments ----------------------------------------------------------------------
+
+test("both rounds of an assessment send the smaller payload, and it is what the size limit counts", async () => {
+  const note = "x".repeat(200);
+  const why = [{ ref: note, note, grams: 1, kcal: 1 }, { ref: note, note, grams: 1, kcal: 1 }];
+  const server = serverWith(...Array.from({ length: 400 }, (_, i) => row(i + 1, "Sardines", { nutrition: { at: 5, why } })));
+  const sent = [];
+  server.ai = (body) => { sent.push(body); return { data: { a: "{}", b: "{}" }, error: null }; };
+  const app = await bootApp({ server, now: NOON });
+  assert.ok(app.run("JSON.stringify(getAssessmentData('week')).length") > 250000, "whole entries would be refused");
+  // Round 2 follows when the two analyses disagree; what they say does not matter here.
+  app.run("checkAssessmentAgreement = () => ({ needsEscalation: true, disagreements: 1, total: 1 }); averageAssessmentScores = (list) => list[0]; renderAssessmentResults = () => {};");
+  app.fire("run-assessment-btn", "click");
+  await app.settle();
+  assert.deepEqual(sent.map((body) => body.feature), ["assess-round1", "assess-round2"]);
+  for (const { payload } of sent) {
+    assert.equal(payload.data.totalEntries, 400);
+    assert.deepEqual(Object.keys(payload.data.foodByDate["2026-11-20"][0]).sort(), ["food", "macros", "qty", "time", "unit"]);
+  }
+});

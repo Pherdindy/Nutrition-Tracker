@@ -2568,6 +2568,14 @@ test("defaultEnabled is calories, protein, carbs, fat, fiber", () => {
 
 The fake AI answers with all eight nutrients, as the proxy does.
 
+<!-- edit tests/food-sync.test.js @T8t -->
+```js
+const macrosFor = (kcal) => ({ calories: { low: kcal, high: kcal }, protein: { low: 1, high: 1 }, carbs: { low: 1, high: 1 }, fat: { low: 1, high: 1 } });
+```
+```js
+const macrosFor = (kcal) => Object.fromEntries(["protein", "carbs", "fat", "fiber", "sugar", "saturatedFat", "sodium"].reduce((all, id) => [...all, [id, { low: 1, high: 1 }]], [["calories", { low: kcal, high: kcal }]]));
+```
+
 <!-- edit tests/helpers/app-harness.js @T8t -->
 ```js
     ai: () => ({ data: { macros: { calories: { low: 100, high: 110 }, protein: { low: 10, high: 11 }, carbs: { low: 5, high: 6 }, fat: { low: 2, high: 3 } } }, error: null }),

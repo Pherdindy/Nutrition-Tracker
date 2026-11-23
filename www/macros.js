@@ -10,7 +10,7 @@
     { id: "protein", label: "Protein", unit: "g", locked: true, defaultOn: true },
     { id: "carbs", label: "Carbs", unit: "g", locked: false, defaultOn: true },
     { id: "fat", label: "Fat", unit: "g", locked: false, defaultOn: true },
-    { id: "fiber", label: "Fiber", unit: "g", locked: false, defaultOn: false },
+    { id: "fiber", label: "Fiber", unit: "g", locked: false, defaultOn: true },
     { id: "sugar", label: "Sugar", unit: "g", locked: false, defaultOn: false },
     { id: "saturatedFat", label: "Saturated fat", unit: "g", locked: false, defaultOn: false },
     { id: "sodium", label: "Sodium", unit: "mg", locked: false, defaultOn: false },

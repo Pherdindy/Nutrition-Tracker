@@ -460,7 +460,7 @@ test("a cleared profile age does not block day saves", async () => {
 
 // ---- Estimates -------------------------------------------------------------------
 
-const macrosFor = (kcal) => ({ calories: { low: kcal, high: kcal }, protein: { low: 1, high: 1 }, carbs: { low: 1, high: 1 }, fat: { low: 1, high: 1 } });
+const macrosFor = (kcal) => Object.fromEntries(["protein", "carbs", "fat", "fiber", "sugar", "saturatedFat", "sodium"].reduce((all, id) => [...all, [id, { low: 1, high: 1 }]], [["calories", { low: kcal, high: kcal }]]));
 // Holds every AI answer until release() is called.
 function holdAi(server) {
   let release;

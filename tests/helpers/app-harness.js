@@ -58,7 +58,7 @@ function createFakeServer({ food = [], days = [], profile = null, readCap = READ
     reject: null, // (table, row) => true: the database refuses this row
     afterSelect: null, // async (table, device): runs after a read was answered, before the app gets it
     aiCalls: [],
-    ai: () => ({ data: { macros: { calories: { low: 100, high: 110 }, protein: { low: 10, high: 11 }, carbs: { low: 5, high: 6 }, fat: { low: 2, high: 3 } } }, error: null }),
+    ai: () => ({ data: { macros: { calories: { low: 100, high: 110 }, protein: { low: 10, high: 11 }, carbs: { low: 5, high: 6 }, fat: { low: 2, high: 3 }, fiber: { low: 1, high: 2 }, sugar: { low: 1, high: 2 }, saturatedFat: { low: 0, high: 1 }, sodium: { low: 50, high: 60 } } }, error: null }),
     usage: { pct_used: 0, plan: "owner", exhausted: false },
   };
 

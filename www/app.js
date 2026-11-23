@@ -1555,7 +1555,8 @@ async function runDietAssessment() {
   }
 
   // The proxy caps assess payloads at 250k chars of JSON — refuse early instead of burning a call.
-  if (JSON.stringify({ data }).length > 250000) {
+  const sent = AssessmentView.payload(data);
+  if (JSON.stringify({ data: sent }).length > 250000) {
     setAssessmentStatus("Too much data for a single assessment — try a shorter period.", true);
     return;
   }
@@ -1569,7 +1570,7 @@ async function runDietAssessment() {
 
   try {
     // --- Round 1 ---
-    const r1 = await callAi("assess-round1", { data });
+    const r1 = await callAi("assess-round1", { data: sent });
     const round1Results = [
       assessResultFromRaw("model-a", "Model A", "round 1", r1 && r1.a),
       assessResultFromRaw("model-b", "Model B", "round 1", r1 && r1.b),
@@ -1623,12 +1624,12 @@ async function runDietAssessment() {
     setAssessmentStatus(`Models disagreed on ${agreement.disagreements}/${agreement.total} categories — re-evaluating...`);
 
     let r2 = null, r2CallError = null;
-    if (JSON.stringify({ round1A: r1.a, round1B: r1.b, data }).length > 250000) {
+    if (JSON.stringify({ round1A: r1.a, round1B: r1.b, data: sent }).length > 250000) {
       // Same 250k proxy cap as Round 1 — degrade to the R1 average, don't lose the run.
       r2CallError = { message: "too much data to reconcile — try a shorter period" };
     } else {
       try {
-        r2 = await callAi("assess-round2", { round1A: r1.a, round1B: r1.b, data });
+        r2 = await callAi("assess-round2", { round1A: r1.a, round1B: r1.b, data: sent });
       } catch (err) {
         r2CallError = err;
         if (err && err.status === 402) openPaywall();

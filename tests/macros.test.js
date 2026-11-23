@@ -9,12 +9,13 @@ test("CATALOG has core macros locked and carbs/fat default-on", () => {
   assert.equal(M.byId("protein").locked, true);
   assert.equal(M.byId("carbs").defaultOn, true);
   assert.equal(M.byId("fat").defaultOn, true);
+  assert.equal(M.byId("fiber").defaultOn, true);
   assert.equal(M.byId("sodium").unit, "mg");
   assert.equal(M.byId("sodium").defaultOn, false);
 });
 
-test("defaultEnabled is calories, protein, carbs, fat", () => {
-  assert.deepEqual(M.defaultEnabled(), ["calories", "protein", "carbs", "fat"]);
+test("defaultEnabled is calories, protein, carbs, fat, fiber", () => {
+  assert.deepEqual(M.defaultEnabled(), ["calories", "protein", "carbs", "fat", "fiber"]);
 });
 
 test("resolveEnabled always includes locked macros, drops unknowns, orders by catalog", () => {
