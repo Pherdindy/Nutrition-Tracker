@@ -216,3 +216,227 @@ test("the list on the Calorie Target tab and at the start has every choice", asy
   const html = app.run("document.querySelector('#activity-table tbody').innerHTML");
   for (const part of ["Zone 2 cardio, about 45 min", "1.400", "Zone 2 cardio, 90 min or more", "1.600", "Hard cardio (run, intervals), about 45 min", "1.500", "Gym day (moderate workout)", "1.550"]) assert.ok(html.includes(part), part);
 });
+
+// ---- the AI's answers ---------------------------------------------------------------------
+
+const log = (app, ...list) => app.run(`storeWorkouts("${DATE}", ${JSON.stringify(list.map((w, i) => ({ id: 100 + i, what: "Bike", minutes: 90, kcal: null, ...w })))})`);
+function holdAi(server) {
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; }), answerNow = server.ai;
+  server.ai = async (body) => { await gate; return answerNow(body); };
+  return () => { server.ai = answerNow; release(); };
+}
+const answered = { at: 1, met: { low: 5, high: 6 }, why: [{ ref: "Ref", note: "Note.", met: 5.5, minutes: 60 }], how: "one" };
+const undated = (w) => ({ ...w, effort: { ...w.effort, ...(w.effort.at && { at: 1 }) } });
+
+test("a new workout asks for its words and minutes, and nothing about the user", async () => {
+  const server = serverWith(), bodies = [];
+  server.ai = (body) => { bodies.push(body); return answer(); };
+  const app = await bootApp({ server });
+  const release = holdAi(server);
+  log(app, { what: "Bike, zone 2" }, { what: "10,000 steps", minutes: 0 });
+  await app.settle(); // the rows are on the server
+  assert.deepEqual([app.workout("Bike, zone 2").estimateStatus, on(server, "Bike, zone 2").estimate_status], ["pending", "pending"]);
+  release();
+  await app.settle();
+  assert.deepEqual(JSON.parse(JSON.stringify(bodies)), [{ feature: "workout", payload: { what: "Bike, zone 2", minutes: 90 } }, { feature: "workout", payload: { what: "10,000 steps" } }]);
+  assert.deepEqual([undated(app.workout("Bike, zone 2")), undated(app.workout("10,000 steps"))], [
+    js(100, "Bike, zone 2", { effort: answered }), js(101, "10,000 steps", { minutes: 0, effort: { ...answered, minutes: 60 } })]);
+  assert.deepEqual(server.workouts().map((w) => [w.what, w.estimate_status, undated(w).effort]), [["Bike, zone 2", "done", answered], ["10,000 steps", "done", { ...answered, minutes: 60 }]]);
+  const update = server.writes.filter((x) => x.op === "update");
+  assert.deepEqual(update.map((x) => x.filters.map(([, column]) => column)), [["id", "what", "minutes", "estimate_status"], ["id", "what", "minutes", "estimate_status"]]);
+  assert.deepEqual([app.errors, app.run("outbox.count()")], [[], 0]);
+});
+
+test("the day's total follows the answer", async () => {
+  const app = await bootApp({ server: serverWith() });
+  log(app, {});
+  assert.equal(numbersOf(trackerRow(app))[2], (BMR * 1.2).toFixed(1));
+  await app.settle();
+  assert.equal(numbersOf(trackerRow(app))[2], (BMR * 1.2 + 4.5 * KG * 1.5).toFixed(1));
+});
+
+test("no answer: it says so and can be tried again", async () => {
+  const server = serverWith();
+  server.ai = () => ({ data: null, error: { context: { status: 502 } } });
+  const app = await bootApp({ server });
+  log(app, {});
+  await app.settle();
+  assert.deepEqual([app.workout("Bike").estimateStatus, on(server, "Bike").estimate_status], ["error", "error"]);
+  server.ai = () => answer();
+  app.run("retryWorkout(100)");
+  assert.equal(app.workout("Bike").estimateStatus, "pending");
+  await app.settle();
+  assert.deepEqual([app.workout("Bike").estimateStatus, undated(on(server, "Bike")).effort], ["done", answered]);
+});
+
+test("a 402 of either kind fails what else waits, food and workouts, with one call", async () => {
+  for (const first of ["food", "workout"]) {
+    const server = serverWith();
+    server.ai = () => ({ data: null, error: { context: { status: 402 } } });
+    const app = await bootApp({ server });
+    if (first === "food") { app.addFood("Eggs"); log(app, {}, { what: "Run" }); } else { log(app, {}, { what: "Run" }); app.addFood("Eggs"); }
+    await app.settle();
+    assert.deepEqual([server.aiCalls.length, app.entry("Eggs").estimateStatus, app.workouts().map((w) => w.estimateStatus)], [1, "error", ["error", "error"]], first);
+    assert.deepEqual([server.food()[0].estimate_status, server.workouts().map((w) => w.estimate_status)], ["error", ["error", "error"]], first);
+    assert.ok(app.isOpen("paywall-modal"));
+  }
+});
+
+test("no credit known already: not asked at all", async () => {
+  const server = serverWith();
+  const app = await bootApp({ server });
+  app.run("_aiExhausted = true");
+  log(app, {});
+  await app.settle();
+  assert.deepEqual([server.aiCalls, app.workout("Bike").estimateStatus, app.isOpen("paywall-modal")], [[], "error", true]);
+  app.run("closePaywall()");
+  log(app, { id: 200, what: "Run", kcal: 300 });
+  assert.deepEqual([app.workout("Run").estimateStatus, app.isOpen("paywall-modal")], ["done", false], "typed calories need none");
+});
+
+test("asking again without credit leaves what was known", async () => {
+  const server = serverWith({ workouts: [row(100, "Bike")] });
+  const app = await bootApp({ server });
+  server.ai = () => ({ data: null, error: { context: { status: 402 } } });
+  log(app, { askAgain: true });
+  await app.settle();
+  assert.deepEqual([app.workout("Bike"), server.workouts().map(({ user_id, ...w }) => w)], [js(100, "Bike"), [row(100, "Bike")]]);
+});
+
+test("asking again keeps the numbers until the answer", async () => {
+  const server = serverWith({ workouts: [row(100, "Bike")] });
+  const app = await bootApp({ server });
+  const release = holdAi(server);
+  log(app, { askAgain: true });
+  await app.settle();
+  assert.deepEqual([app.workout("Bike").estimateStatus, app.workout("Bike").effort.met], ["pending", { low: 6, high: 7 }]);
+  assert.equal(numbersOf(trackerRow(app))[2], (BMR * 1.2 + 5.5 * KG * 1.5).toFixed(1));
+  release();
+  await app.settle();
+  assert.deepEqual([undated(app.workout("Bike")), undated(on(server, "Bike")).effort], [js(100, "Bike", { effort: answered }), answered]);
+});
+
+test("calories typed while the AI is asked: its answer is not used", async () => {
+  const server = serverWith();
+  const app = await bootApp({ server });
+  const release = holdAi(server);
+  log(app, {});
+  await app.settle();
+  log(app, { kcal: 400 });
+  release();
+  await app.settle();
+  const { kcal, estimateStatus, effort: e } = app.workout("Bike");
+  assert.deepEqual([kcal, estimateStatus, e, on(server, "Bike").kcal, on(server, "Bike").effort], [400, "done", {}, 400, {}]);
+});
+
+test("deleted while the AI is asked: it stays deleted", async () => {
+  const server = serverWith();
+  const app = await bootApp({ server });
+  const release = holdAi(server);
+  log(app, {});
+  await app.settle();
+  app.run("removeWorkout(100)");
+  release();
+  await app.settle();
+  assert.deepEqual([app.workouts(), server.workouts()], [[], []]);
+});
+
+test("other words or minutes while the AI is asked: asked for those", async () => {
+  for (const change of [{ what: "Run" }, { minutes: 30 }]) {
+    const server = serverWith(), bodies = [];
+    server.ai = (body) => { bodies.push(body.payload); return answer(bodies.length, bodies.length); };
+    const app = await bootApp({ server });
+    const release = holdAi(server);
+    log(app, {});
+    await app.settle();
+    log(app, change);
+    release();
+    await app.settle();
+    const w = app.workouts()[0];
+    assert.deepEqual([bodies.length, JSON.stringify(bodies[1]), w.effort.met, w.estimateStatus], [2, JSON.stringify({ what: "Bike", minutes: 90, ...change }), { low: 2, high: 2 }, "done"]);
+    assert.deepEqual(server.workouts()[0].effort.met, { low: 2, high: 2 });
+  }
+});
+
+test("calories typed on another device win over an answer that comes later", async () => {
+  const server = serverWith();
+  const a = await bootApp({ server });
+  const release = holdAi(server);
+  log(a, {});
+  await a.settle();
+  const b = await bootApp({ server, device: createDevice() });
+  log(b, { kcal: 400 });
+  await b.settle();
+  release();
+  await a.settle();
+  assert.deepEqual([on(server, "Bike").kcal, on(server, "Bike").effort, a.workout("Bike").kcal, a.workout("Bike").estimateStatus], [400, {}, 400, "done"]);
+  log(a, { id: 300, what: "Swim", kcal: 1 });
+  await a.settle();
+  assert.equal(on(server, "Bike").kcal, 400, "and stay so after this device's next save");
+});
+
+test("deleted on another device: an answer does not bring it back, here or there", async () => {
+  const server = serverWith();
+  const a = await bootApp({ server });
+  const release = holdAi(server);
+  log(a, {});
+  await a.settle();
+  const b = await bootApp({ server, device: createDevice() });
+  b.run("removeWorkout(100)");
+  await b.settle();
+  release();
+  await a.settle();
+  assert.deepEqual([server.workouts(), a.workouts()], [[], []]);
+});
+
+test("the same workout again needs no AI, whatever the minutes", async () => {
+  const server = serverWith({ workouts: [row(1, "Bike, zone 2", { date: "2026-11-20" })] });
+  const app = await bootApp({ server });
+  log(app, { what: "bike, Zone 2", minutes: 45 });
+  await app.settle();
+  const w = app.workout("bike, Zone 2");
+  assert.deepEqual([server.aiCalls, w.estimateStatus, w.effort.met, w.effort.from], [[], "done", { low: 6, high: 7 }, { id: 1, date: "2026-11-20" }]);
+  assert.equal(numbersOf(trackerRow(app))[2], (BMR * 1.2 + 5.5 * KG * 0.75).toFixed(1));
+});
+
+test("a question left over is asked by the device that had it, at its next start", async () => {
+  const server = serverWith(), device = createDevice();
+  const a = await bootApp({ server, device });
+  holdAi(server);
+  log(a, {});
+  await a.settle();
+  server.ai = () => answer();
+  const other = await bootApp({ server, device: createDevice() });
+  await other.settle();
+  assert.deepEqual([server.aiCalls.length, other.workout("Bike").estimateStatus], [1, "pending"], "not by another");
+  const again = await bootApp({ server, device });
+  await again.settle();
+  assert.deepEqual([server.aiCalls.length, again.workout("Bike").estimateStatus, on(server, "Bike").estimate_status], [2, "done", "done"]);
+});
+
+test("logged offline: not estimated until the user tries again", async () => {
+  const server = serverWith(), device = createDevice();
+  const app = await bootApp({ server, device });
+  device.online = false;
+  log(app, {});
+  await app.settle();
+  assert.equal(app.workout("Bike").estimateStatus, "error");
+  device.online = true;
+  await app.windowEvent("online");
+  app.run("retryWorkout(100)");
+  await app.settle();
+  assert.deepEqual([undated(on(server, "Bike")).effort, on(server, "Bike").estimate_status], [answered, "done"]);
+});
+
+test("one question at a time", async () => {
+  const server = serverWith();
+  let running = 0, most = 0;
+  server.ai = async (body) => { most = Math.max(most, ++running); await new Promise(setImmediate); running--; return body.feature === "workout" ? answer() : { data: { macros: {} }, error: null }; };
+  const app = await bootApp({ server });
+  app.addFood("Eggs");
+  log(app, { what: "Bike" }, { what: "Run" });
+  app.addFood("Rice");
+  await app.settle();
+  assert.deepEqual([most, server.aiCalls], [1, ["Eggs", "Bike", "Run", "Rice"]]);
+});

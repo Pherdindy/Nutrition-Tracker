@@ -663,6 +663,7 @@ function statusBadge(entry) {
   return "";
 }
 window.retryEstimate = (id) => askOnceMore(FOOD, id);
+window.retryWorkout = (id) => askOnceMore(WORKOUT, id);
 function askOnceMore(kind, id) {
   const { spec } = kind, entries = spec.load();
   const e = entries.find((x) => x.id === id);
@@ -1020,7 +1021,14 @@ const FOOD = {
   },
   answer: (e, answer, noCredit) => Nutrition.applyAnswer(e, answer, { tracked: getEnabledMacros(), now: Date.now(), noCredit }),
 };
-const KINDS = [FOOD];
+const WORKOUT = {
+  spec: WORKOUT_SYNC,
+  needs: Workouts.needsAnswer,
+  without: () => "done",
+  ask: (w, { what, minutes }) => callAi("workout", { what, ...(minutes > 0 && { minutes }) }),
+  answer: (w, answer, noCredit) => Workouts.applyAnswer(w, answer, { now: Date.now(), noCredit }),
+};
+const KINDS = [FOOD, WORKOUT];
 const _estimateQueue = []; // [kind, id]
 let _estimateRunning = false;
 
@@ -1149,6 +1157,20 @@ function openDayModal(entry) {
 
 function closeDayModal() {
   document.getElementById("day-modal").classList.add("hidden");
+}
+
+// Stores workouts as the user typed them: [{ id, what, minutes, kcal, askAgain }]. The
+// AI is asked where that is needed.
+function storeWorkouts(date, typed) {
+  const workouts = loadWorkouts(), asked = [];
+  for (const { id, askAgain, ...after } of typed) {
+    const i = workouts.findIndex((w) => w.id === id), before = workouts[i];
+    const saved = { id, date, ...after, ...Workouts.resolve({ before, after, askAgain, workouts }) };
+    if (before) workouts[i] = saved; else workouts.push(saved);
+    if (saved.estimateStatus === "pending") asked.push(id);
+  }
+  saveWorkouts(workouts);
+  asked.forEach((id) => enqueueEstimate(WORKOUT, id));
 }
 
 function saveDay(e) {
