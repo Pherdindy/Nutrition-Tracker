@@ -1934,8 +1934,8 @@ tr.day-summary.day-incomplete td:first-child { opacity: 1; }
 /* Save and Cancel stay in reach while a long form scrolls. The negative margins undo
    .modal-content's 28px padding so nothing shows through beneath the bar; a field that
    takes the focus stays clear of it. */
-#food-form .modal-actions { position: sticky; bottom: -28px; margin: 20px -28px -28px; padding: 12px 28px 16px; background: var(--surface); border-top: 1px solid var(--border); }
-#food-modal .modal-content { scroll-padding-bottom: 6rem; }
+#food-form .modal-actions, #day-form .modal-actions { position: sticky; bottom: -28px; margin: 20px -28px -28px; padding: 12px 28px 16px; background: var(--surface); border-top: 1px solid var(--border); }
+#food-modal .modal-content, #day-modal .modal-content { scroll-padding-bottom: 6rem; }
 @media (max-width: 720px) {
   .nutrition-basis label { flex: 1 0 100%; }
   .nutrition input, .nutrition select { min-height: 44px; font-size: 16px; }
@@ -1960,7 +1960,7 @@ tr.day-summary.day-incomplete td:first-child { opacity: 1; }
 @media (max-width: 720px) {
   .workouts input { min-height: 44px; font-size: 16px; }
   .workouts .btn, .workouts .btn-icon { min-height: 44px; min-width: 44px; }
-  .workout-line { min-width: 0; max-width: none; }
+  .workout-line { min-width: 0; max-width: none; font-size: 13px; padding: 2px 0 2px 12px; }
 }
 
 /* A number's header sits over its numbers. Last, so that it wins over the tables' own

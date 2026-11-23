@@ -702,7 +702,7 @@ function renderCalorieTracker() {
       <td>${formatDate(day.date)}${incPill}</td>
       <td class="num">${day.weight}</td>
       <td class="num">${renderNum(bmr, 1)}</td>
-      <td>${activityHtml(day, workouts)}</td>
+      <td>${activityHtml(day, workouts)}${workoutLines(day, workouts)}</td>
       <td class="num">${renderNum(tdee, 1)}</td>
       <td class="num">${renderNum(target, 0)}</td>
       <td class="num">${renderNum(totals.calLow, 1)}</td>
@@ -729,11 +729,12 @@ function renderCalorieTracker() {
   if (typeof renderDayCards === "function") renderDayCards();
 }
 
-// A day's activity and, a line each, its workouts.
+// A day's activity; with workouts, the rest of the day. And a line for each workout.
 function activityHtml(day, workouts) {
-  if (!workouts.length) return escapeHtml(day.activity);
-  const { rest } = Workouts.total(0, day, workouts);
-  return escapeHtml(Workouts.nameOf(rest)) + workouts.map((w) => `<div class="workout-line">${workoutHtml(w, day.weight)}</div>`).join("");
+  return escapeHtml(workouts.length ? Workouts.nameOf(Workouts.total(0, day, workouts).rest) : day.activity);
+}
+function workoutLines(day, workouts) {
+  return workouts.map((w) => `<div class="workout-line">${workoutHtml(w, day.weight)}</div>`).join("");
 }
 function workoutHtml(w, lbs, waiting = "estimating…") {
   const { what, minutes, kcal } = Workouts.line(w, lbs);

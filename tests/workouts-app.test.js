@@ -33,7 +33,7 @@ test("a workout reaches the server as it is, and the next device", async () => {
   assert.deepEqual([a.errors, b.errors], [[], []]);
   Object.assign(server.rowOf("workouts", "Bike"), { minutes: "22.5", kcal: "500" }); // a numeric may come as text
   const c = await bootApp({ server, device: createDevice() });
-  assert.deepEqual(c.workouts(), b.workouts());
+  assert.deepStrictEqual(c.workouts(), b.workouts());
 });
 
 test("what is unsent is laid over what is loaded, and over what is cached", async () => {
@@ -209,7 +209,7 @@ test("on phones too", async () => {
   const app = await bootApp({ server: serverWith({ workouts: [row(1, "<i>Bike</i>"), row(2, "Swim", { effort: {}, estimate_status: "error" })] }) });
   const html = app.run("isMobile = () => true; renderDayCards(); document.getElementById('day-cards').innerHTML");
   const total = BMR * 1.2 + 5.5 * KG * 1.5;
-  for (const part of ["&lt;i&gt;Bike&lt;/i&gt; · 90 min · 612–735 kcal", `${BMR.toFixed(0)} / ${total.toFixed(0)}`, `/ ${(total - 550).toFixed(0)} cal`, "🪑 Sat all day", "not estimated"]) assert.ok(html.includes(part), part);
+  for (const part of ["&lt;i&gt;Bike&lt;/i&gt; · 90 min · 612–735 kcal", `${BMR.toFixed(0)} / ${total.toFixed(0)}`, `/ ${(total - 550).toFixed(0)} cal`, "<b>🪑 Sat all day</b>", "not estimated"]) assert.ok(html.includes(part), part);
 });
 
 test("the assessment is told of the workouts and the total they make", async () => {

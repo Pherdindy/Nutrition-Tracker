@@ -4,7 +4,7 @@
 //                          retryEstimate, getEnabledMacros, getValueFormat, localDate,
 //                          Macros, Nutrition
 //  renderDayCards:         loadDayEntries, loadProfile, loadFoodEntries, workoutsByDate,
-//                          dayEnergy, activityHtml, Targets, getDailyFoodTotals, formatDate,
+//                          dayEnergy, activityHtml, workoutLines, Targets, getDailyFoodTotals, formatDate,
 //                          escapeHtml, renderNum, isMobile, addWorkout, editDay, deleteDay
 //  renderAssessmentScorecard: window.AssessmentView, renderActionPlan, escapeHtml
 
@@ -104,6 +104,7 @@ function renderDayCards() {
         <div class="food-card-row"><span>Weight</span><b>${day.weight} lb</b></div>
         <div class="food-card-row"><span>BMR / TDEE</span><b>${renderNum(bmr,0)} / ${renderNum(tdee,0)}</b></div>
         <div class="food-card-row"><span>Activity</span><b>${activityHtml(day, workouts)}</b></div>
+        ${workoutLines(day, workouts)}
         <div class="food-card-row"><span>Cal +/-</span><b class="tone-${calDisp.tone}">${calDisp.text ? escapeHtml(calDisp.text) : `${renderNum(overLow,0)} … ${renderNum(overHigh,0)}`}</b></div>
         <div class="food-card-row"><span>Protein</span><b class="tone-${proDisp.tone}">${proDisp.text ? escapeHtml((proDisp.icon + " " + proDisp.text).trim()) : `${renderNum(t.proLow,0)}–${renderNum(t.proHigh,0)} g (target ${profile.proteinLow}–${profile.proteinHigh})`}</b></div>
         <div class="day-card-actions">
