@@ -178,6 +178,57 @@ while another fills a gap has to be repeated; an entry taken over as pending wai
 other device or the next start; a row that cannot be read holds back later unsent changes
 until it can.
 
+## Column headers — FIXED 2026-11-23 (`a8bd585`)
+
+Headers of number columns were left-aligned over right-aligned values in six tables (user
+screenshot of Diet Assessment). `th.num`; `tests/table-headers.test.js` compares every
+table’s header with its cells.
+
+## Workouts — BUILT 2026-11-23 on `feat/workouts`, NOT on `main`
+
+User: no place in the activity list for 90 minutes of zone 2 cardio. They chose a mix of
+one-tap choices and logged workouts whose calories the AI works out, approved the design
+and said "Build straight through it like last time". Spec
+`docs/superpowers/specs/2026-11-23-workouts-design.md`, plan
+`docs/superpowers/plans/2026-11-23-workouts.md`.
+
+**Waiting for the user's explicit yes, in this order:**
+1. Table: `docs/sql/2026-11-23-workouts-01.sql` (migration `workouts_01`). Additive.
+2. Proxy: deploy `ai-proxy` v14 (new feature `workout`; the other features send and answer
+   exactly what v13 did, checked by running both handlers). Smoke: a few cents.
+3. Client: merge, push, `npx cap sync android`, reinstall. **Never before step 1**: the
+   build reads the table at every start and would fall back to the offline copy.
+   Update every device before using it: older builds count the new list choices as
+   "Sat all day" and ignore workouts.
+
+**What it does:** Calorie Tracker has "+ Add Workout"; Edit Day lists the day's workouts
+(what, minutes as 90 / 1:30 / 1h30, calories optional). The AI says how hard it is in METs,
+the app works out the extra calories from that day's weight (which the AI is not told).
+Typed calories are the user's and never changed; the same words again reuse the last answer
+("from Nov 20"); other minutes scale; "Ask AI again"; "How was this worked out?". The list
+has three more choices (zone 2 about 45 min 1.4, hard cardio about 45 min 1.5, zone 2 90 min
+or more 1.6). With workouts the list is about the rest of the day, so nothing counts twice.
+A new day starts with the last "Sat all day" or "Light activity", never with a workout.
+
+**How it works:** `www/workouts.js` (pure, `window.Workouts`): the list, calories, a day's
+total, saving, answers, explanation. Table `workouts`, one row each, synced like food.
+`app.js`: estimates and their sync work for a *spec* (`FOOD_SYNC`, `WORKOUT_SYNC`) and the
+AI queue for a *kind* (`FOOD`, `WORKOUT`); `dayEnergy` is the only way to a day's total;
+`_dayForm` keeps what is typed in the day form until Save.
+
+**Verified:** 644 unit and app tests; about 250 mutations of this feature, all noticed but a
+few that change nothing; an independent review (8 findings, the serious one: Save with an
+empty workout left open replaced the day’s activity; all fixed with a test); random sessions
+on the final code without a failure (two tabs and a second device, lost and late answers,
+kills), for workouts and again for food; 18 scenarios in headless Chrome with real clicks,
+keys and two real tabs, plus the 22 of food and the 13 of sync; layout at 320–1280 px, 125%
+and 150%, large text, both themes; the proxy handler against v13 (20 scenarios identical, 18
+for workouts). **Not seen yet:** a real AI answer about a workout, the table itself.
+
+**Known limits:** two devices changing the same workout or day is last-write-wins; a day's
+row is not followed between tabs (food entries and workouts are); typed calories are not
+remembered for the next time; `calcBMR` is the male formula for everyone (noticed, not new).
+
 ## Where things stand
 
 **Accounts + per-user data (Spec A) is COMPLETE and live-verified** (emulator,

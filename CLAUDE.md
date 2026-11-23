@@ -15,7 +15,7 @@ Update it at the end of each working session.
 
 ## Commands
 
-- `npm test` — Node `--test` unit suite over `tests/` (500 tests)
+- `npm test` — Node `--test` unit suite over `tests/` (644 tests)
 - `npx http-server www -p 8080 -c-1` — browser preview (mobile layout ≤720px)
 - After editing anything in `www/`: `npx cap sync android`
 - Debug install: `cd android; .\gradlew.bat installDebug` (see `BUILD.md` for
@@ -34,12 +34,15 @@ Update it at the end of each working session.
   through `numbersFor()`. `entry.macros` is always the total eaten; a nutrient with
   `mine: true` was typed by the user and no AI answer may change it; the rest
   (explanation, assumed weight, source) is in `entry.nutrition`
+- What a day burns comes only from `dayEnergy()` (`www/workouts.js`, pure): the rest of
+  the day plus its workouts, never a list choice that already includes one. Typed calories
+  and minutes are never changed by an AI answer
 - "Today" is `localDate()`, never `toISOString().slice(0, 10)` (that is the UTC
   date, a different day for part of every day)
 - AI provider API keys (`nt_key_openai`, `nt_key_anthropic`) live in
   localStorage ONLY — never sent to Supabase (server-side proxy is Phase B)
-- Theme + API keys are device-global; the five data keys (`food`, `days`,
-  `profile`, `assessments`, `version`) are per-user namespaced
+- Theme + API keys are device-global; the six data keys (`food`, `days`,
+  `workouts`, `profile`, `assessments`, `version`) are per-user namespaced
 - Supabase email OTP codes are 8 digits for this project (client accepts 6–10);
   both the "Confirm signup" AND "Magic Link" templates must contain
   `{{ .Token }}` — first-time addresses get the *Confirm signup* template
