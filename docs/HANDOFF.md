@@ -80,9 +80,7 @@ confirmed creating it can reappear (seen once by the fuzzer; needs tombstones).
 qty/unit from the *oldest* match, not the latest (verified: "Eggs" gives 111 g from
 February) — the nutrition-details spec fixes it; (b) if the startup load fails on a
 device with no local profile, onboarding is shown to an existing user and would
-overwrite their cloud profile; (c) the profile form accepts cleared fields; (d) the
-finance app's new-transaction date has the UTC bug described next
-(`finance/app.js`, `txnDateInput.value`).
+overwrite their cloud profile; (c) the profile form accepts cleared fields.
 
 ## Date bug — FIXED 2026-11-23 (on `main`)
 
@@ -91,7 +89,9 @@ finance app's new-transaction date has the UTC bug described next
 tomorrow; assessment periods were off by a day at the same hours. Now
 `localDate()` in `www/app.js`. `tests/local-date.test.js` runs the real app at a
 fixed instant in Manila and New York. The one entry misfiled so far (id 174, the
-01:04 shake of Nov 23, under Nov 22) was left as it is.
+01:04 shake of Nov 23, under Nov 22) was left as it is. The finance app's Add dialog
+had the same bug (early on the 1st, a new transaction landed in last month); it now
+uses its own `currentDateValue()`.
 
 ## In design: macro override, label photo, macro set, AI explanation
 
@@ -212,6 +212,42 @@ the agent at its code).
    `finance-sync` test retitled (suite still 120). Verified via Node DOM-stub
    smoke (render, filters, totals, CSV escaping) — not yet clicked through in
    a live browser.
+6. **Finance app 2026-11-20 — new-row Edit/Delete fix + "Travel" category**
+   (committed and pushed 2026-11-23). Bug: a transaction added in the current page
+   session could not be edited or deleted until a refresh. Cause:
+   `saveTransaction` renders the row under a temporary `Date.now()` id, then
+   the background insert swaps the cached row to the server's sequential id —
+   the rendered Edit/Del buttons and any open dialog kept addressing an id
+   that no longer existed (silent no-op, locally and on the server). Fix in
+   `finance/app.js`: `_serverIds` (temporary → server id) and
+   `_insertSettled`; lookups go through `resolveTxnId`, server writes
+   through `serverTxnId` (waits for an insert still in flight), and the swap
+   keeps local fields so an edit made mid-insert is not overwritten.
+   "Travel" is now a built-in expense category: in `DEFAULT_CATEGORIES` and
+   added once per device to an existing saved list
+   (`addNewDefaultCategories`, localStorage marker
+   `ft_added_default_categories`, runs before reconcile). It has to be added
+   client-side — a SQL edit of the `ft_categories` settings row is reverted
+   on the next load by the local-wins category resync.
+   Tests: `tests/finance-app.test.js` (13) run the real `finance/app.js` in a
+   Node `vm` against a fake DOM + fake Supabase
+   (`tests/helpers/finance-app-harness.js`); suite now 138. Also driven in
+   headless Chrome against a fake server (HEAD: Edit/Del dead on a new row;
+   fixed: all checks pass). Not clicked through against production data.
+   Same day: the Transactions header is pinned while the list scrolls so
+   "+ New Transaction" (and the month filter) is always reachable —
+   `#transactions .page-header` is `position: sticky` in
+   `finance/styles.css`; `.main` padding now comes from
+   `--main-pad-x`/`--main-pad-y` so the header can span it. Other tabs are
+   unchanged. Checked in headless Chrome at five window sizes (incl. laptop
+   125%/150% scaling): button in view and clickable at any scroll position,
+   resting layout pixel-identical to before.
+   ⚠️ **Known hazard, pre-existing, NOT fixed:** the category resync is
+   local-wins per browser. A browser holding an older category list
+   overwrites the server list when it loads, and reconcile then rewrites
+   transactions of any category missing from that list to "Uncategorized"
+   **on the server**. Travel itself is protected once a machine runs this
+   code, so pull before opening the finance app on the other machine.
 
 Known minor (accepted): offline onboarding has no retry; `AuthView.route()`
 is exported but unused (documentation value only). The dev machine still has

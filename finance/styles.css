@@ -135,9 +135,11 @@ body {
 /* ========== MAIN CONTENT ========== */
 
 .main {
+  --main-pad-x: 32px;
+  --main-pad-y: 28px;
   flex: 1;
   margin-left: var(--sidebar-width);
-  padding: 28px 32px;
+  padding: var(--main-pad-y) var(--main-pad-x);
   max-width: calc(100% - var(--sidebar-width));
 }
 
@@ -147,6 +149,32 @@ body {
   align-items: center;
   justify-content: space-between;
   margin-bottom: 24px;
+}
+
+/* Transactions: the header (month filter, + New Transaction) stays in view
+   while the list scrolls. It spans the main area's padding so rows pass
+   underneath cleanly, and pins slightly above the window edge so it is more
+   compact pinned than at rest. */
+#transactions .page-header {
+  position: sticky;
+  top: calc(12px - var(--main-pad-y));
+  z-index: 20;
+  margin: calc(-1 * var(--main-pad-y)) calc(-1 * var(--main-pad-x)) 12px;
+  padding: var(--main-pad-y) var(--main-pad-x) 12px;
+  background: var(--bg);
+}
+
+/* Soft edge under the pinned header. At rest it lies over the empty gap
+   below the header, where it cannot be seen. */
+#transactions .page-header::after {
+  content: "";
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  height: 12px;
+  background: linear-gradient(var(--bg), transparent);
+  pointer-events: none;
 }
 
 .page-header h1 {
@@ -1078,9 +1106,10 @@ select {
   }
 
   .main {
+    --main-pad-x: 16px;
+    --main-pad-y: 16px;
     margin-left: 0;
     max-width: 100%;
-    padding: 16px;
   }
 
   .summary-cards {
