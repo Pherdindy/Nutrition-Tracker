@@ -21,7 +21,11 @@ const serverWith = (...food) => {
   server.ai = () => ({ data: { macros: eight(200) }, error: null });
   return server;
 };
-const on = (server, food) => server.food().find((r) => r.food === food);
+const on = (server, food) => { // as saved; what the nutrition is of is tested by itself
+  const r = server.food().find((x) => x.food === food);
+  if (r && r.nutrition) delete r.nutrition.of;
+  return r;
+};
 function holdAi(server) {
   let release;
   const gate = new Promise((resolve) => { release = resolve; });
@@ -61,6 +65,20 @@ test("the column survives a reload and later saves", async () => {
   app.editFood("Sardines", { time: "19:30" });
   await app.settle();
   assert.deepEqual([on(server, "Sardines").nutrition, on(server, "Sardines").time], [nutrition, "19:30"]);
+});
+
+test("what is known about the numbers is ignored once another build changed what they are for", async () => {
+  const nutrition = { at: 5, grams: 48, of: { food: "Sardines", qty: 4, unit: "pcs" } };
+  for (const change of [{ qty: 8 }, { food: "Tuna" }, { unit: "cups" }]) {
+    const app = await bootApp({ server: serverWith(row(1, "Sardines", { nutrition, ...change })) });
+    assert.equal(app.food()[0].nutrition, undefined, JSON.stringify(change));
+  }
+  const server = serverWith(row(1, "Sardines", { nutrition }));
+  const app = await bootApp({ server });
+  assert.deepEqual(app.entry("Sardines").nutrition, { at: 5, grams: 48 });
+  app.editFood("Sardines", { qty: 8 });
+  await app.settle();
+  assert.deepEqual(server.food()[0].nutrition, { at: 5, grams: 96, of: { food: "Sardines", qty: 8, unit: "pcs" } });
 });
 
 test("a number typed on another device while the AI works is not overwritten", async () => {
@@ -249,6 +267,27 @@ test("choosing a past food fills in its latest amount, not its oldest", async ()
   assert.deepEqual([app.el("food-qty").value, app.el("food-unit").value], [2, "pcs"]);
 });
 
+test("choosing a past food never replaces an amount that was typed", async () => {
+  const app = await bootApp({ server: serverWith(row(1, "Sardines"), row(2, "Tuna", { qty: 2, unit: "cans" })) });
+  const filled = () => [app.el("food-qty").value, app.el("food-unit").value];
+  app.fire("add-food-btn", "click");
+  type(app, "food-qty", "200");
+  type(app, "food-unit", "g");
+  type(app, "food-name", "sardines", "change");
+  assert.deepEqual(filled(), ["200", "g"]);
+  app.fire("add-food-btn", "click");
+  type(app, "food-qty", "200");
+  type(app, "food-name", "Sardines", "change");
+  assert.deepEqual(filled(), ["200", ""], "half typed");
+  app.fire("add-food-btn", "click");
+  type(app, "food-name", "Sardines", "change");
+  type(app, "food-name", "Tuna", "change");
+  assert.deepEqual(filled(), [2, "cans"], "its own filling-in it may replace");
+  type(app, "food-qty", "3");
+  type(app, "food-name", "Sardines", "change");
+  assert.deepEqual(filled(), ["3", "cans"]);
+});
+
 test("renaming an entry does not change its amount", async () => {
   const server = serverWith(row(1, "Egs", { qty: 5 }), row(2, "Eggs", { qty: 2 }));
   const app = await bootApp({ server });
@@ -357,6 +396,40 @@ test("renaming to a remembered food shows its numbers before saving", async () =
   save(app);
   await app.settle();
   assert.deepEqual([server.aiCalls, on(server, "tuna").macros.calories, on(server, "tuna").macros.protein], [[], range(300), mine(22)]);
+});
+
+test("renaming and typing all that is tracked leaves nothing of the other food, on screen or saved", async () => {
+  const server = serverWith(row(1, "Sardines", { macros: eight(100, { sodium: range(500) }) }));
+  const app = await bootApp({ server });
+  openEdit(app, "Sardines");
+  type(app, "food-name", "Yakult");
+  assert.equal(shown(app, "sodium"), "500", "what it was, while the AI is to be asked");
+  for (const id of ["calories", "protein", "carbs", "fat", "fiber"]) type(app, `nf-${id}`, 1);
+  assert.deepEqual([shown(app, "sodium"), state(app)], ["", ""]);
+  save(app);
+  await app.settle();
+  const saved = on(server, "Yakult");
+  assert.deepEqual([server.aiCalls, saved.macros.sodium, saved.estimate_status], [[], undefined, "manual"]);
+});
+
+test("a new name and amount in one save scale a typed number, as on screen", async () => {
+  const server = serverWith(row(1, "Sardines", { macros: eight(100, { protein: mine(22) }) }));
+  const app = await bootApp({ server });
+  openEdit(app, "Sardines");
+  type(app, "food-qty", 8);
+  type(app, "food-name", "Sardines in oil");
+  assert.equal(shown(app, "protein"), "44");
+  save(app);
+  await app.settle();
+  assert.deepEqual(on(server, "Sardines in oil").macros.protein, mine(44));
+});
+
+test("changing the amount of a failed entry without numbers asks for the new amount", async () => {
+  const server = serverWith(row(1, "Sardines", { estimate_status: "error", macros: {} }));
+  const app = await bootApp({ server });
+  app.editFood("Sardines", { qty: 6 });
+  await app.settle();
+  assert.deepEqual([server.aiCalls, on(server, "Sardines").estimate_status], [["Sardines"], "done"]);
 });
 
 test("retyping the amount does not disturb the numbers", async () => {
@@ -482,6 +555,75 @@ test("ask AI again is refused while the form is incomplete", async () => {
   assert.deepEqual([app.isOpen("food-modal"), server.aiCalls], [true, []]);
 });
 
+test("asking again while a gap is being filled asks again", async () => {
+  const server = serverWith(row(1, "Sardines"));
+  const sent = [];
+  server.ai = (body) => { sent.push(body.payload); return { data: { macros: eight(100 * sent.length) }, error: null }; };
+  const app = await bootApp({ server });
+  const release = holdAi(server);
+  openEdit(app, "Sardines");
+  type(app, "nf-carbs", "");
+  save(app);
+  await app.settle();
+  openEdit(app, "Sardines");
+  app.fire("nutrition-ask", "click");
+  await app.settle();
+  release();
+  await app.settle();
+  assert.deepEqual(sent.map((p) => !!p.known), [true, false]);
+  assert.deepEqual([on(server, "Sardines").macros.calories, on(server, "Sardines").estimate_status], [range(200), "done"]);
+});
+
+test("the AI is told a weight the user corrected", async () => {
+  const server = serverWith(row(1, "Sardines", { nutrition: { at: 5, grams: 96, gramsMine: true } }));
+  const sent = [];
+  server.ai = (body) => { sent.push(body.payload); return { data: { macros: eight(200), basis: [{ ref: "r", note: "n", grams: 48, kcal: 200 }], how: "one" }, error: null }; };
+  const app = await bootApp({ server });
+  openEdit(app, "Sardines");
+  app.fire("nutrition-ask", "click");
+  await app.settle();
+  assert.deepEqual(JSON.parse(JSON.stringify(sent)), [{ food: "Sardines", qty: 4, unit: "pcs", grams: 96 }]);
+  assert.deepEqual([on(server, "Sardines").macros.calories, on(server, "Sardines").nutrition.grams], [range(200), 96]);
+});
+
+test("out of credit, learned from the call: asking again is taken back for all that were asked", async () => {
+  const server = serverWith(row(1, "Sardines"), row(2, "Tuna"));
+  server.ai = () => ({ data: null, error: { context: { status: 402 } } });
+  const app = await bootApp({ server });
+  const before = ["Sardines", "Tuna"].map((food) => on(server, food));
+  const release = holdAi(server);
+  for (const food of ["Sardines", "Tuna"]) { openEdit(app, food); app.fire("nutrition-ask", "click"); await app.settle(); }
+  assert.equal(on(server, "Tuna").estimate_status, "pending");
+  release();
+  await app.settle();
+  assert.equal(app.isOpen("paywall-modal"), true);
+  assert.deepEqual(["Sardines", "Tuna"].map((food) => on(server, food)), before);
+});
+
+test("without credit, an entry that needs nothing from the AI does not open the paywall", async () => {
+  const server = serverWith(row(1, "Sardines", { estimate_status: "error" }));
+  server.usage = { pct_used: 100, plan: "free", exhausted: true };
+  const app = await bootApp({ server });
+  app.run("retryEstimate(1)");
+  await app.settle();
+  assert.deepEqual([app.isOpen("paywall-modal"), on(server, "Sardines").estimate_status], [false, "done"]);
+});
+
+test("a failed question about a good entry does not make it forgotten", async () => {
+  const server = serverWith(row(1, "Sardines"));
+  const device = createDevice();
+  const app = await bootApp({ server, device });
+  device.online = false;
+  openEdit(app, "Sardines");
+  app.fire("nutrition-ask", "click");
+  await app.settle();
+  assert.equal(app.entry("Sardines").estimateStatus, "error");
+  app.addFood("Sardines", { qty: 8, unit: "pcs" });
+  await app.settle();
+  const added = app.food().find((e) => e.qty === 8);
+  assert.deepEqual([added.macros.calories, added.estimateStatus], [range(200), "done"]);
+});
+
 test("ask AI again without credit opens the paywall and changes nothing", async () => {
   const server = serverWith(row(1, "Sardines"));
   server.usage = { pct_used: 100, plan: "free", exhausted: true };
@@ -534,6 +676,23 @@ test("correcting the weight rescales the AI's numbers", async () => {
   const saved = on(server, "Sardines");
   assert.deepEqual([saved.macros.calories, saved.macros.protein, saved.nutrition.grams, saved.nutrition.gramsMine], [range(200), mine(22), 96, true]);
   assert.deepEqual(server.aiCalls, []);
+});
+
+test("a typed weight does not follow to another food or amount", async () => {
+  const server = serverWith(row(1, "Sardines", { nutrition: { at: 5, grams: 48 } }), row(2, "Tuna", { macros: eight(300), nutrition: { at: 5, grams: 120 } }));
+  const app = await bootApp({ server });
+  openEdit(app, "Sardines");
+  type(app, "nutrition-weight", "96");
+  type(app, "food-name", "Tuna");
+  assert.deepEqual([shown(app, "calories"), app.el("nutrition-weight").value], ["300", ""]);
+  type(app, "food-name", "Sardines");
+  type(app, "nutrition-weight", "96 g");
+  type(app, "food-qty", 96);
+  type(app, "food-unit", "g");
+  save(app);
+  await app.settle();
+  assert.equal(app.isOpen("food-modal"), false, "nothing invisible holds it back");
+  assert.deepEqual([on(server, "Sardines").macros.calories, on(server, "Sardines").qty], [range(200), 96]);
 });
 
 test("the explanation is shown as text, whatever the AI wrote", async () => {

@@ -17,6 +17,7 @@
   const theirIds = (macros) => IDS.filter((id) => has(macros, id) && !macros[id].mine);
   const complete = (macros) => IDS.every((id) => has(macros, id));
   const pick = (macros, ids) => Object.fromEntries(ids.map((id) => [id, macros[id]]));
+  const orNone = (n) => (Object.keys(n).length ? n : undefined);
   const round = (n, places) => Math.round(n * 10 ** places) / 10 ** places;
   const tidy = (n) => Number(n.toPrecision(6)); // as stored: no noise, and scaling back loses nothing
   const show = (n) => String(Math.abs(n) < 100 ? Number(round(n, 4).toPrecision(3)) : round(n, 1)); // 0.345, 15.7, 707.5
@@ -196,11 +197,7 @@
       delete n.stale;
     }
 
-    return {
-      macros,
-      nutrition: Object.keys(n).length ? n : undefined,
-      estimateStatus: newStatus ? statusFor(macros, tracked, n) : before.estimateStatus,
-    };
+    return { macros, nutrition: orNone(n), estimateStatus: newStatus ? statusFor(macros, tracked, n) : before.estimateStatus };
   }
 
   // ---- The AI's answer -------------------------------------------------------------
@@ -236,7 +233,7 @@
     const n = { ...(entry.nutrition || {}) };
     const done = (macros) => {
       const status = statusFor(macros, tracked, null);
-      return { macros, nutrition: n, estimateStatus: status === "pending" ? "error" : status };
+      return { macros, nutrition: orNone(n), estimateStatus: status === "pending" ? "error" : status };
     };
     if (!answer || !answer.macros) {
       // Asking again is then taken back; but a renamed entry has another food's numbers.

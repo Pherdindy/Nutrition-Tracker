@@ -90,7 +90,11 @@ const _cache = { food: null, days: null, profile: null, assessments: null, setti
 function foodRowToJs(r) {
   const base = { id: r.id, date: r.date, time: r.time, food: r.food, qty: Number(r.qty), unit: r.unit,
     estimateStatus: r.estimate_status || null };
-  if (r.nutrition) base.nutrition = r.nutrition;
+  if (r.nutrition) {
+    const { of, ...nutrition } = r.nutrition;
+    // A build from before this column changes food, amount and numbers, and leaves it.
+    if (!of || (of.food === base.food && of.qty === base.qty && of.unit === base.unit)) base.nutrition = nutrition;
+  }
   if (r.macros) { base.macros = r.macros; return base; }
   // legacy fallback: build macros from cal/pro columns
   base.calLow = Number(r.cal_low); base.calHigh = Number(r.cal_high);
@@ -101,7 +105,8 @@ function foodJsToRow(e) {
   const cal = Macros.getMacro(e, "calories") || { low: null, high: null };
   const pro = Macros.getMacro(e, "protein") || { low: null, high: null };
   return { id: e.id, date: e.date, time: e.time, food: e.food, qty: e.qty, unit: e.unit,
-    macros: e.macros || {}, estimate_status: e.estimateStatus || null, nutrition: e.nutrition || null,
+    macros: e.macros || {}, estimate_status: e.estimateStatus || null,
+    nutrition: e.nutrition ? { ...e.nutrition, of: { food: e.food, qty: e.qty, unit: e.unit } } : null,
     cal_low: cal.low, cal_high: cal.high, pro_low: pro.low, pro_high: pro.high,
     ai_thought_process: null };
 }
@@ -252,7 +257,8 @@ function saveEstimates(entries, answered) {
 }
 // What an estimate is for. An entry's macros are replaced, never changed in place.
 const askedOf = ({ food, qty, unit, macros }) => ({ food, qty, unit, macros: macros || {} });
-const stillAsked = (entry, asked) => entry.estimateStatus === "pending" && Sync.matches(askedOf(entry), asked);
+const askedAgain = (entry) => !!(entry.nutrition && entry.nutrition.refresh);
+const stillAsked = (entry, asked, again) => entry.estimateStatus === "pending" && Sync.matches(askedOf(entry), asked) && askedAgain(entry) === again;
 function applyEstimate(entry, op) {
   const row = foodJsToRow(entry);
   return Sync.matches(row, op.match) ? foodRowToJs({ ...row, ...op.row }) : entry;
@@ -656,6 +662,7 @@ function numbersFor(before, after, form = null) {
 
 // ---- Nutrition section of the food form ----
 
+let _autofilled = "";         // the amount filled in for a past food, until it is changed
 let _nutritionForm = null;    // Nutrition.createForm() while the section is open
 let _nutritionErrors = false; // saving was refused: say what is wrong
 
@@ -666,7 +673,6 @@ function openNutrition() {
   _nutritionErrors = false;
   buildNutritionFields();
   for (const id of ["nutrition-more", "nutrition-why"]) document.getElementById(id).open = false;
-  document.getElementById("nutrition-weight").value = "";
   showIf("nutrition-weight-row", false);
   showIf("nutrition-open", false);
   showIf("nutrition", true);
@@ -717,7 +723,7 @@ function renderNutrition() {
     if (input !== document.activeElement) input.value = value; // never under the cursor
   };
   for (const { id } of Macros.CATALOG) {
-    setValue(`nf-${id}`, form.text(id));
+    setValue(`nf-${id}`, form.text(id, willBe.macros));
     showIf(`nm-${id}`, form.isMine(id));
     setText(`ne-${id}`, errors[id] || "");
   }
@@ -737,6 +743,7 @@ function renderNutrition() {
   document.getElementById("nutrition-weight-text").textContent = why.weight || "";
   showIf("nutrition-weight-line", !!why.weight);
   if (!why.weight) showIf("nutrition-weight-row", false);
+  setValue("nutrition-weight", form.weight());
   setText("ne-weight", errors.weight || "");
   document.getElementById("nutrition-why-lines").innerHTML = why.lines.map((line) => `<li>${escapeHtml(line)}</li>`).join("");
   showIf("nutrition-why", !!why.weight || why.lines.length > 0);
@@ -802,6 +809,7 @@ function openFoodModal(entry) {
   document.getElementById("food-name").value = entry ? entry.food : "";
   document.getElementById("food-qty").value = entry ? entry.qty : "";
   document.getElementById("food-unit").value = entry ? entry.unit : "";
+  _autofilled = "";
   populateFoodSuggestions();
   const tabs = document.getElementById("food-modal-tabs");
   if (entry) {
@@ -870,14 +878,15 @@ const _estimateQueue = [];
 let _estimateRunning = false;
 
 function enqueueEstimate(entryId) {
-  if (_aiExhausted) {
+  const entries = loadFoodEntries();
+  const t = entries.find((e) => e.id === entryId);
+  if (_aiExhausted && t && Nutrition.needsAnswer(t, getEnabledMacros())) {
     // Credit exhausted: the entry is already saved (manual logging untouched) —
     // don't burn a proxy call; mark it retryable and show the paywall instead.
-    const entries = loadFoodEntries();
-    const t = entries.find((e) => e.id === entryId);
-    if (t && t.estimateStatus === "pending") {
-      t.estimateStatus = "error";
-      saveEstimates(entries, [{ entry: t, asked: askedOf(t) }]);
+    if (t.estimateStatus === "pending") {
+      const asked = askedOf(t);
+      Object.assign(t, unanswered(t));
+      saveEstimates(entries, [{ entry: t, asked }]);
       renderFoodTable(); renderCalorieTracker();
     }
     openPaywall();
@@ -886,6 +895,11 @@ function enqueueEstimate(entryId) {
   if (!_estimateQueue.includes(entryId)) _estimateQueue.push(entryId);
   runEstimateQueue();
 }
+// An entry the AI was not asked about because the credit is used up.
+function unanswered(entry) {
+  return Nutrition.applyAnswer(entry, null, { tracked: getEnabledMacros(), now: Date.now(), noCredit: true });
+}
+
 async function runEstimateQueue() {
   if (_estimateRunning) return;
   _estimateRunning = true;
@@ -904,9 +918,10 @@ async function runEstimateQueue() {
         continue;
       }
       let answer = null, errStatus = null;
-      const { food, qty, unit } = asked, known = Nutrition.known(entry);
+      const { food, qty, unit } = asked, known = Nutrition.known(entry), grams = Nutrition.knownWeight(entry);
+      const again = askedAgain(entry);
       try {
-        answer = await callAi("estimate", known ? { food, qty, unit, known } : { food, qty, unit });
+        answer = await callAi("estimate", { food, qty, unit, ...(known && { known }), ...(grams && { grams }) });
       } catch (err) {
         errStatus = err && err.status;
         console.error("[AI] estimate failed:", err);
@@ -914,10 +929,10 @@ async function runEstimateQueue() {
       // Reload fresh AFTER the await so a concurrent user edit isn't overwritten.
       const fresh = loadFoodEntries();
       const found = fresh.find((e) => e.id === id);
-      // Changed while this ran (food, amount, or a number typed): the answer is for
-      // something else, and saving that change has queued a new estimate if one is
-      // still needed.
-      const t = found && stillAsked(found, asked) ? found : null;
+      // Changed while this ran (food, amount, a number typed, or asked again): the
+      // answer is for something else, and saving that change has queued a new estimate
+      // if one is still needed.
+      const t = found && stillAsked(found, asked, again) ? found : null;
       // Quota exhausted (402): every remaining attempt would fail the same way —
       // fail the rest of the queue without burning proxy calls, then show the
       // paywall once. 429 is transient, so it does NOT drain: remaining entries
@@ -926,10 +941,13 @@ async function runEstimateQueue() {
       const answered = [];
       for (const qid of drained) {
         const q = fresh.find((e) => e.id === qid);
-        if (q && q.estimateStatus === "pending") { q.estimateStatus = "error"; answered.push({ entry: q, asked: askedOf(q) }); }
+        if (q && q.estimateStatus === "pending") {
+          answered.push({ entry: q, asked: askedOf(q) });
+          Object.assign(q, unanswered(q));
+        }
       }
       if (t) { // the entry may have been deleted or changed while the estimate was in flight
-        Object.assign(t, Nutrition.applyAnswer(t, answer, { tracked, now: Date.now() }));
+        Object.assign(t, Nutrition.applyAnswer(t, answer, { tracked, now: Date.now(), noCredit: errStatus === 402 }));
         answered.push({ entry: t, asked });
       }
       if (answered.length) {
@@ -2898,10 +2916,14 @@ async function startApp() {
 
   const nameInput = document.getElementById("food-name");
   nameInput.addEventListener("change", () => {
-    const match = editedEntry() ? null : Nutrition.latestLog(loadFoodEntries(), nameInput.value);
+    const qty = document.getElementById("food-qty"), unit = document.getElementById("food-unit");
+    const amount = () => `${qty.value}|${unit.value}`;
+    const typed = amount() !== "|" && amount() !== _autofilled; // never replaced
+    const match = editedEntry() || typed ? null : Nutrition.latestLog(loadFoodEntries(), nameInput.value);
     if (match) {
-      document.getElementById("food-unit").value = match.unit;
-      document.getElementById("food-qty").value = match.qty;
+      unit.value = match.unit;
+      qty.value = match.qty;
+      _autofilled = amount();
       renderNutrition();
     }
   });
