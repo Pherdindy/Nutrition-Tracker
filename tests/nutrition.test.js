@@ -361,6 +361,20 @@ test("numbers typed per weight rest on the weight: correcting it moves them too"
   assert.deepEqual(typedPerPiece.macros.protein, mine(9));
 });
 
+test("a weight that is typed is the user's, also if it is the one assumed", () => {
+  const e = entry({ nutrition: { at: 5, grams: 48, from: { id: 9, date: "2026-11-01" } } });
+  const got = edit(e, {}, { grams: 48 });
+  assert.deepEqual([got.macros, got.nutrition], [e.macros, { at: NOW, grams: 48, gramsMine: true }]);
+  const f = form();
+  f.setWeight("48");
+  assert.equal(f.result().grams, 48);
+});
+
+test("an entry of quantity 0 is left alone by a change of its time", () => {
+  const e = entry({ qty: 0, estimateStatus: "error" });
+  assert.deepEqual(edit(e, {}), { macros: e.macros, nutrition: undefined, estimateStatus: "error" });
+});
+
 test("weight, amount and a typed number in one save", () => {
   const e = entry({ nutrition: { at: 5, grams: 48 } });
   const got = edit(e, { qty: 8 }, { grams: 192, typed: { protein: 11 }, basis: amount(96, "g") });
@@ -763,6 +777,7 @@ test("numbers scaled from another amount say so", () => {
 test("amounts and small weights are said as they are", () => {
   const says = (over, nutrition) => explained(over, { why, how: "average", ...nutrition });
   assert.ok(says({ qty: 1, unit: "cup" }, { asked: amount(0.25, "cup") }).lines.includes("For 0.25 cup, scaled to 1 cup"));
+  assert.ok(says({ qty: 100, unit: "g" }, { asked: amount(87.84, "g") }).lines.includes("For 87.84 g, scaled to 100 g"));
   const macros = { protein: mine(11) };
   assert.ok(explained({ qty: 0.056, unit: "kg", macros }, { basis: amount(0.056, "kg") }).lines.includes("Protein 11 g per 0.056 kg is your number"));
   assert.equal(explained({ qty: 2, unit: "pinch" }, { grams: 0.5, why: [{ grams: 0.4 }, { grams: 0.6 }] }).weight, "Assumed weight 0.4–0.6 g, using 0.5 g");

@@ -160,6 +160,7 @@ test("an answer refused by the server does not stay on the device, to be saved w
   release();
   await phone.settle();
   assert.deepEqual(phone.entry("Tofu").macros, typedAll);
+  assert.equal(server.writes.filter((w) => w.table === "food_entries" && w.op === "upsert").length, 2, "each device saved once; taking over saves nothing");
   phone.editFood("Tofu", { time: "09:30" });
   await phone.settle();
   assert.deepEqual([on(server, "Tofu").macros, on(server, "Tofu").time], [typedAll, "09:30"]);
@@ -177,6 +178,38 @@ test("what the user changes while the server's row is fetched stands", async () 
   await phone.settle();
   assert.deepEqual([phone.entry("Tofu").qty, on(server, "Tofu").qty], [9, 9]);
   assert.deepEqual(on(server, "Tofu").macros, phone.entry("Tofu").macros);
+});
+
+test("if the server's row cannot be read now, it is taken over later", async () => {
+  const server = serverWith();
+  const phone = await bootApp({ server });
+  const release = holdAi(server);
+  phone.addFood("Tofu");
+  await phone.settle();
+  await typeElsewhere(server, "Tofu");
+  server.unreadable = true;
+  release();
+  await phone.settle();
+  assert.deepEqual([phone.run("outbox.count()"), phone.entry("Tofu").estimateStatus], [1, "done"]);
+  server.unreadable = false;
+  await phone.runTimers();
+  assert.deepEqual([phone.run("outbox.count()"), phone.entry("Tofu").macros], [0, typedAll]);
+});
+
+test("a retry that failed offline shows as failed after a relaunch, not as waiting", async () => {
+  const server = serverWith(row(1, "Tofu", { estimate_status: "error", macros: {} }));
+  const device = createDevice();
+  const phone = await bootApp({ server, device });
+  device.online = false;
+  phone.run("retryEstimate(1)");
+  await phone.settle();
+  assert.equal(phone.entry("Tofu").estimateStatus, "error");
+  device.online = true;
+  server.ai = () => { throw new Error("nobody should ask"); };
+  const again = await bootApp({ server, device }); // the two unsent changes are laid over what it loads
+  assert.equal(again.entry("Tofu").estimateStatus, "error");
+  await again.settle();
+  assert.deepEqual([on(server, "Tofu").estimate_status, again.run("outbox.count()")], ["error", 0]);
 });
 
 test("an answer for an entry deleted elsewhere leaves nothing to do", async () => {
@@ -719,8 +752,17 @@ test("ask AI again without credit opens the paywall and changes nothing", async 
   openEdit(app, "Sardines");
   app.fire("nutrition-ask", "click");
   await app.settle();
-  assert.equal(app.isOpen("paywall-modal"), true);
+  assert.deepEqual([app.isOpen("paywall-modal"), app.isOpen("food-modal")], [true, true]);
   assert.deepEqual(on(server, "Sardines"), before);
+});
+
+test("without credit, changing the time of a failed entry does not open the paywall", async () => {
+  const server = serverWith(row(1, "Sardines", { estimate_status: "error", macros: {} }));
+  server.usage = { pct_used: 100, plan: "free", exhausted: true };
+  const app = await bootApp({ server });
+  app.editFood("Sardines", { time: "19:30" });
+  await app.settle();
+  assert.deepEqual([app.isOpen("paywall-modal"), on(server, "Sardines").time], [false, "19:30"]);
 });
 
 test("typing every tracked number works without credit", async () => {

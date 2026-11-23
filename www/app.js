@@ -2448,7 +2448,7 @@ function saveBatchFoods() {
   ensureDayExists(date);
   closeFoodModal();
   renderFoodTable(); renderCalorieTracker();
-  created.filter((e) => e.estimateStatus === "pending").forEach((e) => enqueueEstimate(e.id));
+  created.forEach((e) => enqueueEstimate(e.id));
 }
 
 // ============================================================

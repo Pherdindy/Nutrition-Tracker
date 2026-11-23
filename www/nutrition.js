@@ -124,10 +124,10 @@
     return { ratio: k, lookup: k === null || !sameFood(before.food, after.food) };
   }
 
-  // The user's numbers were typed per weight for something that is not measured by
-  // weight, so they rest on what it weighs.
-  function restOnWeight({ macros, nutrition: n, unit: u }) {
-    return mineIds(macros).length > 0 && !!n && !!n.basis && isWeight(n.basis.unit) && !isWeight(u);
+  // The user's numbers were typed per weight; for something that is counted they then
+  // rest on what it weighs.
+  function restOnWeight({ macros, nutrition: n }) {
+    return mineIds(macros).length > 0 && !!n && !!n.basis && isWeight(n.basis.unit);
   }
 
   // What a new answer, or only numbers of the user's, leave nothing of.
@@ -171,9 +171,9 @@
       delete n.gramsMine;
     }
 
-    const weighed = grams > 0 && n.grams > 0 && grams !== n.grams;
+    const weighed = grams > 0 && n.grams > 0;
     if (weighed) {
-      const moved = restOnWeight({ macros, nutrition: n, unit: after.unit }) ? macros : pick(macros, theirIds(macros));
+      const moved = restOnWeight({ macros, nutrition: n }) ? macros : pick(macros, theirIds(macros));
       macros = { ...macros, ...scale(moved, grams / n.grams) };
       n.grams = grams;
       n.gramsMine = true;
@@ -242,7 +242,7 @@
     };
     if (!answer || !answer.macros) {
       // Asking again is then taken back; but a renamed entry has another food's numbers.
-      if (!noCredit || !n.refresh || n.stale) return { macros: before, nutrition: entry.nutrition, estimateStatus: "error" };
+      if (!noCredit || n.stale) return { macros: before, nutrition: entry.nutrition, estimateStatus: "error" };
       delete n.refresh;
       return done(before);
     }
@@ -303,7 +303,7 @@
     return {
       rebase(entry) {
         saved = entry.macros || {};
-        savedGrams = (!isWeight(entry.unit) && entry.nutrition && entry.nutrition.grams) || null;
+        savedGrams = (entry.nutrition && entry.nutrition.grams) || null;
         amount = { qty: entry.qty, unit: entry.unit };
         allMove = restOnWeight(entry); // with the weight
         const now = JSON.stringify([entry.food, entry.qty, entry.unit]);
@@ -356,7 +356,7 @@
         typed: Object.fromEntries(numbers()),
         cleared: [...typed].filter(([id, text]) => text.trim() === "" && has(saved, id)).map(([id]) => id),
         basis: basis ? { ...basis } : null,
-        grams: savedGrams && weight() !== savedGrams ? weight() : null,
+        grams: weight(),
       }),
     };
   }
