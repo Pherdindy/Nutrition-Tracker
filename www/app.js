@@ -565,7 +565,7 @@ function renderFoodTable() {
   const fmt = getValueFormat();
   const head = document.getElementById("food-eaten-head");
   if (head) {
-    head.innerHTML = `<tr><th>Date</th><th>Time</th><th>Food</th><th>Qty</th><th>Unit</th>`
+    head.innerHTML = `<tr><th>Date</th><th>Time</th><th>Food</th><th class="num">Qty</th><th>Unit</th>`
       + enabled.map((id) => `<th class="num">${escapeHtml(Macros.byId(id).label)}</th>`).join("")
       + `<th>Actions</th></tr>`;
   }
@@ -1789,7 +1789,7 @@ function renderAssessmentDataSummary(data) {
   const ctxDates = Object.keys(data.dailyContext || {}).sort();
   if (ctxDates.length > 0) {
     html += '<table class="assessment-summary-table"><thead><tr>';
-    html += '<th>Date</th><th>Activity</th><th>TDEE</th><th>Target</th><th>Eaten</th><th>vs Target</th><th>vs TDEE</th>';
+    html += '<th>Date</th><th>Activity</th><th class="num">TDEE</th><th class="num">Target</th><th class="num">Eaten</th><th class="num">vs Target</th><th class="num">vs TDEE</th>';
     html += '</tr></thead><tbody>';
     for (const date of ctxDates) {
       const ctx = data.dailyContext[date];
@@ -1830,7 +1830,7 @@ function renderAssessmentDataSummary(data) {
   if (data.isYoY && data.previousYear) {
     const py = data.previousYear;
     html += '<table class="assessment-summary-table"><thead><tr>';
-    html += '<th>Metric</th><th>Current Year (Daily Avg)</th><th>Previous Year (Daily Avg)</th></tr></thead><tbody>';
+    html += '<th>Metric</th><th class="num">Current Year (Daily Avg)</th><th class="num">Previous Year (Daily Avg)</th></tr></thead><tbody>';
     html += `<tr><td>Calories eaten</td><td class="num">${data.avgCalLow}-${data.avgCalHigh} kcal</td><td class="num">${py.totalEntries > 0 ? py.avgCalLow + '-' + py.avgCalHigh + ' kcal' : 'No data'}</td></tr>`;
     html += `<tr><td>Protein</td><td class="num">${data.avgProLow}-${data.avgProHigh} g</td><td class="num">${py.totalEntries > 0 ? py.avgProLow + '-' + py.avgProHigh + ' g' : 'No data'}</td></tr>`;
     html += `<tr><td>Days Tracked</td><td class="num">${data.numDays}</td><td class="num">${py.numDays}</td></tr>`;
@@ -1839,7 +1839,7 @@ function renderAssessmentDataSummary(data) {
   } else if (ctxDates.length === 0) {
     // No calorie tracker data — just show averages
     html += '<table class="assessment-summary-table"><thead><tr>';
-    html += '<th>Metric</th><th>Daily Avg</th><th>Target</th></tr></thead><tbody>';
+    html += '<th>Metric</th><th class="num">Daily Avg</th><th class="num">Target</th></tr></thead><tbody>';
     html += `<tr><td>Calories eaten</td><td class="num">${data.avgCalLow}-${data.avgCalHigh} kcal</td><td class="num">N/A</td></tr>`;
     html += `<tr><td>Protein</td><td class="num">${data.avgProLow}-${data.avgProHigh} g</td><td class="num">${data.avgProTargetLow ? data.avgProTargetLow + '-' + data.avgProTargetHigh + ' g' : 'N/A'}</td></tr>`;
     html += '</tbody></table>';
@@ -1932,7 +1932,7 @@ function renderSingleAssessment(providerResult) {
   if (d.food_groups) {
     html += '<div class="assessment-section">';
     html += '<div class="assessment-section-title">Food Groups</div>';
-    html += '<table class="food-group-table"><thead><tr><th>Group</th><th>Score</th><th>Est. Servings</th><th>Recommended</th><th>Status</th></tr></thead><tbody>';
+    html += '<table class="food-group-table"><thead><tr><th>Group</th><th>Score</th><th class="num">Est. Servings</th><th class="num">Recommended</th><th>Status</th></tr></thead><tbody>';
     const groups = ["fruits", "vegetables", "whole_grains", "lean_protein", "dairy_calcium", "healthy_fats"];
     for (const key of groups) {
       const g = d.food_groups[key];
@@ -2014,7 +2014,7 @@ function renderActionPlan(assessmentData) {
   if (ap.daily_targets && ap.daily_targets.length > 0) {
     html += '<div class="action-plan-section">';
     html += '<div class="action-plan-subtitle">Daily Serving Gaps</div>';
-    html += '<table class="action-plan-table daily-targets-table"><thead><tr><th>Food Group</th><th>Current</th><th>Target</th><th>Gap</th><th>What to Add</th></tr></thead><tbody>';
+    html += '<table class="action-plan-table daily-targets-table"><thead><tr><th>Food Group</th><th class="num">Current</th><th class="num">Target</th><th class="num">Gap</th><th>What to Add</th></tr></thead><tbody>';
     for (const t of ap.daily_targets) {
       const gap = Math.max(0, (t.target || 0) - (t.current || 0));
       html += `<tr>
@@ -2384,7 +2384,7 @@ function renderAssessmentHistory() {
   let html = '<div class="assessment-section" style="margin-top:20px">';
   html += '<div class="assessment-section-title">Assessment History</div>';
   html += '<div class="table-wrapper"><table class="assessment-history-table"><thead><tr>';
-  html += '<th>Date</th><th>Period</th><th>Days</th><th>Entries</th><th>Score</th><th>Verdict</th><th>Actions</th>';
+  html += '<th>Date</th><th>Period</th><th class="num">Days</th><th class="num">Entries</th><th>Score</th><th>Verdict</th><th>Actions</th>';
   html += '</tr></thead><tbody>';
 
   for (let i = 0; i < assessments.length; i++) {

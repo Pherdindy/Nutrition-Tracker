@@ -1941,3 +1941,9 @@ tr.day-summary.day-incomplete td:first-child { opacity: 1; }
   .nutrition input, .nutrition select { min-height: 44px; font-size: 16px; }
   .nutrition .btn, .nutrition .link-btn, #nutrition-open { min-height: 44px; }
 }
+
+/* A number's header sits over its numbers. Last, so that it wins over the tables' own
+   header rules, which are as specific. */
+th.num {
+  text-align: right;
+}
