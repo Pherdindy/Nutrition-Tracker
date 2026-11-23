@@ -51,9 +51,12 @@ test("an answer that reached the server is not read back", async () => {
   const app = await bootApp({ server });
   let reads = 0;
   server.afterSelect = async () => { reads++; };
+  const release = holdAi(server);
   app.addFood("Tofu");
   await app.settle();
-  assert.deepEqual([on(server, "Tofu").estimate_status, reads], ["done", 0]);
+  release();
+  await app.settle();
+  assert.deepEqual([server.writes.map((w) => w.op), on(server, "Tofu").estimate_status, reads], [["upsert", "update"], "done", 0]);
 });
 
 test("what the AI based its answer on is kept", async () => {
