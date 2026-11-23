@@ -19,7 +19,7 @@
   const pick = (macros, ids) => Object.fromEntries(ids.map((id) => [id, macros[id]]));
   const round = (n, places) => Math.round(n * 10 ** places) / 10 ** places;
   const tidy = (n) => Number(n.toPrecision(6)); // as stored: no noise, and scaling back loses nothing
-  const show = (n) => String(round(n, 1));
+  const show = (n) => String(Math.abs(n) < 100 ? Number(round(n, 4).toPrecision(3)) : round(n, 1)); // 0.345, 15.7, 707.5
 
   // ---- Units and amounts ------------------------------------------------------
 
@@ -74,22 +74,27 @@
   // When an entry's numbers were decided: typed, or answered by the AI.
   const decidedAt = (e) => (e.nutrition && e.nutrition.at) || loggedAt(e);
 
+  // The most recently decided comes first. Copies were decided when their source was: one
+  // whose gaps were filled since comes before it, any other after it.
+  const isCopy = (e) => !!(e.nutrition && e.nutrition.from);
+  const outranks = (a, b) => (decidedAt(a) - decidedAt(b) || complete(a.macros) - complete(b.macros)
+    || isCopy(b) - isCopy(a) || a.id - b.id) > 0;
+
   // The past entry whose numbers a new log of this food starts from.
   function findRemembered(entries, food, amount) {
     let best = null;
     for (const e of entries) {
       const n = e.nutrition || {};
-      if (!sameFood(e.food, food) || n.photo || !["done", "manual"].includes(e.estimateStatus)) continue;
+      if (!sameFood(e.food, food) || n.photo || n.stale) continue;
       if (!complete(e.macros) && !mineIds(e.macros).length) continue;
       const k = ratio(e, amount, n.grams);
-      if (k === null) continue;
-      if (!best || (decidedAt(e) - decidedAt(best.entry) || e.id - best.entry.id) > 0) best = { entry: e, ratio: k };
+      if (k !== null && (!best || outranks(e, best.entry))) best = { entry: e, ratio: k };
     }
     return best;
   }
 
   function reuse({ entry, ratio: k }) {
-    const { refresh, ...nutrition } = entry.nutrition || {};
+    const { refresh, stale, ...nutrition } = entry.nutrition || {};
     nutrition.at = decidedAt(entry);
     nutrition.from = nutrition.from || { id: entry.id, date: entry.date };
     if (nutrition.grams > 0) nutrition.grams = tidy(nutrition.grams * k);
@@ -109,12 +114,13 @@
     return tracked.every((id) => isMine(macros, id)) ? "manual" : "done";
   }
 
-  // What a changed food or amount means for the numbers.
+  // What a changed food or amount means for the numbers: how many times the old amount
+  // the new one is (null if that cannot be known), and whether they are another food's
+  // or amount's now.
   function editPlan(before, after) {
-    if (!sameFood(before.food, after.food)) return { kind: "lookup" };
-    if (Number(before.qty) === Number(after.qty) && unit(before.unit) === unit(after.unit)) return { kind: "keep" };
-    const k = ratio(before, after, before.nutrition && before.nutrition.grams);
-    return k === null ? { kind: "lookup" } : { kind: "scale", ratio: k };
+    const sameAmount = Number(before.qty) === Number(after.qty) && unit(before.unit) === unit(after.unit);
+    const k = sameAmount ? 1 : ratio(before, after, before.nutrition && before.nutrition.grams);
+    return { ratio: k, lookup: k === null || !sameFood(before.food, after.food) };
   }
 
   // The user's numbers were typed per weight for something that is not measured by
@@ -135,13 +141,15 @@
     let n = before ? { ...(before.nutrition || {}) } : {};
     let newStatus = !before;
 
-    const plan = before ? editPlan(before, after) : { kind: "lookup" };
-    if (plan.kind === "scale") {
+    const plan = before ? editPlan(before, after) : { ratio: 1, lookup: true };
+    if (plan.ratio !== null && plan.ratio !== 1) {
       macros = scale(macros, plan.ratio);
       if (n.grams > 0) n.grams = tidy(n.grams * plan.ratio);
-    } else if (plan.kind === "lookup") {
+      if (!IDS.some((id) => has(macros, id))) newStatus = true; // nothing to scale: ask for this amount
+    }
+    if (plan.lookup) {
       const own = pick(macros, mineIds(macros));
-      const found = findRemembered(entries, after.food, after);
+      const found = askAgain ? null : findRemembered(entries, after.food, after);
       if (found) {
         const got = reuse(found);
         macros = { ...got.macros, ...own };
@@ -149,10 +157,14 @@
       } else {
         delete n.grams; // the weight of what it was before
         delete n.gramsMine;
-        if (theirIds(macros).length) n.refresh = true; // the old numbers stay until the answer lands
+        if (theirIds(macros).length) n.refresh = n.stale = true; // what it was before: shown until the answer lands
       }
       if (Object.keys(own).length) delete n.basis; // they are totals now
       newStatus = true;
+    }
+    if (isWeight(after.unit)) { // the amount says it
+      delete n.grams;
+      delete n.gramsMine;
     }
 
     const weighed = grams > 0 && n.grams > 0 && grams !== n.grams;
@@ -174,11 +186,15 @@
       if (per !== 1) n.basis = { qty: basis.qty, unit: basis.unit };
       else delete n.basis;
     }
-    if (typedIds.length || weighed) { n.at = now; delete n.from; }
+    if (typedIds.length || cleared.length || weighed) { n.at = now; delete n.from; }
     if (typedIds.length || cleared.length) newStatus = true;
 
     if (askAgain) { n.refresh = true; newStatus = true; }
-    else if (tracked.every((id) => isMine(macros, id))) delete n.refresh;
+    else if (tracked.every((id) => isMine(macros, id))) { // nobody will be asked
+      if (n.stale) macros = pick(macros, mineIds(macros));
+      delete n.refresh;
+      delete n.stale;
+    }
 
     return {
       macros,
@@ -201,6 +217,12 @@
     return Object.fromEntries(ids.map((id) => [id, round((entry.macros[id].low + entry.macros[id].high) / 2, 2)]));
   }
 
+  // What it weighs, for the AI to go by: the user said so, or typed numbers rest on it.
+  function knownWeight(entry) {
+    const n = entry.nutrition || {};
+    return n.grams > 0 && !isWeight(entry.unit) && (n.gramsMine || restOnWeight(entry)) ? n.grams : undefined;
+  }
+
   function assumedGrams(basis) {
     const weights = basis.map((b) => b.grams).filter((g) => g > 0);
     if (!weights.length) return null;
@@ -208,35 +230,41 @@
     return round(mean, mean < 10 ? 1 : 0);
   }
 
-  function applyAnswer(entry, answer, { tracked, now }) {
+  // What became of asking the AI: its answer, or none. noCredit: it was not even asked.
+  function applyAnswer(entry, answer, { tracked, now, noCredit = false }) {
     const before = entry.macros || {};
-    if (!answer || !answer.macros) return { macros: before, nutrition: entry.nutrition, estimateStatus: "error" };
     const n = { ...(entry.nutrition || {}) };
-    const basis = (answer.basis || []).slice(0, 2);
-    const assumed = assumedGrams(basis);
-    const weightStands = n.grams > 0 && (n.gramsMine || restOnWeight(entry));
-    const k = weightStands && assumed ? n.grams / assumed : 1; // the answer is for the weight it assumed
+    const done = (macros) => {
+      const status = statusFor(macros, tracked, null);
+      return { macros, nutrition: n, estimateStatus: status === "pending" ? "error" : status };
+    };
+    if (!answer || !answer.macros) {
+      // Asking again is then taken back; but a renamed entry has another food's numbers.
+      if (!noCredit || !n.refresh || n.stale) return { macros: before, nutrition: entry.nutrition, estimateStatus: "error" };
+      delete n.refresh;
+      return done(before);
+    }
 
-    const macros = { ...before };
+    const macros = n.refresh ? pick(before, mineIds(before)) : { ...before };
     for (const id of IDS) {
       const m = Macros.getMacro(answer, id);
-      if (!m || isMine(before, id) || (has(before, id) && !n.refresh)) continue;
-      macros[id] = { low: tidy(m.low * k), high: tidy(m.high * k) };
+      if (m && !has(macros, id)) macros[id] = { low: tidy(m.low), high: tidy(m.high) };
     }
 
+    if (n.refresh || !n.at) n.at = now; // filling gaps does not make the other numbers newer
     if (n.refresh) {
-      for (const field of ["refresh", "from", "why", "how", "asked", "photo"]) delete n[field];
-      if (!weightStands) delete n.grams;
+      for (const field of ["refresh", "stale", "from", "why", "how", "asked", "photo"]) delete n[field];
+      if (!knownWeight(entry)) delete n.grams;
     }
+    const basis = (answer.basis || []).slice(0, 2);
     if (basis.length && !n.why) {
       n.why = basis;
       n.how = answer.how || (basis.length > 1 ? "average" : "one");
       n.asked = { qty: entry.qty, unit: entry.unit };
-      if (!(n.grams > 0) && assumed && !isWeight(entry.unit)) n.grams = assumed;
+      const assumed = assumedGrams(basis);
+      if (assumed && !(n.grams > 0) && !isWeight(entry.unit)) n.grams = assumed;
     }
-    n.at = now;
-    const status = statusFor(macros, tracked, null);
-    return { macros, nutrition: n, estimateStatus: status === "pending" ? "error" : status };
+    return done(macros);
   }
 
   // ---- The form ----------------------------------------------------------------------
@@ -250,9 +278,10 @@
 
   // What is typed into an entry's form, on top of the numbers it would be saved with
   // otherwise (see resolve). All are shown for `basis`, a label's 56 g, or for the
-  // entry's own amount until the user sets one.
+  // entry's own amount until the user sets one. What is typed is the user's, and stays
+  // as typed, for whatever amount is shown.
   function createForm() {
-    let saved = {}, savedGrams = null, amount = {}, allMove = false;
+    let saved = {}, savedGrams = null, amount = {}, allMove = false, what = null;
     let basis = null;    // { qty, unit }, once set
     let badBasis = null; // what its field says while that is not an amount
     let weightText = "";
@@ -261,25 +290,27 @@
     const weight = () => parseNumber(weightText) || null;
     const grams = () => (savedGrams && weight()) || savedGrams;
     const times = () => (basis ? ratio(amount, basis, grams()) : 1); // null if it does not convert
+    const numbers = () => [...typed].map(([id, text]) => [id, parseNumber(text)]).filter(([, n]) => n !== null);
 
     function savedText(id) {
       if (!has(saved, id)) return "";
       const byWeight = savedGrams && weight() && (allMove || !isMine(saved, id)) ? weight() / savedGrams : 1;
       return show(((saved[id].low + saved[id].high) / 2) * byWeight * (times() || 1));
     }
-    // Typing exactly what is saved changes nothing.
-    const changed = () => [...typed].filter(([id, text]) => text.trim() !== savedText(id));
-    const numbers = () => changed().map(([id, text]) => [id, parseNumber(text)]).filter(([, n]) => n !== null);
 
     return {
       rebase(entry) {
         saved = entry.macros || {};
-        savedGrams = (entry.nutrition && entry.nutrition.grams) || null;
+        savedGrams = (!isWeight(entry.unit) && entry.nutrition && entry.nutrition.grams) || null;
         amount = { qty: entry.qty, unit: entry.unit };
         allMove = restOnWeight(entry); // with the weight
+        const now = JSON.stringify([entry.food, entry.qty, entry.unit]);
+        if (now !== what || !savedGrams) weightText = ""; // it was typed for something else
+        what = now;
       },
-      text: (id) => (typed.has(id) ? typed.get(id) : savedText(id)),
-      isMine: (id) => (changed().some(([other]) => other === id) ? parseNumber(typed.get(id)) !== null : isMine(saved, id)),
+      // kept: the numbers it will have; one that is not among them shows as blank
+      text: (id, kept = saved) => (typed.has(id) ? typed.get(id) : has(kept, id) ? savedText(id) : ""),
+      isMine: (id) => (typed.has(id) ? parseNumber(typed.get(id)) !== null : isMine(saved, id)),
       type(id, text) {
         if (text.trim() === "" && !has(saved, id)) typed.delete(id); // still blank
         else typed.set(id, text);
@@ -297,7 +328,7 @@
       // The same amount in another unit: 4 pcs becomes 48 g.
       setBasisUnit(u) {
         const one = ratio(amount, { qty: 1, unit: u }, grams());
-        const qty = times() && one ? Number((times() / one).toPrecision(4)) : (basis || amount).qty;
+        const qty = one ? Number(((times() || 1) / one).toPrecision(4)) : (basis || amount).qty;
         basis = { qty, unit: u };
         badBasis = null;
       },
@@ -306,11 +337,12 @@
         return !basis || units.some((u) => unit(u) === unit(basis.unit)) ? units : [...units, basis.unit];
       },
 
+      weight: () => weightText,
       setWeight(text) { weightText = String(text); },
 
       errors() {
         const out = {};
-        for (const [id, text] of changed()) {
+        for (const [id, text] of typed) {
           if (text.trim() !== "" && parseNumber(text) === null) out[id] = "Enter a number from 0 to 99,999, like 12.5";
         }
         if (weightText.trim() !== "" && !weight()) out.weight = "Enter the weight in grams, above 0";
@@ -320,7 +352,7 @@
       },
       result: () => ({
         typed: Object.fromEntries(numbers()),
-        cleared: changed().filter(([, text]) => text.trim() === "").map(([id]) => id),
+        cleared: [...typed].filter(([id, text]) => text.trim() === "" && has(saved, id)).map(([id]) => id),
         basis: basis ? { ...basis } : null,
         grams: savedGrams && weight() !== savedGrams ? weight() : null,
       }),
@@ -331,7 +363,7 @@
 
   const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
   const dayName = (date) => { const [, m, d] = date.split("-").map(Number); return `${MONTHS[m - 1]} ${d}`; };
-  const sayAmount = ({ qty, unit: u }) => `${show(Number(qty))} ${u}`;
+  const sayAmount = ({ qty, unit: u }) => `${Number(qty)} ${u}`;
 
   function explainWeight(entry, n, estimates) {
     if (!(n.grams > 0) || isWeight(entry.unit)) return null;
@@ -341,7 +373,7 @@
     const low = Math.min(...weights), high = Math.max(...weights);
     if (weights.length > 1 && (high - low) / high > 0.2) {
       const k = n.grams / (weights.reduce((a, b) => a + b, 0) / weights.length); // scaled since
-      return `Assumed weight ${Math.round(low * k)}–${Math.round(high * k)} g, using ${show(n.grams)} g`;
+      return `Assumed weight ${show(low * k)}–${show(high * k)} g, using ${show(n.grams)} g`;
     }
     return `Assumed weight ${show(n.grams)} g${each}`;
   }
@@ -388,7 +420,7 @@
 
   return {
     unit, ratio, unitsFor, scale, sameFood,
-    findRemembered, reuse, latestLog, statusFor, editPlan, resolve, needsAnswer, known, applyAnswer,
+    findRemembered, reuse, latestLog, statusFor, resolve, needsAnswer, known, knownWeight, applyAnswer,
     createForm, explain, tag, hasTheirs,
   };
 });
