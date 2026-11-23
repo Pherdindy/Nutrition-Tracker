@@ -530,7 +530,8 @@ test("whether an entry has numbers the user did not type", () => {
 // ---- the explanation ----------------------------------------------------------------
 
 const why = [{ ref: "canned sardines in oil, drained", note: "From USDA.", grams: 46, kcal: 95 }, { ref: "canned sardines in oil, drained", note: "Label values.", grams: 50, kcal: 110 }];
-const explained = (over, nutrition) => N.explain(entry({ ...over, nutrition }));
+const TODAY = "2026-11-23";
+const explained = (over, nutrition) => N.explain(entry({ ...over, nutrition }), TODAY);
 
 test("two estimates, averaged", () => {
   assert.deepEqual(explained({}, { grams: 48, why, how: "average", asked: amount(4, "pcs") }), {
@@ -580,14 +581,15 @@ test("typed numbers, per the label's amount if there was one", () => {
 
 test("reused, photographed, and unexplained entries", () => {
   assert.ok(explained({}, { from: { id: 1, date: "2026-11-20" } }).lines.includes("Numbers from Nov 20"));
+  assert.ok(explained({}, { from: { id: 1, date: "2025-11-20" } }).lines.includes("Numbers from Nov 20, 2025"));
   assert.deepEqual(explained({}, { photo: true }).lines, ["Estimated from your photo"]);
-  assert.deepEqual(N.explain(entry()).lines, ["No explanation was saved for this entry. Ask AI again to get one."]);
-  assert.deepEqual(N.explain(entry({ macros: {}, estimateStatus: "pending" })), { weight: null, lines: [] });
+  assert.deepEqual(N.explain(entry(), TODAY).lines, ["No explanation was saved for this entry. Ask AI again to get one."]);
+  assert.deepEqual(N.explain(entry({ macros: {}, estimateStatus: "pending" }), TODAY), { weight: null, lines: [] });
 });
 
 test("the tag names the day, and the year if it is another one", () => {
-  const from = (date) => N.tag(entry({ nutrition: { from: { id: 1, date } } }), "2026-11-23");
+  const from = (date) => N.tag(entry({ nutrition: { from: { id: 1, date } } }), TODAY);
   assert.equal(from("2026-11-20"), "from Nov 20");
   assert.equal(from("2025-02-03"), "from Feb 3, 2025");
-  assert.equal(N.tag(entry(), "2026-11-23"), "");
+  assert.equal(N.tag(entry(), TODAY), "");
 });

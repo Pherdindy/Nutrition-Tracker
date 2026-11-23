@@ -993,7 +993,8 @@ test("whether an entry has numbers the user did not type", () => {
 // ---- the explanation ----------------------------------------------------------------
 
 const why = [{ ref: "canned sardines in oil, drained", note: "From USDA.", grams: 46, kcal: 95 }, { ref: "canned sardines in oil, drained", note: "Label values.", grams: 50, kcal: 110 }];
-const explained = (over, nutrition) => N.explain(entry({ ...over, nutrition }));
+const TODAY = "2026-11-23";
+const explained = (over, nutrition) => N.explain(entry({ ...over, nutrition }), TODAY);
 
 test("two estimates, averaged", () => {
   assert.deepEqual(explained({}, { grams: 48, why, how: "average", asked: amount(4, "pcs") }), {
@@ -1043,16 +1044,17 @@ test("typed numbers, per the label's amount if there was one", () => {
 
 test("reused, photographed, and unexplained entries", () => {
   assert.ok(explained({}, { from: { id: 1, date: "2026-11-20" } }).lines.includes("Numbers from Nov 20"));
+  assert.ok(explained({}, { from: { id: 1, date: "2025-11-20" } }).lines.includes("Numbers from Nov 20, 2025"));
   assert.deepEqual(explained({}, { photo: true }).lines, ["Estimated from your photo"]);
-  assert.deepEqual(N.explain(entry()).lines, ["No explanation was saved for this entry. Ask AI again to get one."]);
-  assert.deepEqual(N.explain(entry({ macros: {}, estimateStatus: "pending" })), { weight: null, lines: [] });
+  assert.deepEqual(N.explain(entry(), TODAY).lines, ["No explanation was saved for this entry. Ask AI again to get one."]);
+  assert.deepEqual(N.explain(entry({ macros: {}, estimateStatus: "pending" }), TODAY), { weight: null, lines: [] });
 });
 
 test("the tag names the day, and the year if it is another one", () => {
-  const from = (date) => N.tag(entry({ nutrition: { from: { id: 1, date } } }), "2026-11-23");
+  const from = (date) => N.tag(entry({ nutrition: { from: { id: 1, date } } }), TODAY);
   assert.equal(from("2026-11-20"), "from Nov 20");
   assert.equal(from("2025-02-03"), "from Feb 3, 2025");
-  assert.equal(N.tag(entry(), "2026-11-23"), "");
+  assert.equal(N.tag(entry(), TODAY), "");
 });
 ```
 
@@ -1174,7 +1176,7 @@ test("the tag names the day, and the year if it is another one", () => {
     return `Assumed weight ${show(n.grams)} g${each}`;
   }
 
-  function explain(entry) {
+  function explain(entry, today) {
     const n = entry.nutrition || {};
     const estimates = n.why || [];
     const lines = [];
@@ -1199,7 +1201,7 @@ test("the tag names the day, and the year if it is another one", () => {
       const m = Macros.byId(id), total = entry.macros[id].low;
       lines.push(`${m.label} ${show(per ? total * per : total)} ${m.unit}${per ? ` per ${sayAmount(n.basis)}` : ""} is your number`);
     }
-    if (n.from) lines.push(`Numbers from ${dayName(n.from.date)}`);
+    if (n.from) lines.push(`Numbers ${tag(entry, today)}`);
     if (n.photo) lines.push("Estimated from your photo");
     if (!lines.length && hasTheirs(entry)) lines.push("No explanation was saved for this entry. Ask AI again to get one.");
     return { weight: explainWeight(entry, n, estimates), lines };
@@ -2155,6 +2157,10 @@ test("closing the form forgets what was typed in it", async () => {
 
 <!-- edit www/index.html @T7 -->
 ```html
+          <div class="form-row"><label for="food-date">Date</label><input type="date" id="food-date" required></div>
+          <div class="form-row"><label for="food-time">Time</label><input type="time" id="food-time" required></div>
+          <div class="form-row"><label for="food-name">Food</label><input type="text" id="food-name" required autocomplete="off" list="food-suggestions"><datalist id="food-suggestions"></datalist></div>
+          <div class="form-row"><label for="food-qty">Quantity</label><input type="number" id="food-qty" step="any" required></div>
           <div class="form-row"><label for="food-unit">Unit of measure</label><input type="text" id="food-unit" required autocomplete="off" list="unit-suggestions"><datalist id="unit-suggestions"></datalist></div>
           <div class="modal-actions">
             <button type="button" class="btn btn-secondary" id="food-cancel">Cancel</button>
@@ -2162,7 +2168,15 @@ test("closing the form forgets what was typed in it", async () => {
           </div>
 ```
 ```html
-          <div class="form-row"><label for="food-unit">Unit of measure</label><input type="text" id="food-unit" required autocomplete="off" list="unit-suggestions"><datalist id="unit-suggestions"></datalist></div>
+          <div class="form-row-flow">
+            <div class="form-row"><label for="food-date">Date</label><input type="date" id="food-date" required></div>
+            <div class="form-row"><label for="food-time">Time</label><input type="time" id="food-time" required></div>
+          </div>
+          <div class="form-row"><label for="food-name">Food</label><input type="text" id="food-name" required autocomplete="off" list="food-suggestions"><datalist id="food-suggestions"></datalist></div>
+          <div class="form-row-flow">
+            <div class="form-row"><label for="food-qty">Quantity</label><input type="number" id="food-qty" step="any" required></div>
+            <div class="form-row"><label for="food-unit">Unit of measure</label><input type="text" id="food-unit" required autocomplete="off" list="unit-suggestions"><datalist id="unit-suggestions"></datalist></div>
+          </div>
           <button type="button" id="nutrition-open" class="link-btn">Enter numbers yourself</button>
           <div id="nutrition" class="nutrition hidden">
             <div class="nutrition-head">
@@ -2291,7 +2305,7 @@ function renderNutrition() {
   setText("nutrition-state", nutritionState(before, willBe));
   showIf("nutrition-ask", !!before && (Nutrition.hasTheirs(before) || before.estimateStatus === "error"));
 
-  const why = Nutrition.explain(willBe);
+  const why = Nutrition.explain(willBe, localDate());
   document.getElementById("nutrition-weight-text").textContent = why.weight || "";
   showIf("nutrition-weight-line", !!why.weight);
   if (!why.weight) showIf("nutrition-weight-row", false);
@@ -2318,6 +2332,7 @@ function checkNutrition() {
   const folded = field.closest("details");
   if (folded) folded.open = true;
   field.focus();
+  field.scrollIntoView({ block: "center" }); // its message too
   return false;
 }
 
@@ -2485,12 +2500,12 @@ function submitFood(again = false) {
 .nutrition-head h3 { font-size: 0.98rem; margin: 0; }
 .nutrition-head .btn { margin-left: auto; }
 .nutrition-note { color: var(--text-dim); font-size: 0.85rem; margin: 0 0 10px; }
-.nutrition-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(8.5rem, 100%), 1fr)); gap: 10px 12px; }
+.nutrition-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(8rem, 100%), 1fr)); gap: 10px 12px; }
 .nutrition-field label, .nutrition-basis label, .nutrition-weight label { font-size: 0.82rem; color: var(--text-dim); font-weight: 500; }
 .nutrition-field label { display: block; margin-bottom: 4px; }
-.nutrition-input { display: flex; align-items: center; gap: 6px; }
-.nutrition-input input { flex: 1 1 0; min-width: 0; }
-.mine-mark { color: var(--primary); font-size: 0.75rem; white-space: nowrap; }
+.nutrition-input { position: relative; }
+.nutrition-input input { width: 100%; padding-right: 3.2rem; } /* room for the mark, so that typing moves nothing */
+.mine-mark { position: absolute; right: 12px; top: 50%; transform: translateY(-50%); color: var(--primary); font-size: 0.75rem; pointer-events: none; }
 .field-error { color: var(--red); font-size: 0.8rem; margin: 4px 0 0; }
 .nutrition-basis, .nutrition-weight { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; margin: 0 0 12px; }
 .nutrition-basis input, .nutrition-weight input { flex: 0 1 6rem; min-width: 4.5rem; }
@@ -2500,10 +2515,14 @@ function submitFood(again = false) {
 .nutrition-more > summary { cursor: pointer; padding: 6px 0; font-size: 0.88rem; font-weight: 600; }
 .nutrition-weight { font-size: 0.88rem; margin: 8px 0; }
 #nutrition-why-lines { margin: 4px 0 0; padding-left: 18px; color: var(--text-dim); font-size: 0.85rem; overflow-wrap: anywhere; }
+.form-row-flow { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(8rem, 100%), 1fr)); gap: 0 12px; }
 /* Save and Cancel stay in reach while a long form scrolls. The negative margins undo
-   .modal-content's 28px padding so nothing shows through beneath the bar. */
-#food-form .modal-actions { position: sticky; bottom: -28px; margin: 20px -28px -28px; padding: 12px 28px 28px; background: var(--surface); }
+   .modal-content's 28px padding so nothing shows through beneath the bar; a field that
+   takes the focus stays clear of it. */
+#food-form .modal-actions { position: sticky; bottom: -28px; margin: 20px -28px -28px; padding: 12px 28px 16px; background: var(--surface); border-top: 1px solid var(--border); }
+#food-modal .modal-content { scroll-padding-bottom: 6rem; }
 @media (max-width: 720px) {
+  .nutrition-basis label { flex: 1 0 100%; }
   .nutrition input, .nutrition select { min-height: 44px; font-size: 16px; }
   .nutrition .btn, .nutrition .link-btn, #nutrition-open { min-height: 44px; }
 }

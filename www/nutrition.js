@@ -336,7 +336,7 @@
     return `Assumed weight ${show(n.grams)} g${each}`;
   }
 
-  function explain(entry) {
+  function explain(entry, today) {
     const n = entry.nutrition || {};
     const estimates = n.why || [];
     const lines = [];
@@ -361,7 +361,7 @@
       const m = Macros.byId(id), total = entry.macros[id].low;
       lines.push(`${m.label} ${show(per ? total * per : total)} ${m.unit}${per ? ` per ${sayAmount(n.basis)}` : ""} is your number`);
     }
-    if (n.from) lines.push(`Numbers from ${dayName(n.from.date)}`);
+    if (n.from) lines.push(`Numbers ${tag(entry, today)}`);
     if (n.photo) lines.push("Estimated from your photo");
     if (!lines.length && hasTheirs(entry)) lines.push("No explanation was saved for this entry. Ask AI again to get one.");
     return { weight: explainWeight(entry, n, estimates), lines };

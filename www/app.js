@@ -734,7 +734,7 @@ function renderNutrition() {
   setText("nutrition-state", nutritionState(before, willBe));
   showIf("nutrition-ask", !!before && (Nutrition.hasTheirs(before) || before.estimateStatus === "error"));
 
-  const why = Nutrition.explain(willBe);
+  const why = Nutrition.explain(willBe, localDate());
   document.getElementById("nutrition-weight-text").textContent = why.weight || "";
   showIf("nutrition-weight-line", !!why.weight);
   if (!why.weight) showIf("nutrition-weight-row", false);
@@ -761,6 +761,7 @@ function checkNutrition() {
   const folded = field.closest("details");
   if (folded) folded.open = true;
   field.focus();
+  field.scrollIntoView({ block: "center" }); // its message too
   return false;
 }
 

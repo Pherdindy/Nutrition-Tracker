@@ -204,11 +204,15 @@
         </div>
         <form id="food-form" class="modal-pane" data-pane="single">
           <input type="hidden" id="food-id">
-          <div class="form-row"><label for="food-date">Date</label><input type="date" id="food-date" required></div>
-          <div class="form-row"><label for="food-time">Time</label><input type="time" id="food-time" required></div>
+          <div class="form-row-flow">
+            <div class="form-row"><label for="food-date">Date</label><input type="date" id="food-date" required></div>
+            <div class="form-row"><label for="food-time">Time</label><input type="time" id="food-time" required></div>
+          </div>
           <div class="form-row"><label for="food-name">Food</label><input type="text" id="food-name" required autocomplete="off" list="food-suggestions"><datalist id="food-suggestions"></datalist></div>
-          <div class="form-row"><label for="food-qty">Quantity</label><input type="number" id="food-qty" step="any" required></div>
-          <div class="form-row"><label for="food-unit">Unit of measure</label><input type="text" id="food-unit" required autocomplete="off" list="unit-suggestions"><datalist id="unit-suggestions"></datalist></div>
+          <div class="form-row-flow">
+            <div class="form-row"><label for="food-qty">Quantity</label><input type="number" id="food-qty" step="any" required></div>
+            <div class="form-row"><label for="food-unit">Unit of measure</label><input type="text" id="food-unit" required autocomplete="off" list="unit-suggestions"><datalist id="unit-suggestions"></datalist></div>
+          </div>
           <button type="button" id="nutrition-open" class="link-btn">Enter numbers yourself</button>
           <div id="nutrition" class="nutrition hidden">
             <div class="nutrition-head">
