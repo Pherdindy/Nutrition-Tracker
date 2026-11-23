@@ -218,9 +218,12 @@ test("a retry that failed offline shows as failed after a relaunch, not as waiti
   phone.run("retryEstimate(1)");
   await phone.settle();
   assert.equal(phone.entry("Tofu").estimateStatus, "error");
-  device.online = true;
   server.ai = () => { throw new Error("nobody should ask"); };
-  const again = await bootApp({ server, device }); // the two unsent changes are laid over what it loads
+  const unsent = (app) => app.run("JSON.stringify(outbox.pending('food_entries'))"), before = unsent(phone);
+  const offline = await bootApp({ server, device }); // the two unsent changes are laid over what it has
+  assert.deepEqual([offline.entry("Tofu").estimateStatus, unsent(offline)], ["error", before]);
+  device.online = true;
+  const again = await bootApp({ server, device }); // and over what it loads
   assert.equal(again.entry("Tofu").estimateStatus, "error");
   await again.settle();
   assert.deepEqual([on(server, "Tofu").estimate_status, again.run("outbox.count()")], ["error", 0]);
@@ -288,9 +291,11 @@ test("an answer that waited behind its retry is not undone here", async () => {
   await app.settle();
   assert.deepEqual([on(server, "Tofu").estimate_status, app.entry("Tofu").estimateStatus], ["pending", "done"]);
   server.loseAnswers = false;
+  let reads = 0;
+  server.afterSelect = async () => { reads++; };
   await app.runTimers();
   assert.deepEqual([on(server, "Tofu").estimate_status, app.entry("Tofu").estimateStatus, app.entry("Tofu").macros], ["done", "done", eight(200)]);
-  assert.deepEqual([server.aiCalls, app.run("outbox.count()")], [["Tofu"], 0]);
+  assert.deepEqual([server.aiCalls, app.run("outbox.count()"), reads], [["Tofu"], 0, 1]);
 });
 
 test("a tab sees what became of a change another tab sent for it", async () => {
