@@ -1,7 +1,8 @@
 # Nutrition Details: Your Own Numbers, Remembered Foods, Explanations — Design Spec
 
 **Date:** 2026-11-23
-**Status:** Design approved 2026-11-23; spec awaiting the user's review
+**Status:** Design approved 2026-11-23. The user waived review of this document and asked
+for the plan and the implementation. Amended while planning (listed at the end).
 **Applies to:** web and Android (same `www/`), plus the `ai-proxy` Edge Function
 **Builds on:** row-level food sync (`www/sync.js`, commit `eedefe2`)
 **Followed by:** label photo (its own spec), which will fill in the same structures
@@ -135,16 +136,17 @@ date and time if it has none; on a tie, the larger id.
 **Batch Add** does the same for every row. **Photo items** arrive with numbers and are
 not looked up; they are marked `photo`.
 
-**Autofill:** choosing a past food name fills in the quantity and unit of the latest
-log of it (by date, time, then id). Today it uses the oldest after a reload.
+**Autofill:** when adding, choosing a past food name fills in the quantity and unit of
+the latest log of it (by date, time, then id). Today it uses the oldest after a reload,
+and also changes the amount of an entry that is only being renamed.
 
 ## Adding
 
 The Single form gains one link, **Enter numbers yourself**, which opens the Nutrition
 section described below. Left closed, adding works as it does now.
 
-With the section open, choosing a food and amount that are remembered shows the scaled
-numbers and the tag in the fields, so it is clear what will be saved.
+The fields always show what would be saved: choosing a food and amount that are
+remembered shows the scaled numbers and the tag, while adding and while editing.
 
 On save: start from the remembered numbers, if any, and put the typed ones on top as
 `mine`. If anything was typed, `at` is now and `from` is dropped. Every tracked
@@ -159,6 +161,7 @@ The Nutrition section is open. On save, in this order:
    stay as they are, as totals. The others come from a remembered entry if there is
    one, else the AI is asked (`refresh`), the old ones staying until it answers.
    Before saving, the form says so: "AI will estimate the other numbers again."
+   The weight is forgotten: it was of what the entry was before.
 3. **Weight corrected:** numbers not marked `mine` are multiplied by new ÷ old weight;
    `grams` is the new one, `gramsMine` is set.
 4. **A number typed:** it becomes `mine`. **A number cleared:** it is no longer `mine`
@@ -169,8 +172,7 @@ Steps 3 and 4 set `at` to now and drop `from`: this entry is now the one to reme
 
 **An entry that has no numbers yet** behaves as it does today: any change to food,
 quantity or unit leaves it `pending` and asks again. The check that throws away an
-answer for something else (`Macros.needsReestimate` in `runEstimateQueue`) stays as it
-is. Deciding between scaling, looking up and asking is a new function.
+answer for something else becomes the one under "The estimate queue".
 
 ## Ask AI again
 
@@ -178,8 +180,8 @@ A button in the Nutrition header, shown when the entry has a number that is not 
 or failed. It saves the form, sets `refresh` and `pending`, and closes. The card keeps
 its numbers with the "…" badge.
 
-- **Answer:** every number not `mine` is replaced, `from` and `refresh` are dropped,
-  `at` is now, status `done`.
+- **Answer:** every number not `mine` is replaced, `from`, `photo` and `refresh` are
+  dropped, `at` is now, status `done`.
 - **No answer:** status `error`, numbers kept, `refresh` kept. The "!" badge retries.
 - **Out of credit:** the paywall opens and nothing changes.
 - It skips remembered foods.
@@ -213,13 +215,13 @@ only when they apply:
 | Two estimates, 95 and 110 kcal, averaged | `how` is `average` |
 | Two estimates, 60 and 200 kcal, disagreed, so the range covers both | `how` is `both` |
 | One estimate, 95 kcal | `how` is `one` |
-| For 4 pcs, scaled to 6 pcs | `asked` differs from the entry's amount |
+| For 4 pcs, scaled to 6 pcs | `asked` differs from the entry's amount. Only "For 4 pcs" while a new answer is due for an amount it does not convert to. |
 | each estimate's `note` | present |
-| The AI works from what it knows about food. It does not look values up. | any number is the AI's |
+| The AI works from what it knows about food. It does not look values up. | `why` is present |
 | Protein 11 g per 56 g is your number | per `mine` number: the total scaled to `basis` if it is set and converts, else "Protein 22 g is your number" |
 | Numbers from Nov 20 | `from` is set |
 | Estimated from your photo | `photo` |
-| No explanation was saved for this entry. Ask AI again to get one. | nothing above applies |
+| No explanation was saved for this entry. Ask AI again to get one. | nothing above applies, and it has a number the user did not type |
 
 All of it is text from the AI or the user, so it is escaped.
 
@@ -274,16 +276,21 @@ Nutrition · from Nov 20                    [Ask AI again]
 - One field per tracked nutrient; the others under **More nutrients**. An AI range is
   shown as its middle and is kept as a range unless the field is changed.
 - **These numbers are for:** follows the entry's own amount until the user changes it.
-  - While it follows, changing the quantity or unit above rescales the saved numbers on
-    screen; a number typed in this form stays as typed, for the amount shown.
-  - Once changed (say to 56 g), it stays put, the fields convert to it, and a label can
-    be typed as printed. Saving converts back to what was eaten (R1).
-  - Its unit list offers only what converts to the entry's amount, so a conversion that
-    is not possible cannot be chosen.
+  - A number typed in this form stays as typed: it is for the amount shown, whatever
+    that becomes. So a label can be typed as printed, before or after setting its amount.
+  - Saved numbers on screen are converted to the amount shown, and follow the quantity
+    and unit above.
+  - Once changed (say to 56 g), it stays put. Saving converts the typed numbers back to
+    what was eaten (R1).
+  - Choosing another unit keeps the amount: 4 pcs becomes 48 g.
+  - Its unit list offers only what converts to the entry's amount. If the entry's amount
+    is then changed to one it does not convert to, saving is refused beside the field; it
+    is never read as something else.
 - **Invalid number** (not a number, below 0, above 99,999): message beside the field,
   nothing saved, everything typed stays.
 - **Waiting:** "Estimating… You can type your own numbers meanwhile."
   **Failed:** "The estimate didn't come back. Ask again or type your own numbers."
+  **Saving will ask:** "AI will estimate the numbers you leave blank."
 - Save and Cancel stay reachable while the section scrolls.
 - Sizes follow the content: fields flow into as many columns as fit, with no fixed
   heights; on phones inputs are at least 44 px high with 16 px text.
@@ -356,3 +363,16 @@ Each production step waits for the user's explicit yes.
 Label photo (next spec) and barcodes; a "My foods" screen; looking values up in a food
 database; targets for fiber and other nutrients; changing past entries; vitamins and
 minerals; the finance app.
+
+## Amendments
+
+2026-11-23, while planning; each is worked into the text above.
+
+- Typed numbers are never converted when "These numbers are for" changes. Converting them
+  would have spoiled a label typed first and its amount set after.
+- An amount that stops converting is refused at saving rather than dropped, and the form
+  shows what would be saved while editing too.
+- A new food or an amount that does not convert forgets the old weight, and a photo entry
+  that is asked about again stops being the photo's.
+- Autofill only fills in an amount when adding.
+- The blank-fields message, and when three of the explanation's lines appear.
