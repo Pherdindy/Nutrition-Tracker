@@ -346,8 +346,9 @@ test("a tab follows what another tab stores, so that it cannot put its old copy 
   const a = await bootApp({ server, device }), b = await bootApp({ server, device });
   const prefix = a.run("outboxPrefix(currentUid())");
   const stored = async (id) => { // what the browser tells the other tab
-    const key = `${prefix}food_entries:${id}`;
-    await b.windowEvent("storage", { key, newValue: device.storage.getItem(key) });
+    const key = `${prefix}food_entries:${id}`, change = device.storage.getItem(key);
+    await b.windowEvent("storage", { key, newValue: change });
+    assert.equal(device.storage.getItem(key), change, "it is as it was, not b's own change now");
   };
   device.online = false;
   openEdit(a, "Tofu");
