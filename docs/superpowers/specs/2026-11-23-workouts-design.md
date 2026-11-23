@@ -65,7 +65,7 @@ primary key (user_id, id); RLS per_user_all; no access for anon
 ```
 
 `effort`: `{ at, met: { low, high }, minutes, why: [{ ref, note, met, minutes }], how,
-from: { id, date }, refresh, was }`, all optional. `met` is how many times resting energy
+from: { id, date }, refresh }`, all optional. `met` is how many times resting energy
 (gross). `minutes` only if the user gave none.
 
 In the app a workout is `{ id, date, what, minutes, kcal, effort, estimateStatus }`.
@@ -84,8 +84,8 @@ and says so. The AI is not sent the weight.
   a known effort is reused, with `from` and without an AI call ("from Nov 23"). Typed
   calories are not reused: they differ from session to session.
 - Otherwise the AI is asked (`pending`).
-- "Ask AI again" asks in any case; the old effort stays until the answer (`refresh`,
-  `was`), and comes back if there is no credit.
+- "Ask AI again" asks in any case; the old effort stays until the answer (`refresh`), and
+  for good if there is no credit.
 - No minutes given: the AI judges them from the description ("10,000 steps"). Typed
   minutes win over them. Minutes removed and none from the AI: asked again.
 

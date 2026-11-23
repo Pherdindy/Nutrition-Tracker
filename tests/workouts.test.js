@@ -134,6 +134,7 @@ test("a new workout waits for the AI", () => {
 test("typed calories need no AI, whatever else there is", () => {
   assert.deepEqual(save(null, { kcal: 500 }), { effort: {}, estimateStatus: "done" });
   assert.deepEqual(save(null, { kcal: 0, minutes: 0 }), { effort: {}, estimateStatus: "done" });
+  assert.deepEqual(save(null, { kcal: 500 }, { workouts: [w({ id: 7 })] }), { effort: {}, estimateStatus: "done" }, "nor anything remembered");
   assert.deepEqual(save(w(), { kcal: 500 }), { effort: w().effort, estimateStatus: "done" }, "the AI's are kept for when they are taken away");
   assert.deepEqual(save(w({ kcal: 500 }), { kcal: null }), { effort: w().effort, estimateStatus: "done" });
   assert.deepEqual(save(w({ kcal: 500, effort: {} }), { kcal: null }), { effort: {}, estimateStatus: "pending" });
@@ -147,7 +148,7 @@ test("other minutes only scale", () => {
 });
 
 test("no minutes left: asked again, and what is known stays until then", () => {
-  assert.deepEqual(save(w(), { minutes: 0 }), { effort: { ...w().effort, refresh: true, was: "done" }, estimateStatus: "pending" });
+  assert.deepEqual(save(w(), { minutes: 0 }), { effort: { ...w().effort, refresh: true }, estimateStatus: "pending" });
 });
 
 test("case and spaces are not other words", () => {
@@ -178,7 +179,7 @@ test("the latest answer is the one that is reused", () => {
 
 test("not reused: typed calories, no answer, one that is being asked again, itself", () => {
   const none = [w({ effort: {}, kcal: 500 }), w({ effort: {}, estimateStatus: "pending" }), w({ effort: { ...w().effort, refresh: true }, estimateStatus: "pending" })];
-  for (const past of none) assert.equal(save(null, {}, { workouts: [past] }).estimateStatus, "pending");
+  for (const past of none) assert.deepEqual(save(null, {}, { workouts: [past] }), { effort: {}, estimateStatus: "pending" });
   const self = w({ id: 4, what: "Run" });
   assert.equal(save(self, { what: "Swim" }, { workouts: [w({ id: 4, what: "Swim" })] }).estimateStatus, "pending");
 });
@@ -192,7 +193,9 @@ test("minutes are part of what is reused only if they were the AI's", () => {
 });
 
 test("asking again keeps the numbers until the answer", () => {
-  assert.deepEqual(save(w(), {}, { askAgain: true }), { effort: { ...w().effort, refresh: true, was: "done" }, estimateStatus: "pending" });
+  const asked = { effort: { ...w().effort, refresh: true }, estimateStatus: "pending" };
+  assert.deepEqual(save(w(), {}, { askAgain: true }), asked);
+  assert.deepEqual(save(w(asked), {}, { askAgain: true }), asked, "and once more");
   const past = w({ id: 7, date: "2026-11-20" });
   assert.deepEqual(save(null, {}, { askAgain: true, workouts: [past] }), { effort: {}, estimateStatus: "pending" }, "nothing is reused then");
 });
@@ -204,7 +207,7 @@ test("asking again with calories typed: there is nothing to ask", () => {
 test("a failed or waiting one stays so until something answers it", () => {
   assert.equal(save(w({ effort: {}, estimateStatus: "error" }), {}).estimateStatus, "pending", "saved again: asked again");
   assert.equal(save(w({ effort: {}, estimateStatus: "pending" }), { minutes: 30 }).estimateStatus, "pending");
-  const asking = w({ effort: { ...w().effort, refresh: true, was: "done" }, estimateStatus: "pending" });
+  const asking = w({ effort: { ...w().effort, refresh: true }, estimateStatus: "pending" });
   assert.deepEqual(save(asking, { minutes: 30 }), { effort: asking.effort, estimateStatus: "pending" }, "a question is not taken back by other minutes");
 });
 
@@ -228,7 +231,7 @@ test("the AI's minutes are kept only if the user gave none", () => {
 });
 
 test("a new answer replaces the old one whole", () => {
-  const asked = w({ effort: { at: 1, met: met(3), why: [], how: "both", from: { id: 1, date: "d" }, refresh: true, was: "done" }, estimateStatus: "pending" });
+  const asked = w({ effort: { at: 1, met: met(3), why: [], how: "both", from: { id: 1, date: "d" }, refresh: true }, estimateStatus: "pending" });
   assert.deepEqual(apply(asked, answer()), { effort: { at: 200, met: met(6, 7), why: answer().basis, how: "one" }, estimateStatus: "done" });
 });
 
@@ -240,21 +243,21 @@ test("an answer without what is needed is no answer", () => {
 });
 
 test("no answer: what was known stays, marked as failed", () => {
-  const asked = w({ effort: { ...w().effort, refresh: true, was: "done" }, estimateStatus: "pending" });
+  const asked = w({ effort: { ...w().effort, refresh: true }, estimateStatus: "pending" });
   assert.deepEqual(apply(asked, null), { effort: asked.effort, estimateStatus: "error" });
 });
 
 test("no credit: asking again is taken back", () => {
-  const asked = w({ effort: { ...w().effort, refresh: true, was: "done" }, estimateStatus: "pending" });
+  const asked = w({ effort: { ...w().effort, refresh: true }, estimateStatus: "pending" });
   assert.deepEqual(apply(asked, null, { noCredit: true }), { effort: w().effort, estimateStatus: "done" });
   assert.deepEqual(apply(w({ effort: {}, estimateStatus: "pending" }), null, { noCredit: true }), { effort: {}, estimateStatus: "error" });
-  const nothingElse = w({ minutes: 0, effort: { ...w().effort, refresh: true, was: "done" }, estimateStatus: "pending" });
+  const nothingElse = w({ minutes: 0, effort: { ...w().effort, refresh: true }, estimateStatus: "pending" });
   assert.deepEqual(apply(nothingElse, null, { noCredit: true }).estimateStatus, "error", "it cannot go back to having no minutes");
 });
 
 test("odd extras of an answer are left out", () => {
-  const got = apply(w({ effort: {} }), answer({ basis: [1, 2, 3].map((n) => ({ ref: `r${n}` })), how: undefined, extra: "x" }));
-  assert.deepEqual([got.effort.why.length, got.effort.how, "extra" in got.effort], [2, "average", false]);
+  const got = apply(w({ effort: {} }), answer({ met: { low: 6, high: 7, x: 1 }, basis: [1, 2, 3].map((n) => ({ ref: `r${n}` })), how: undefined, extra: "x" }));
+  assert.deepEqual([got.effort.why.length, got.effort.how, "extra" in got.effort, got.effort.met], [2, "average", false, met(6, 7)]);
   assert.deepEqual(apply(w({ effort: {} }), answer({ basis: undefined, how: undefined })).effort, { at: 200, met: met(6, 7), why: [], how: "one" });
 });
 
@@ -269,6 +272,12 @@ test("how it was worked out", () => {
     "Steady effort.",
     "The AI works from what it knows about exercise. It does not look values up.",
   ]);
+});
+
+test("what both say is said once", () => {
+  const est = { ref: "Bike", note: "Steady.", met: 6, minutes: 90 };
+  const lines = W.explain(w({ effort: { at: 1, met: met(6), why: [est, est], how: "average" } }), LBS, "2026-11-23");
+  assert.deepEqual([lines[0], lines.filter((l) => l === "Steady.").length, lines[2]], ["Based on Bike", 1, "6 times resting for 90 min at 81.6 kg, less what you burn anyway: 612 kcal"]);
 });
 
 test("one estimate, and two that disagreed", () => {

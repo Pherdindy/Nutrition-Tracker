@@ -73,7 +73,7 @@ export function extractWorkout(o, given = 0) {
   if (!o || typeof o !== "object") return null;
   const number = (x) => (typeof x === "number" || (typeof x === "string" && x.trim()) ? Number(x) : NaN);
   const mets = [number(o.met_lower), number(o.met_upper)], minutes = given || number(o.minutes);
-  if (!mets.every((m) => m >= 1 && m <= 25) || !(minutes > 0 && minutes <= 1440)) return null;
+  if (!mets.every((x) => x >= 1 && x <= 25) || !(minutes > 0 && minutes <= 1440)) return null;
   const met_low = Math.min(...mets), met_high = Math.max(...mets);
   return {
     met_low, met_high, minutes,

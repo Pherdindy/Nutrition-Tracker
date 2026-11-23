@@ -117,7 +117,7 @@
   function findRemembered(workouts, { what, minutes }, exceptId) {
     return workouts
       .filter((e) => e.id !== exceptId && sameWorkout(e.what, what) && e.effort.met && !e.effort.refresh && (minutes > 0 || e.effort.minutes > 0))
-      .reduce((a, b) => (!a || ((b.effort.at || 0) - (a.effort.at || 0) || b.id - a.id) > 0 ? b : a), null);
+      .reduce((a, b) => (a && a.effort.at >= b.effort.at ? a : b), null);
   }
 
   // What a workout is saved with besides what the user typed (`after`).
@@ -127,12 +127,11 @@
       const found = findRemembered(workouts, after, before && before.id);
       if (found) {
         effort = { ...found.effort, from: found.effort.from || { id: found.id, date: found.date } };
-        delete effort.was;
         if (after.minutes > 0) delete effort.minutes;
       }
     }
-    if (after.kcal == null && effort.met && !effort.refresh && (askAgain || !minutesOf({ ...after, effort }))) {
-      effort = { ...effort, refresh: true, was: before.estimateStatus }; // known until the answer
+    if (after.kcal == null && effort.met && (askAgain || !minutesOf({ ...after, effort }))) {
+      effort = { ...effort, refresh: true }; // it stays until the answer
     }
     return { effort, estimateStatus: needsAnswer({ ...after, effort }) ? "pending" : "done" };
   }
@@ -143,8 +142,8 @@
     const usable = met && [met.low, met.high].every(Number.isFinite) && (w.minutes > 0 || answer.minutes > 0);
     if (!usable) {
       if (noCredit && w.effort.refresh) { // asking again is taken back, if it was asked at all
-        const { refresh, was, ...effort } = w.effort;
-        if (!needsAnswer({ ...w, effort })) return { effort, estimateStatus: was };
+        const { refresh, ...effort } = w.effort;
+        if (!needsAnswer({ ...w, effort })) return { effort, estimateStatus: "done" };
       }
       return { effort: w.effort, estimateStatus: "error" };
     }
