@@ -67,12 +67,6 @@ test("migrateEntry leaves already-migrated entries untouched", () => {
   assert.deepEqual(M.migrateEntry(e), e);
 });
 
-test("blankEnabled lists enabled macros with no value", () => {
-  const e = { macros: { calories: { low: 100, high: 120 } } };
-  assert.deepEqual(M.blankEnabled(e, ["calories", "protein", "carbs"]), ["protein", "carbs"]);
-  assert.deepEqual(M.blankEnabled(e, ["calories"]), []);
-});
-
 test("sumMacro totals low/high across entries", () => {
   const entries = [
     { date: "d", macros: { carbs: { low: 10, high: 12 } } },
@@ -128,11 +122,3 @@ test("promptFields exact format for a single macro", () => {
     '  "calories_lower": <number>,\n  "calories_upper": <number>');
 });
 
-test("needsReestimate true iff food/qty/unit changed (not date/time)", () => {
-  const o = { food: "Oat", qty: 100, unit: "g" };
-  assert.equal(M.needsReestimate(o, { food: "Oat", qty: 100, unit: "g" }), false);
-  assert.equal(M.needsReestimate(o, { food: "Oat", qty: 150, unit: "g" }), true);   // qty
-  assert.equal(M.needsReestimate(o, { food: "Oat", qty: 100, unit: "cup" }), true);  // unit
-  assert.equal(M.needsReestimate(o, { food: "Oats", qty: 100, unit: "g" }), true);   // food
-  assert.equal(M.needsReestimate(null, { food: "Oat", qty: 100, unit: "g" }), true); // no original (add)
-});

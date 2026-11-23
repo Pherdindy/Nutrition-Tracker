@@ -638,7 +638,22 @@ function renderCalorieTarget() {
 // ============================================================
 
 
-let _foodEditOriginal = null;
+// The entry being edited; null when adding.
+function editedEntry() {
+  const id = String(document.getElementById("food-id").value);
+  return (id && loadFoodEntries().find((e) => String(e.id) === id)) || null;
+}
+
+function formFood() {
+  const value = (id) => document.getElementById(id).value;
+  return { food: value("food-name"), qty: parseFloat(value("food-qty")), unit: value("food-unit") };
+}
+
+// The numbers a new or changed entry is saved with.
+function numbersFor(before, after, form = null) {
+  const others = loadFoodEntries().filter((e) => !before || e.id !== before.id);
+  return Nutrition.resolve({ before, after, form, others, tracked: getEnabledMacros(), now: Date.now() });
+}
 
 function showFoodPane(name) {
   document.querySelectorAll("#food-modal-tabs .modal-tab").forEach((t) => t.classList.toggle("active", t.dataset.pane === name));
@@ -655,7 +670,6 @@ function openFoodModal(entry) {
   document.getElementById("food-qty").value = entry ? entry.qty : "";
   document.getElementById("food-unit").value = entry ? entry.unit : "";
   populateFoodSuggestions();
-  _foodEditOriginal = entry ? { food: entry.food, qty: entry.qty, unit: entry.unit } : null;
   const tabs = document.getElementById("food-modal-tabs");
   if (entry) {
     tabs.classList.add("hidden");
@@ -695,32 +709,20 @@ function ensureDayExists(date) {
 
 function saveFood(e) {
   e.preventDefault();
-  const entries = loadFoodEntries();
   const id = document.getElementById("food-id").value;
-  const base = {
-    date: document.getElementById("food-date").value,
-    time: document.getElementById("food-time").value,
-    food: document.getElementById("food-name").value,
-    qty: parseFloat(document.getElementById("food-qty").value),
-    unit: document.getElementById("food-unit").value,
-  };
-  let saved;
-  if (id) {
-    const idx = entries.findIndex((x) => x.id === parseInt(id));
-    if (idx === -1) { console.warn("saveFood: entry not found for id", id); return; }
-    saved = { ...entries[idx], ...base };
-    if (Macros.needsReestimate(_foodEditOriginal, base)) { saved.macros = {}; saved.estimateStatus = "pending"; }
-    entries[idx] = saved;
-  } else {
-    saved = { ...base, id: newId(), macros: {}, estimateStatus: "pending" };
-    entries.push(saved);
-  }
+  const before = editedEntry();
+  if (id && !before) { console.warn("saveFood: entry not found for id", id); return; }
+  const base = { date: document.getElementById("food-date").value, time: document.getElementById("food-time").value, ...formFood() };
+  const saved = { ...(before || { id: newId() }), ...base, ...numbersFor(before, base) };
+  const entries = loadFoodEntries();
+  if (before) entries[entries.findIndex((x) => x.id === before.id)] = saved;
+  else entries.push(saved);
   saveFoodEntries(entries);
   ensureDayExists(base.date);
   closeFoodModal();
   renderFoodTable();
   renderCalorieTracker();
-  if (saved && saved.estimateStatus === "pending") enqueueEstimate(saved.id);
+  if (saved.estimateStatus === "pending") enqueueEstimate(saved.id);
 }
 
 const _estimateQueue = [];
@@ -1033,7 +1035,8 @@ function confirmPhotoItems() {
   const entries = loadFoodEntries();
   const now = new Date();
   const date = localDate(now), time = now.toTimeString().slice(0, 5);
-  const created = PhotoEstimate.itemsToEntries(_photoItems, date, time, newId(_photoItems.length));
+  const created = PhotoEstimate.itemsToEntries(_photoItems, date, time, newId(_photoItems.length))
+    .map((e) => ({ ...e, nutrition: { photo: true, at: Date.now() } }));
   if (!created.length) return;
   saveFoodEntries([...entries, ...created]);
   ensureDayExists(date);
@@ -2249,7 +2252,8 @@ function saveBatchFoods() {
     const qty = row.querySelector(".batch-qty").value;
     const unit = row.querySelector(".batch-unit").value.trim();
     if (!food || !qty || !unit) return;
-    const entry = { id: newId(), date, time, food, qty: parseFloat(qty), unit, macros: {}, estimateStatus: "pending" };
+    const base = { date, time, food, qty: parseFloat(qty), unit };
+    const entry = { id: newId(), ...base, ...numbersFor(null, base) };
     entries.push(entry); created.push(entry);
   });
   if (!created.length) { alert("Add at least one food (name, quantity, and unit)."); return; }
@@ -2257,7 +2261,7 @@ function saveBatchFoods() {
   ensureDayExists(date);
   closeFoodModal();
   renderFoodTable(); renderCalorieTracker();
-  created.forEach((e) => enqueueEstimate(e.id));
+  created.filter((e) => e.estimateStatus === "pending").forEach((e) => enqueueEstimate(e.id));
 }
 
 // ============================================================
@@ -2749,9 +2753,9 @@ async function startApp() {
     }
   });
 
-  document.getElementById("food-name").addEventListener("change", function () {
-    const entries = loadFoodEntries();
-    const match = entries.findLast((e) => e.food === this.value);
+  const nameInput = document.getElementById("food-name");
+  nameInput.addEventListener("change", () => {
+    const match = editedEntry() ? null : Nutrition.latestLog(loadFoodEntries(), nameInput.value);
     if (match) {
       document.getElementById("food-unit").value = match.unit;
       document.getElementById("food-qty").value = match.qty;

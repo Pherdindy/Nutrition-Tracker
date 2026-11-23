@@ -73,10 +73,6 @@
     return out;
   }
 
-  function blankEnabled(entry, enabled) {
-    return (enabled || []).filter((id) => getMacro(entry, id) === null);
-  }
-
   function sumMacro(entries, id) {
     return (entries || []).reduce((acc, e) => {
       const m = getMacro(e, id);
@@ -125,13 +121,6 @@
     return (ids || []).map((id) => '  "' + id + '_lower": <number>,\n  "' + id + '_upper": <number>').join(",\n");
   }
 
-  function needsReestimate(orig, upd) {
-    if (!orig) return true;
-    return String(orig.food) !== String(upd.food)
-      || Number(orig.qty) !== Number(upd.qty)
-      || String(orig.unit) !== String(upd.unit);
-  }
-
   return {
     CATALOG,
     byId,
@@ -143,13 +132,11 @@
     formatMacro,
     needsMigration,
     migrateEntry,
-    blankEnabled,
     sumMacro,
     macroFields,
     parseMacros,
     spread,
     averageEstimates,
     promptFields,
-    needsReestimate,
   };
 });
