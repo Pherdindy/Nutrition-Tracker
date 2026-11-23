@@ -382,6 +382,12 @@ test("weight, amount and a typed number in one save", () => {
   assert.deepEqual(got.macros.protein, mine(22)); // 11 per 96 g, 192 g eaten
 });
 
+test("typing every tracked number ends the wait for an answer", () => {
+  const waiting = entry({ estimateStatus: "pending", nutrition: { at: 5, refresh: true } });
+  const got = edit(waiting, {}, { typed: { calories: 1, protein: 22, carbs: 0 } });
+  assert.deepEqual([got.estimateStatus, got.nutrition, got.macros.sodium], ["manual", { at: NOW }, { low: 200, high: 300 }]);
+});
+
 test("ask again keeps the numbers and waits", () => {
   const e = entry({ nutrition: { at: 5, from: { id: 9, date: "2026-11-01" } } });
   const got = edit(e, {}, { askAgain: true });
@@ -638,6 +644,8 @@ test("an amount the label's does not convert to is refused, not taken for someth
   f.rebase({ qty: 1, unit: "plate", macros: {} });
   assert.equal(f.errors().basis, "56 g does not convert to 1 plate");
   assert.deepEqual([f.basis(), f.units()], [{ text: "56", unit: "g" }, ["plate", "g"]]);
+  f.setBasisUnit("g");
+  assert.deepEqual(f.basis(), { text: "56", unit: "g" });
   f.rebase({ qty: 3, unit: "oz", macros: {} });
   assert.deepEqual([f.errors(), f.result().basis], [{}, amount(56, "g")]);
 });

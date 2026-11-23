@@ -2946,7 +2946,7 @@ async function startApp() {
     const qty = document.getElementById("food-qty"), unit = document.getElementById("food-unit");
     const amount = () => `${qty.value}|${unit.value}`;
     const typed = amount() !== "|" && amount() !== _autofilled; // never replaced
-    const match = editedEntry() || typed ? null : Nutrition.latestLog(loadFoodEntries(), nameInput.value);
+    const match = typed ? null : Nutrition.latestLog(loadFoodEntries(), nameInput.value);
     if (match) {
       unit.value = match.unit;
       qty.value = match.qty;
