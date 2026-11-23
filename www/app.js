@@ -111,10 +111,12 @@ function dayRowToJs(r) {
 function dayJsToRow(e) {
   // Keep legacy day columns populated from the current global profile so old rows stay valid
   // (no days-table schema change) and any reader that still expects them works. Reads ignore them.
+  // These columns are NOT NULL, and a cleared profile field is NaN (null once sent).
   const p = (typeof loadProfile === "function") ? loadProfile() : {};
+  const orDefault = (field) => (Number.isFinite(p[field]) ? p[field] : DEFAULT_PROFILE[field]);
   return { id: e.id, date: e.date, weight: e.weight, activity: e.activity, incomplete: !!e.incomplete,
-    age: p.age != null ? p.age : DEFAULT_PROFILE.age, deficit: Targets.deficitForGoal(p.weightLossGoal),
-    protein_target_low: p.proteinLow != null ? p.proteinLow : DEFAULT_PROFILE.proteinLow, protein_target_high: p.proteinHigh != null ? p.proteinHigh : DEFAULT_PROFILE.proteinHigh };
+    age: orDefault("age"), deficit: Targets.deficitForGoal(p.weightLossGoal),
+    protein_target_low: orDefault("proteinLow"), protein_target_high: orDefault("proteinHigh") };
 }
 function profileRowToJs(r) {
   return { height: Number(r.height), age: r.age != null ? Number(r.age) : null, proteinLow: Number(r.protein_low), proteinHigh: Number(r.protein_high), weightLossGoal: r.weight_loss_goal || null };
@@ -124,7 +126,7 @@ function profileJsToRow(p) {
   return { height: p.height, age: p.age, protein_low: p.proteinLow, protein_high: p.proteinHigh, weight_loss_goal: p.weightLossGoal };
 }
 
-// ---- bgWrite: fire-and-forget async write to Supabase ----
+// ---- bgWrite: fire-and-forget async write to Supabase (profile, settings, assessments) ----
 
 function bgWrite(fn) {
   Promise.resolve().then(fn).catch(err => console.error('[Supabase bgWrite]', err));
@@ -133,9 +135,127 @@ function bgWrite(fn) {
 // ---- Per-user localStorage cache (theme + API keys stay device-global) ----
 const CACHE_BASES = ["food", "days", "profile", "assessments", "version"];
 function lsGet(base) { return localStorage.getItem(AuthView.nsKey(currentUid(), base)); }
-function lsSet(base, value) { localStorage.setItem(AuthView.nsKey(currentUid(), base), value); }
-function clearUserCache() {
-  for (const base of CACHE_BASES) localStorage.removeItem(AuthView.nsKey(currentUid(), base));
+function lsSet(base, value) {
+  // Signed out (e.g. an estimate coming back during sign-out): keep nothing.
+  if (currentUid()) localStorage.setItem(AuthView.nsKey(currentUid(), base), value);
+}
+// Unsent changes: one entry each, e.g. nt_u092efd1b_outbox:days:2026-11-24.
+function outboxPrefix(uid) { return `${AuthView.nsKey(uid, "outbox")}:`; }
+function outboxKeys(uid) {
+  const prefix = outboxPrefix(uid), keys = [];
+  for (let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i);
+    if (key && key.startsWith(prefix)) keys.push(key);
+  }
+  return keys;
+}
+function wipeUserCache(uid) {
+  for (const base of CACHE_BASES) localStorage.removeItem(AuthView.nsKey(uid, base));
+  outboxKeys(uid).forEach((key) => localStorage.removeItem(key));
+}
+
+// This account's live session, or null. Loading and syncing are pinned to its
+// token: without one supabase-js quietly sends the public key instead, and the
+// server then answers "no rows" to a read and "done" to a delete of nothing.
+async function sessionFor(uid) {
+  const { data } = await sb.auth.getSession();
+  const session = data && data.session;
+  return session && session.user && session.user.id === uid ? session : null;
+}
+function asAccount(session, query) {
+  return query.setHeader("Authorization", `Bearer ${session.access_token}`);
+}
+
+// ---- Food + day sync: row by row, through an outbox that survives restarts ----
+// A save never implies a delete: this device's list may be incomplete (offline
+// start, another device's additions), so only an explicit delete removes a row.
+
+const newId = Sync.createIdSource();
+
+const FOOD_SYNC = {
+  table: "food_entries", keyColumn: "id", known: new Map(),
+  keyOf: (e) => String(e.id), toRow: foodJsToRow,
+  signature: (e) => JSON.stringify(foodJsToRow(e)),
+};
+// Days go by date, not id: two devices can each auto-create the same day.
+const DAY_SYNC = {
+  table: "days", keyColumn: "date", onConflict: "user_id,date", known: new Map(),
+  keyOf: (d) => d.date, toRow: dayJsToRow,
+  // Only what the user edits on a day. The row also copies profile values, and a
+  // profile change is not an edit to every day.
+  signature: (d) => JSON.stringify([d.weight, d.activity, !!d.incomplete]),
+};
+
+const outbox = Sync.createOutbox({
+  owner: currentUid,
+  list: (uid) => {
+    const box = {};
+    for (const storageKey of outboxKeys(uid)) {
+      try {
+        const op = JSON.parse(localStorage.getItem(storageKey));
+        const [table, key] = storageKey.slice(outboxPrefix(uid).length).split(":");
+        if (op) (box[table] = box[table] || {})[key] = op; // null: another tab just delivered it
+      } catch (e) { /* unreadable: nothing to send */ }
+    }
+    return box;
+  },
+  set: (uid, table, key, op) => localStorage.setItem(`${outboxPrefix(uid)}${table}:${key}`, JSON.stringify(op)),
+  remove: (uid, table, key) => localStorage.removeItem(`${outboxPrefix(uid)}${table}:${key}`),
+  send: async (uid, table, kind, items) => {
+    const session = await sessionFor(uid);
+    if (!session) return { error: { message: "no session for this account" }, status: 0 };
+    const { keyColumn, onConflict } = table === DAY_SYNC.table ? DAY_SYNC : FOOD_SYNC;
+    if (kind === "delete") return asAccount(session, sb.from(table).delete().in(keyColumn, items));
+    if (kind === "update") {
+      const [{ key, row, match }] = items;
+      let query = sb.from(table).update(row).eq(keyColumn, key);
+      for (const [column, value] of Object.entries(match)) query = query.eq(column, value);
+      return asAccount(session, query);
+    }
+    return asAccount(session, sb.from(table).upsert(items, { onConflict, ignoreDuplicates: kind === "ensure" }));
+  },
+  lock: (uid, fn) => (navigator.locks ? navigator.locks.request(`nt-sync-${uid}`, fn) : fn()),
+  schedule: (fn, ms) => setTimeout(fn, ms),
+  cancel: (handle) => clearTimeout(handle),
+  log: (...args) => console.error("[Sync]", ...args),
+});
+
+// Entries whose key is in ensureKeys were created automatically, so they must not
+// overwrite a row another device already saved under that key.
+function queueSave(spec, entries, ensureKeys = []) {
+  Sync.takeChanges(spec.known, entries, spec.keyOf, spec.signature, (entry, key) =>
+    outbox.put(spec.table, key, spec.toRow(entry), { ensure: ensureKeys.includes(key) }));
+  outbox.flush();
+}
+
+function queueDelete(spec, key) {
+  spec.known.delete(key);
+  outbox.put(spec.table, key, null);
+  outbox.flush();
+}
+
+// The AI's answer to each entry (or that there is none): not the user's change, so it
+// only fills in a row that is still waiting for this food and amount. It must not
+// bring back an entry deleted on another device, or undo an edit made there.
+function saveEstimates(entries, answered) {
+  for (const { entry, asked } of answered) {
+    const { macros, estimate_status, cal_low, cal_high, pro_low, pro_high } = foodJsToRow(entry);
+    outbox.update(FOOD_SYNC.table, FOOD_SYNC.keyOf(entry),
+      { macros, estimate_status, cal_low, cal_high, pro_low, pro_high }, { ...asked, estimate_status: "pending" });
+    FOOD_SYNC.known.set(FOOD_SYNC.keyOf(entry), FOOD_SYNC.signature(entry));
+  }
+  saveFoodEntries(entries);
+}
+const askedOf = ({ food, qty, unit }) => ({ food, qty, unit });
+function applyEstimate(entry, op) {
+  const row = foodJsToRow(entry);
+  return Sync.matches(row, op.match) ? foodRowToJs({ ...row, ...op.row }) : entry;
+}
+
+// What was just loaded is saved (or already in the outbox): not a change.
+function markKnown(spec, entries) {
+  spec.known.clear();
+  Sync.takeChanges(spec.known, entries, spec.keyOf, spec.signature, () => {});
 }
 
 // ---- Constants ----
@@ -184,24 +304,14 @@ function loadFoodEntries() {
 
 function saveFoodEntries(entries) {
   _cache.food = [...entries];
+  queueSave(FOOD_SYNC, entries);
   lsSet("food", JSON.stringify(entries));
-  bgWrite(async () => {
-    // Upsert FIRST, then delete only rows that no longer exist. This is non-destructive
-    // on failure: if the upsert errors (e.g. a missing column), nothing is deleted, so the
-    // table is never emptied. (The old delete-all-then-insert wiped the table when the
-    // re-insert failed.)
-    if (entries.length === 0) {
-      const { error } = await sb.from('food_entries').delete().gte('id', 0);
-      if (error) throw error;
-      return;
-    }
-    const rows = entries.map(foodJsToRow);
-    const { error: upErr } = await sb.from('food_entries').upsert(rows);
-    if (upErr) throw upErr; // table untouched — no rows deleted
-    const ids = entries.map((e) => e.id);
-    const { error: delErr } = await sb.from('food_entries').delete().not('id', 'in', `(${ids.join(',')})`);
-    if (delErr) throw delErr;
-  });
+}
+
+function removeFoodEntry(id) {
+  _cache.food = loadFoodEntries().filter((e) => e.id !== id);
+  queueDelete(FOOD_SYNC, String(id));
+  lsSet("food", JSON.stringify(_cache.food));
 }
 
 function loadDayEntries() {
@@ -210,22 +320,16 @@ function loadDayEntries() {
   return saved ? JSON.parse(saved).map(Targets.migrateDay) : [];
 }
 
-function saveDayEntries(entries) {
+function saveDayEntries(entries, { autoCreated = [] } = {}) {
   _cache.days = [...entries];
+  queueSave(DAY_SYNC, entries, autoCreated);
   lsSet("days", JSON.stringify(entries));
-  bgWrite(async () => {
-    if (entries.length === 0) {
-      const { error } = await sb.from('days').delete().gte('id', 0);
-      if (error) throw error;
-      return;
-    }
-    const rows = entries.map(dayJsToRow);
-    const { error: upErr } = await sb.from('days').upsert(rows);
-    if (upErr) throw upErr; // table untouched — no rows deleted
-    const ids = entries.map((e) => e.id);
-    const { error: delErr } = await sb.from('days').delete().not('id', 'in', `(${ids.join(',')})`);
-    if (delErr) throw delErr;
-  });
+}
+
+function removeDayEntry(date) {
+  _cache.days = loadDayEntries().filter((d) => d.date !== date);
+  queueDelete(DAY_SYNC, date);
+  lsSet("days", JSON.stringify(_cache.days));
 }
 
 // ============================================================
@@ -233,29 +337,42 @@ function saveDayEntries(entries) {
 // ============================================================
 
 async function initFromSupabase() {
-  const [foodRes, daysRes, profileRes, assessRes, settingsRes] = await Promise.all([
-    sb.from('food_entries').select('*').order('date', { ascending: false }),
-    sb.from('days').select('*').order('date', { ascending: false }),
-    sb.from('profile').select('*').maybeSingle(),
-    sb.from('assessments').select('*').order('timestamp', { ascending: false }),
-    sb.from('settings').select('*'),
+  const session = await sessionFor(currentUid());
+  if (!session) throw new Error("no session for this account");
+  // Unsent as of now counts too: another tab may deliver a change after the
+  // server has answered us without it.
+  const unsentBefore = { food_entries: outbox.pending("food_entries"), days: outbox.pending("days") };
+  const unsent = (table) => ({ ...unsentBefore[table], ...outbox.pending(table) });
+  // Every page: the server returns at most 1,000 rows per request by default.
+  const loadAll = (table) => Sync.fetchAll((from, to) => asAccount(session,
+    sb.from(table).select('*', { count: 'exact' }).order('date', { ascending: false }).order('id').range(from, to)));
+  const [foodRows, dayRows, profileRes, assessRes, settingsRes] = await Promise.all([
+    loadAll('food_entries'),
+    loadAll('days'),
+    asAccount(session, sb.from('profile').select('*').maybeSingle()),
+    asAccount(session, sb.from('assessments').select('*').order('timestamp', { ascending: false })),
+    asAccount(session, sb.from('settings').select('*')),
   ]);
 
-  // Check for errors on critical tables
-  if (foodRes.error) throw foodRes.error;
-  if (daysRes.error) throw daysRes.error;
+  // Check for errors on critical tables (loadAll throws its own)
   if (profileRes.error) throw profileRes.error;
 
-  const hasFoodData = foodRes.data && foodRes.data.length > 0;
-  const hasDaysData = daysRes.data && daysRes.data.length > 0;
   const hasProfileData = profileRes.data != null;
 
-  // Populate cache from Supabase data
-  _cache.food = foodRes.data.map(foodRowToJs);
+  // Populate cache from Supabase data, with this device's unsent changes on top
+  _cache.food = Sync.overlay(foodRows.map(foodRowToJs), unsent("food_entries"), FOOD_SYNC.keyOf, foodRowToJs, applyEstimate);
   _cache.profile = hasProfileData ? profileRowToJs(profileRes.data) : { ...DEFAULT_PROFILE };
   const _needSeed = _cache.profile.age == null || _cache.profile.weightLossGoal == null;
-  _cache.profile = Targets.migrateProfile(_cache.profile, daysRes.data.map((r) => ({ age: r.age, deficit: r.deficit })));
-  _cache.days = daysRes.data.map(dayRowToJs);
+  _cache.profile = Targets.migrateProfile(_cache.profile, dayRows.map((r) => ({ age: r.age, deficit: r.deficit })));
+  _cache.days = Sync.overlay(dayRows.map(dayRowToJs), unsent("days"), DAY_SYNC.keyOf, dayRowToJs);
+  markKnown(FOOD_SYNC, _cache.food);
+  markKnown(DAY_SYNC, _cache.days);
+  // An estimate that is pending only in the cloud is being worked on by the device
+  // that logged it. If that device never finishes, this one resumes it at its next
+  // start, having cached it as pending now.
+  let cachedFood = [];
+  try { cachedFood = JSON.parse(lsGet("food")) || []; } catch (e) { /* unreadable: nothing to resume */ }
+  markResumable([...cachedFood, ...Object.values(unsent("food_entries")).filter((op) => op.row && !op.match).map((op) => foodRowToJs(op.row))]);
   _cache.assessments = (assessRes.data || []).map(r => r.data);
 
   // Settings (key-value pairs)
@@ -284,14 +401,17 @@ async function initFromSupabase() {
 function initFromLocalStorage() {
   // Fallback: populate cache from localStorage (same as old behavior)
   const savedFood = lsGet("food");
-  _cache.food = savedFood ? JSON.parse(savedFood).map(Macros.migrateEntry) : [];
+  _cache.food = Sync.overlay(savedFood ? JSON.parse(savedFood).map(Macros.migrateEntry) : [], outbox.pending("food_entries"), FOOD_SYNC.keyOf, foodRowToJs, applyEstimate);
   const savedDays = lsGet("days");
   const parsedDays = savedDays ? JSON.parse(savedDays) : [];
   const savedProfile = lsGet("profile");
   _cache.profile = savedProfile ? JSON.parse(savedProfile) : { ...DEFAULT_PROFILE };
   const _needSeed = _cache.profile.age == null || _cache.profile.weightLossGoal == null;
   _cache.profile = Targets.migrateProfile(_cache.profile, parsedDays);
-  _cache.days = parsedDays.map(Targets.migrateDay);
+  _cache.days = Sync.overlay(parsedDays.map(Targets.migrateDay), outbox.pending("days"), DAY_SYNC.keyOf, dayRowToJs);
+  markKnown(FOOD_SYNC, _cache.food);
+  markKnown(DAY_SYNC, _cache.days);
+  markResumable(_cache.food);
   const savedAssessments = lsGet("assessments");
   _cache.assessments = savedAssessments ? JSON.parse(savedAssessments) : [];
 
@@ -555,9 +675,8 @@ function ensureDayExists(date) {
   if (days.some((d) => d.date === date)) return;
   const sorted = [...days].sort((a, b) => (a.date < b.date ? 1 : -1));
   const prev = sorted[0];
-  const maxId = days.length ? Math.max(...days.map((d) => d.id)) : 0;
-  days.push({ id: maxId + 1, date, weight: prev ? prev.weight : 168, activity: prev ? prev.activity : ACTIVITY_TYPES[0].label });
-  saveDayEntries(days);
+  days.push({ id: newId(), date, weight: prev ? prev.weight : 168, activity: prev ? prev.activity : ACTIVITY_TYPES[0].label });
+  saveDayEntries(days, { autoCreated: [date] });
 }
 
 
@@ -580,8 +699,7 @@ function saveFood(e) {
     if (Macros.needsReestimate(_foodEditOriginal, base)) { saved.macros = {}; saved.estimateStatus = "pending"; }
     entries[idx] = saved;
   } else {
-    const maxId = entries.length ? Math.max(...entries.map((x) => x.id)) : 0;
-    saved = { ...base, id: maxId + 1, macros: {}, estimateStatus: "pending" };
+    saved = { ...base, id: newId(), macros: {}, estimateStatus: "pending" };
     entries.push(saved);
   }
   saveFoodEntries(entries);
@@ -603,7 +721,7 @@ function enqueueEstimate(entryId) {
     const t = entries.find((e) => e.id === entryId);
     if (t && t.estimateStatus === "pending") {
       t.estimateStatus = "error";
-      saveFoodEntries(entries);
+      saveEstimates(entries, [{ entry: t, asked: askedOf(t) }]);
       renderFoodTable(); renderCalorieTracker();
     }
     openPaywall();
@@ -625,12 +743,13 @@ async function runEstimateQueue() {
       if (!ids.length) {
         const fresh = loadFoodEntries();
         const t = fresh.find((e) => e.id === id);
-        if (t) { t.estimateStatus = "manual"; saveFoodEntries(fresh); }
+        if (t) { t.estimateStatus = "manual"; saveEstimates(fresh, [{ entry: t, asked: askedOf(t) }]); }
         continue;
       }
       let filled = null, errStatus = null;
+      const asked = askedOf(entry);
       try {
-        const est = await callAi("estimate", { food: entry.food, qty: entry.qty, unit: entry.unit });
+        const est = await callAi("estimate", asked);
         filled = est && est.macros ? est.macros : null;
       } catch (err) {
         errStatus = err && err.status;
@@ -638,17 +757,21 @@ async function runEstimateQueue() {
       }
       // Reload fresh AFTER the await so a concurrent user edit isn't overwritten.
       const fresh = loadFoodEntries();
-      const t = fresh.find((e) => e.id === id);
+      const found = fresh.find((e) => e.id === id);
+      // Changed while this ran: the answer is for something else, and saving that
+      // change has queued a new estimate.
+      const t = found && !Macros.needsReestimate(asked, found) ? found : null;
       // Quota exhausted (402): every remaining attempt would fail the same way —
       // fail the rest of the queue without burning proxy calls, then show the
       // paywall once. 429 is transient, so it does NOT drain: remaining entries
       // keep their own attempts.
       const drained = errStatus === 402 ? _estimateQueue.splice(0, _estimateQueue.length) : [];
+      const answered = [];
       for (const qid of drained) {
         const q = fresh.find((e) => e.id === qid);
-        if (q && q.estimateStatus === "pending") q.estimateStatus = "error";
+        if (q && q.estimateStatus === "pending") { q.estimateStatus = "error"; answered.push({ entry: q, asked: askedOf(q) }); }
       }
-      if (t) { // current entry may have been deleted while the estimate was in flight
+      if (t) { // the entry may have been deleted or changed while the estimate was in flight
         if (filled) {
           if (!t.macros) t.macros = {};
           for (const mid of ids) if (filled[mid]) t.macros[mid] = filled[mid];
@@ -656,17 +779,22 @@ async function runEstimateQueue() {
         } else {
           t.estimateStatus = "error";
         }
+        answered.push({ entry: t, asked });
       }
-      if (t || drained.length) {
-        saveFoodEntries(fresh);
+      if (answered.length) {
+        saveEstimates(fresh, answered);
         renderFoodTable(); renderCalorieTracker();
       }
       if (errStatus === 402) openPaywall();
     }
   } finally { _estimateRunning = false; }
 }
+let _resumableEstimates = new Set();
+function markResumable(entries) {
+  _resumableEstimates = new Set(entries.filter((e) => e.estimateStatus === "pending").map((e) => e.id));
+}
 function resumePendingEstimates() {
-  loadFoodEntries().filter((e) => e.estimateStatus === "pending").forEach((e) => enqueueEstimate(e.id));
+  loadFoodEntries().filter((e) => e.estimateStatus === "pending" && _resumableEstimates.has(e.id)).forEach((e) => enqueueEstimate(e.id));
 }
 
 window.editFood = function (id) {
@@ -677,9 +805,7 @@ window.editFood = function (id) {
 
 window.deleteFood = function (id) {
   if (!confirm("Delete this food entry?")) return;
-  let entries = loadFoodEntries();
-  entries = entries.filter((e) => e.id !== id);
-  saveFoodEntries(entries);
+  removeFoodEntry(id);
   renderFoodTable();
   renderCalorieTracker();
 };
@@ -731,9 +857,8 @@ window.editDay = function (id) {
 
 window.deleteDay = function (id) {
   if (!confirm("Delete this day entry?")) return;
-  let entries = loadDayEntries();
-  entries = entries.filter((e) => e.id !== id);
-  saveDayEntries(entries);
+  const day = loadDayEntries().find((d) => d.id === id);
+  if (day) removeDayEntry(day.date);
   renderCalorieTracker();
 };
 
@@ -898,10 +1023,9 @@ async function startPhotoCapture() {
 function confirmPhotoItems() {
   document.getElementById("photo-confirm").disabled = true;
   const entries = loadFoodEntries();
-  const maxId = entries.length ? Math.max(...entries.map((e) => e.id)) : 0;
   const now = new Date();
   const date = now.toISOString().slice(0, 10), time = now.toTimeString().slice(0, 5);
-  const created = PhotoEstimate.itemsToEntries(_photoItems, date, time, maxId + 1);
+  const created = PhotoEstimate.itemsToEntries(_photoItems, date, time, newId(_photoItems.length));
   if (!created.length) return;
   saveFoodEntries([...entries, ...created]);
   ensureDayExists(date);
@@ -923,16 +1047,36 @@ function renderAccountSettings() {
   document.getElementById("sign-out-btn").addEventListener("click", signOut);
 }
 
+let _signingOut = false;
+
 async function signOut() {
   // Capture identity up front: sb.auth.signOut() emits SIGNED_OUT (nulling
-  // _authUser) BEFORE it resolves, so currentUid() is null in the finally.
+  // _authUser) BEFORE it resolves, so currentUid() is null afterwards.
   const uid = currentUid();
-  const wipe = () => { for (const b of CACHE_BASES) localStorage.removeItem(AuthView.nsKey(uid, b)); };
-  _estimateQueue.length = 0;   // stop in-flight estimate follow-ups
-  wipe();                      // wipe this user's offline cache before identity flips
-  try { await sb.auth.signOut(); }
-  catch (e) { console.error("[Auth] signOut:", e); }
-  finally { wipe(); location.reload(); } // re-clear: catch writes that raced the network call
+  if (outbox.count()) {
+    await Promise.race([outbox.flush(), new Promise((resolve) => setTimeout(resolve, 4000))]);
+    const left = outbox.count();
+    if (left && !confirm(left === 1
+      ? "1 change hasn't been saved to your account yet. If you sign out now it will be lost. Sign out anyway?"
+      : `${left} changes haven't been saved to your account yet. If you sign out now they will be lost. Sign out anyway?`)) return;
+  }
+  _signingOut = true; // the auth listener leaves the reload to us
+  document.body.classList.add("loading"); // anything entered from here on would be wiped
+  let error;
+  try { ({ error } = await sb.auth.signOut()); }
+  catch (e) { error = e; }
+  if (error) {
+    // Still signed in (supabase-js keeps the session without a connection), so
+    // keep this user's data too.
+    console.error("[Auth] signOut:", error);
+    _signingOut = false;
+    document.body.classList.remove("loading");
+    alert("Couldn't sign out. Check your connection and try again.");
+    return;
+  }
+  _estimateQueue.length = 0; // stop in-flight estimate follow-ups
+  wipeUserCache(uid);
+  location.reload();
 }
 
 function renderMacroSettings() {
@@ -2091,14 +2235,13 @@ function saveBatchFoods() {
   const time = document.getElementById("batch-time").value;
   if (!date || !time) { alert("Date and time are required."); return; }
   const entries = loadFoodEntries();
-  let maxId = entries.length ? Math.max(...entries.map((e) => e.id)) : 0;
   const created = [];
   document.querySelectorAll("#batch-items .batch-item-row").forEach((row) => {
     const food = row.querySelector(".batch-food").value.trim();
     const qty = row.querySelector(".batch-qty").value;
     const unit = row.querySelector(".batch-unit").value.trim();
     if (!food || !qty || !unit) return;
-    const entry = { id: ++maxId, date, time, food, qty: parseFloat(qty), unit, macros: {}, estimateStatus: "pending" };
+    const entry = { id: newId(), date, time, food, qty: parseFloat(qty), unit, macros: {}, estimateStatus: "pending" };
     entries.push(entry); created.push(entry);
   });
   if (!created.length) { alert("Add at least one food (name, quantity, and unit)."); return; }
@@ -2463,7 +2606,7 @@ function completeOnboarding(ev) {
   const activity = document.getElementById("ob-activity").value;
   if (Number.isFinite(weight)) {
     const today = new Date().toISOString().slice(0, 10);
-    saveDayEntries([...loadDayEntries(), { id: Date.now(), date: today, weight, activity }]);
+    saveDayEntries([...loadDayEntries(), { id: newId(), date: today, weight, activity }]);
   }
   _cache.profileMissing = false;
   document.getElementById("onboarding-view").classList.add("hidden");
@@ -2485,6 +2628,12 @@ async function startApp() {
     initFromLocalStorage();
   }
   document.body.classList.remove('loading');
+
+  // Send whatever a previous session could not, and again whenever the
+  // connection or the app comes back.
+  outbox.flush();
+  window.addEventListener("online", () => outbox.flush());
+  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") outbox.flush(); });
 
   maybeShowOnboarding();
 
@@ -2642,13 +2791,15 @@ document.addEventListener("DOMContentLoaded", async () => {
   // startApp exceptions must not propagate back into verifyOtp /
   // exchangeCodeForSession as unhandled rejections.
   sb.auth.onAuthStateChange((_event, s) => {
-    const hadUser = !!_authUser;
+    const previous = currentUid();
     setAuthUser(s ? s.user : null);
-    if (s) { showAuthView(false); setTimeout(() => startApp().catch(console.error), 0); }
-    else if (_appStarted && hadUser) {
-      // Session lost while running (token revoked/expired in background):
-      // don't strand a live app silently writing to a dead session.
-      location.reload();
+    if (_appStarted && previous && currentUid() !== previous) {
+      // Session lost while running (token revoked/expired in background), or
+      // another account signed in (tabs share the session): don't strand a live
+      // app writing to a dead session, or writing one account's data to another.
+      if (!_signingOut) location.reload();
+      return;
     }
+    if (s) { showAuthView(false); setTimeout(() => startApp().catch(console.error), 0); }
   });
 });
