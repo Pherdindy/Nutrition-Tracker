@@ -130,6 +130,9 @@
     return mineIds(macros).length > 0 && !!n && !!n.basis && isWeight(n.basis.unit) && !isWeight(u);
   }
 
+  // What a new answer, or only numbers of the user's, leave nothing of.
+  const ANSWERED = ["refresh", "stale", "from", "why", "how", "asked", "photo"];
+
   // The numbers an entry is saved with.
   //   before   the entry as it was, or null when adding
   //   after    { food, qty, unit }
@@ -192,9 +195,11 @@
 
     if (askAgain) { n.refresh = true; newStatus = true; }
     else if (tracked.every((id) => isMine(macros, id))) { // nobody will be asked
-      if (n.stale) macros = pick(macros, mineIds(macros));
+      if (n.stale) {
+        macros = pick(macros, mineIds(macros));
+        for (const field of ANSWERED) delete n[field];
+      }
       delete n.refresh;
-      delete n.stale;
     }
 
     return { macros, nutrition: orNone(n), estimateStatus: newStatus ? statusFor(macros, tracked, n) : before.estimateStatus };
@@ -250,7 +255,7 @@
 
     if (n.refresh || !n.at) n.at = now; // filling gaps does not make the other numbers newer
     if (n.refresh) {
-      for (const field of ["refresh", "stale", "from", "why", "how", "asked", "photo"]) delete n[field];
+      for (const field of ANSWERED) delete n[field];
       if (!knownWeight(entry)) delete n.grams;
     }
     const basis = (answer.basis || []).slice(0, 2);

@@ -296,6 +296,8 @@ test("a rename where everything tracked is typed asks nobody, and leaves nothing
   assert.deepEqual([before.macros, before.estimateStatus, before.nutrition], [typed, "manual", undefined]);
   const now = edit(entry(), { food: "Tuna" }, { typed: { calories: 1, protein: 2, carbs: 3 } });
   assert.deepEqual([now.macros, now.estimateStatus, now.nutrition], [typed, "manual", { at: NOW }]);
+  const explained = edit(entry({ nutrition: { at: 5, why: [{ ref: "sardines" }], how: "one", asked: amount(4, "pcs"), from: { id: 9, date: "2026-11-01" }, photo: true } }), { food: "Tuna" }, { typed: { calories: 1, protein: 2, carbs: 3 } });
+  assert.deepEqual(explained.nutrition, { at: NOW });
   const same = edit(entry(), {}, { typed: { calories: 1, protein: 2, carbs: 3 } });
   assert.deepEqual(same.macros.sodium, { low: 200, high: 300 }, "its own other numbers stay");
 });
