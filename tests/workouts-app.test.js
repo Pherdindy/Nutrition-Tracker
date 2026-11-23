@@ -219,6 +219,30 @@ test("the assessment is told of the workouts and the total they make", async () 
   assert.deepEqual(ctx, { activity: "🪑 Sat all day + Bike, 90 min (674 kcal)", tdee: Math.round(total), deficit: 550, calorieTarget: Math.round(total - 550) });
 });
 
+test("a workout is never without its day: one that is gone comes back, as it would start", async () => {
+  const server = serverWith({ days: [dayRow({ id: 1, date: "2026-11-20", activity: LIGHT, weight: 175 })], workouts: [row(1, "Bike")] });
+  const app = await bootApp({ server });
+  const day = app.days().find((d) => d.date === DATE);
+  assert.deepEqual([day && day.activity, day && day.weight], [LIGHT, 175]);
+  assert.ok(trackerRow(app).includes("Bike · 90 min"));
+  assert.deepEqual(server.days().map((d) => d.date).sort(), ["2026-11-20", DATE]);
+  assert.deepEqual(server.writes.map((x) => [x.table, !!x.options.ignoreDuplicates]), [["days", true]], "added only if it is not there");
+});
+
+test("a day another device has by now is not overwritten by that", async () => {
+  const server = serverWith({ days: [], workouts: [row(1, "Bike")] });
+  server.afterSelect = async (table) => {
+    if (table !== "workouts") return;
+    server.afterSelect = null;
+    const other = await bootApp({ server, device: createDevice() });
+    other.editDay(DATE, { weight: 160 });
+    await other.settle();
+  };
+  const app = await bootApp({ server });
+  await app.settle();
+  assert.deepEqual(server.days().map((d) => [d.date, d.weight]), [[DATE, 160]]);
+});
+
 test("a new day starts with the last rest choice and weight, never with a workout", async () => {
   const app = await bootApp({ server: serverWith({ days: [dayRow({ id: 1, date: "2026-11-21", activity: LIGHT, weight: 170 }), dayRow({ id: 2, date: "2026-11-23", activity: GYM, weight: 180 })] }) });
   app.addFood("Eggs", { date: "2026-11-24" });
@@ -286,6 +310,21 @@ test("the day's total follows the answer", async () => {
   await app.settle();
   const shown = app.run("document.querySelector('#calorie-tracker-table tbody').innerHTML"); // without being asked to
   assert.ok(shown.includes((BMR * 1.2 + 4.5 * KG * 1.5).toFixed(1)));
+});
+
+test("renamed: the total stays until the answer, also if there is none", async () => {
+  const server = serverWith({ workouts: [row(100, "Bike")] });
+  const app = await bootApp({ server });
+  const before = numbersOf(trackerRow(app))[2];
+  server.ai = () => ({ data: null, error: { context: { status: 402 } } });
+  log(app, { what: "Bike, zone 2" });
+  assert.equal(numbersOf(trackerRow(app))[2], before);
+  await app.settle();
+  assert.deepEqual([numbersOf(trackerRow(app))[2], app.workout("Bike, zone 2").estimateStatus], [before, "error"]);
+  assert.ok(trackerRow(app).includes("try again"));
+  log(app, { what: "Bike" });
+  await app.settle();
+  assert.deepEqual([app.workouts(), server.workouts().map(({ user_id, ...w }) => w)], [[js(100, "Bike")], [row(100, "Bike")]], "taken back");
 });
 
 test("no answer: it says so and can be tried again", async () => {
@@ -386,6 +425,7 @@ test("other words or minutes while the AI is asked: asked for those", async () =
     release();
     await app.settle();
     const w = app.workouts()[0];
+    assert.equal(w.effort.of, undefined);
     assert.deepEqual([bodies.length, JSON.stringify(bodies[1]), w.effort.met, w.estimateStatus], [2, JSON.stringify({ what: "Bike", minutes: 90, ...change }), { low: 2, high: 2 }, "done"]);
     assert.deepEqual(server.workouts()[0].effort.met, { low: 2, high: 2 });
   }
@@ -644,6 +684,98 @@ test("what is only looked at here keeps a change made elsewhere", async () => {
   assert.deepEqual(stored(server), [["Bike", 30, null]]);
 });
 
+test("one that failed and was only opened: what is typed elsewhere stays, and the AI is asked only if it is still needed", async () => {
+  const failed = row(3, "Swim", { effort: {}, estimate_status: "error" });
+  const server = serverWith({ workouts: [failed] }), device = createDevice();
+  const a = await bootApp({ server, device }), b = await bootApp({ server, device });
+  openDay(a);
+  a.run("openWorkout(3)");
+  log(b, { id: 3, what: "Swim", minutes: 30, kcal: 400 });
+  const key = `${b.run("outboxPrefix(currentUid())")}workouts:3`;
+  await a.windowEvent("storage", { key, newValue: device.storage.getItem(key) });
+  saveForm(a);
+  await a.settle();
+  assert.deepEqual([stored(server), server.aiCalls], [[["Swim", 30, 400]], []], "another tab");
+
+  const server2 = serverWith({ workouts: [failed] });
+  const c = await bootApp({ server: server2 }), d = await bootApp({ server: server2, device: createDevice() });
+  openDay(c);
+  c.run("openWorkout(3)");
+  log(d, { id: 3, what: "Swim", minutes: 30, kcal: 400 });
+  await d.settle();
+  saveForm(c);
+  await c.settle();
+  assert.deepEqual(stored(server2), [["Swim", 30, 400]], "another device that has not told this one");
+});
+
+test("asking again about one that was not touched is about what it is by then", async () => {
+  const server = serverWith({ workouts: [row(1, "Bike"), row(2, "Run")] }), bodies = [];
+  server.ai = (body) => { bodies.push(body.payload); return answer(); };
+  const app = await bootApp({ server });
+  openDay(app);
+  app.run("openWorkout(1)");
+  app.fire("workout-ask", "click");
+  log(app, { id: 1, what: "Bike", minutes: 30 }); // as another tab would
+  app.run("openWorkout(2)");
+  app.fire("workout-ask", "click");
+  log(app, { id: 2, what: "Run", kcal: 5 });
+  saveForm(app);
+  await app.settle();
+  assert.deepEqual([stored(server), JSON.parse(JSON.stringify(bodies))], [[["Bike", 30, null], ["Run", 90, 5]], [{ what: "Bike", minutes: 30 }]]);
+});
+
+test("one that was not touched and is deleted elsewhere is simply gone", async () => {
+  for (const [status, again] of [["error", false], ["done", true]]) {
+    const server = serverWith({ workouts: [row(1, "Bike", { estimate_status: status, ...(status === "error" && { effort: {} }) })] });
+    const app = await bootApp({ server });
+    openDay(app);
+    app.run("openWorkout(1)");
+    if (again) app.fire("workout-ask", "click");
+    app.run("removeWorkout(1)");
+    saveForm(app);
+    await app.settle();
+    assert.deepEqual([server.workouts(), app.confirms, server.aiCalls], [[], [], []]);
+  }
+});
+
+test("one that comes while the form is open can be removed, and is asked about like the others", async () => {
+  const server = serverWith();
+  const app = await bootApp({ server });
+  openDay(app);
+  put(app, js(50, "Bike"), js(51, "Run"));
+  app.run("WORKOUT_SYNC.show()"); // as follow() does
+  app.run("dropWorkout(50)");
+  assert.deepEqual([listed(app).includes("Bike"), listed(app).includes("Run")], [false, true]);
+  app.run("openWorkout(51)");
+  typeIn(app, { kcal: 250 });
+  app.run("removeWorkout(51)"); // elsewhere
+  saveForm(app);
+  await app.settle();
+  assert.deepEqual([app.confirms.length, stored(server)], [1, [["Run", 90, 250]]]);
+});
+
+test("the form does not close before everything is stored", async () => {
+  const server = serverWith(), device = createDevice();
+  const app = await bootApp({ server, device });
+  openDay(app);
+  addIn(app, { what: "Bike", minutes: 90 });
+  const { setItem } = device.storage;
+  device.storage.setItem = (key, value) => { if (/outbox:workouts/.test(key)) throw new Error("QuotaExceededError"); setItem.call(device.storage, key, value); };
+  assert.throws(() => saveForm(app), /Quota/);
+  assert.equal(app.isOpen("day-modal"), true);
+  device.storage.setItem = setItem;
+  saveForm(app);
+  await app.settle();
+  assert.deepEqual([app.isOpen("day-modal"), stored(server)], [false, [["Bike", 90, null]]], "and Save works once there is room");
+});
+
+test("nothing in the form asks the AI before Save", async () => {
+  const server = serverWith({ workouts: [row(3, "Swim", { effort: {}, estimate_status: "error" })] });
+  const app = await bootApp({ server });
+  openDay(app);
+  assert.ok(listed(app).includes("not estimated") && !listed(app).includes("retryWorkout"));
+});
+
 test("removing one counts from Save on", async () => {
   const server = serverWith({ workouts: [row(1, "Bike"), row(2, "Run")] });
   const app = await bootApp({ server });
@@ -708,15 +840,13 @@ test("saving one that failed asks for it again", async () => {
 });
 
 test("saving one that failed asks for it again, also if nothing is changed", async () => {
-  for (const past of [[], [row(9, "swim", { date: "2026-11-20" })]]) { // or takes what is known by now
-    const server = serverWith({ workouts: [row(3, "Swim", { effort: {}, estimate_status: "error" }), ...past] });
-    const app = await bootApp({ server });
-    openDay(app);
-    app.run("openWorkout(3)");
-    saveForm(app);
-    await app.settle();
-    assert.deepEqual([server.aiCalls, on(server, "Swim").estimate_status], [past.length ? [] : ["Swim"], "done"]);
-  }
+  const server = serverWith({ workouts: [row(3, "Swim", { effort: {}, estimate_status: "error" })] });
+  const app = await bootApp({ server });
+  openDay(app);
+  app.run("openWorkout(3)");
+  saveForm(app);
+  await app.settle();
+  assert.deepEqual([server.aiCalls, on(server, "Swim").estimate_status], [["Swim"], "done"]);
 });
 
 test("a Save that comes twice saves once", async () => {
@@ -811,6 +941,33 @@ test("a day that has workouts and, from elsewhere, a choice with one", async () 
   assert.deepEqual([offered(app).length, app.el("day-activity").value], [8, GYM]);
 });
 
+test("an empty workout left open changes nothing about the day", async () => {
+  for (const activity of [GYM, "Gym", LIGHT]) {
+    const server = serverWith({ days: [dayRow({ id: 1, date: "2026-11-20", activity: SAT }), dayRow({ id: 2, activity })] });
+    const app = await bootApp({ server });
+    openDay(app);
+    app.fire("workout-add", "click");
+    app.el("day-weight").value = "170";
+    saveForm(app);
+    await app.settle();
+    const day = server.days().find((d) => d.date === DATE);
+    assert.deepEqual([day.activity, day.weight, server.workouts()], [activity, 170, []]);
+  }
+});
+
+test("nor when the day's last workout is taken away with one, or is not saved as a new one", async () => {
+  for (const way of ["dropped", "declined"]) {
+    const server = serverWith({ days: [dayRow({ activity: GYM })], workouts: [row(1, "Bike")] });
+    const app = await bootApp({ server, confirm: () => false });
+    openDay(app);
+    if (way === "dropped") { app.run("dropWorkout(1)"); app.fire("workout-add", "click"); }
+    else { app.run("openWorkout(1)"); typeIn(app, { minutes: 30 }); app.run("removeWorkout(1)"); }
+    saveForm(app);
+    await app.settle();
+    assert.deepEqual([server.days()[0].activity, server.workouts(), server.writes.filter((x) => x.table === "days")], [GYM, [], []], way);
+  }
+});
+
 test("a choice this build does not know is offered and kept", async () => {
   const server = serverWith({ days: [dayRow({ activity: "Gym" })] });
   const app = await bootApp({ server });
@@ -858,15 +1015,15 @@ test("it does not overwrite a day another device made meanwhile, unless the user
 });
 
 test("deleting a day deletes its workouts, and says how many", async () => {
-  const server = serverWith({ workouts: [row(1, "Bike"), row(2, "Run"), row(3, "Other", { date: "2026-11-22" })] });
+  const server = serverWith({ days: [dayRow(), dayRow({ id: 2, date: "2026-11-22" })], workouts: [row(1, "Bike"), row(2, "Run"), row(3, "Other", { date: "2026-11-22" })] });
   let yes = false;
   const app = await bootApp({ server, confirm: () => yes });
   app.deleteDay(DATE);
-  assert.deepEqual([app.days().length, app.workouts().length, app.confirms], [1, 3, ["Delete this day entry and its 2 workouts?"]]);
+  assert.deepEqual([app.days().length, app.workouts().length, app.confirms], [2, 3, ["Delete this day entry and its 2 workouts?"]]);
   yes = true;
   app.deleteDay(DATE);
   await app.settle();
-  assert.deepEqual([server.days(), stored(server)], [[], [["Other", 90, null]]]);
+  assert.deepEqual([server.days().map((d) => d.date), stored(server)], [["2026-11-22"], [["Other", 90, null]]]);
   const one = await bootApp({ server: serverWith({ workouts: [row(1, "Bike")] }), confirm: () => false }), none = await bootApp({ server: serverWith(), confirm: () => false });
   one.deleteDay(DATE);
   none.deleteDay(DATE);
@@ -914,15 +1071,21 @@ test("earlier workouts are suggested, and bring their minutes", async () => {
   openDay(app);
   app.fire("workout-add", "click");
   assert.ok(app.el("workout-suggestions").innerHTML.includes('value="Bike"') && app.el("workout-suggestions").innerHTML.includes('value="&lt;Run&gt;"'));
-  typeIn(app, { what: "bike" });
-  assert.equal(app.el("workout-minutes").value, "45");
-  typeIn(app, { what: "bike int" });
-  assert.equal(app.el("workout-minutes").value, "", "it was not meant");
-  typeIn(app, { what: "Bike intervals" });
-  assert.equal(app.el("workout-minutes").value, "30");
-  typeIn(app, { minutes: 50 });
+  const leave = (what) => { typeIn(app, { what }); app.fire("workout-what", "change"); };
   typeIn(app, { what: "Bike" });
-  assert.equal(app.el("workout-minutes").value, "50", "typed minutes are left alone");
+  assert.equal(app.el("workout-minutes").value, "", "perhaps it goes on");
+  leave("Bike intervals");
+  assert.deepEqual([app.el("workout-minutes").value, app.el("workout-state").textContent], ["30", "204–245 kcal, from Nov 18"]);
+  leave("Bike, with a detail");
+  assert.equal(app.el("workout-minutes").value, "30", "never taken away");
+  typeIn(app, { minutes: "" });
+  leave("something new");
+  assert.equal(app.el("workout-minutes").value, "");
+  leave("bike");
+  assert.equal(app.el("workout-minutes").value, "45");
+  typeIn(app, { minutes: 45 });
+  leave("Bike, heart rate 130");
+  assert.equal(app.el("workout-minutes").value, "45", "typed minutes are left alone, also if they are the same");
 });
 
 test("the other fields of the day are saved as before, with and without workouts", async () => {

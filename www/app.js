@@ -737,12 +737,14 @@ function activityHtml(day, workouts) {
 function workoutLines(day, workouts) {
   return workouts.map((w) => `<div class="workout-line">${workoutHtml(w, day.weight)}</div>`).join("");
 }
-function workoutHtml(w, lbs, waiting = "estimating…") {
+function workoutHtml(w, lbs, { waiting = "estimating…", link = true } = {}) {
   const { what, minutes, kcal } = Workouts.line(w, lbs);
   const text = [escapeHtml(what), minutes, kcal, w.estimateStatus === "pending" && waiting].filter(Boolean).join(" · ");
   const tag = w.kcal != null ? "yours" : Workouts.tag(w, localDate());
-  const retry = w.estimateStatus === "error" ? ` <button type="button" class="link-btn" onclick="retryWorkout(${w.id})" title="Ask the AI again">${kcal ? "try again" : "not estimated"}</button>` : "";
-  return text + (tag ? ` <span class="from-tag">${tag}</span>` : "") + retry;
+  const failed = w.estimateStatus !== "error" ? "" : kcal ? "try again" : "not estimated";
+  const retry = !link ? failed === "not estimated" && " · not estimated"
+    : failed && ` <button type="button" class="link-btn" onclick="retryWorkout(${w.id})" title="Ask the AI again">${failed}</button>`;
+  return text + (tag ? ` <span class="from-tag">${tag}</span>` : "") + (retry || "");
 }
 
 // ---- Calorie Target Tables ----
@@ -979,6 +981,11 @@ function newDay(date) {
   const days = loadDayEntries(), sorted = [...days].sort((a, b) => (a.date < b.date ? 1 : -1));
   return { id: newId(), date, weight: sorted.length ? sorted[0].weight : 168, activity: Workouts.lastRest(days, date) };
 }
+// A workout is shown with its day, so it is never without one: the day may have been
+// deleted on a device that did not know of the workout.
+function ensureDaysOfWorkouts() {
+  new Set(loadWorkouts().map((w) => w.date)).forEach(ensureDayExists);
+}
 function ensureDayExists(date) {
   const days = loadDayEntries();
   if (days.some((d) => d.date === date)) return;
@@ -1143,15 +1150,16 @@ window.deleteFood = function (id) {
 // ============================================================
 
 // The day form. What is typed about its workouts is kept here until Save:
-//   known    the day's workouts when it was opened
-//   changes  id -> { what, minutes, kcal, askAgain }, or null = removed
+//   known    the day's workouts there have been since it was opened
+//   changes  id -> { what, minutes, kcal, askAgain }, or null = removed. untouched: nothing
+//            was typed, the AI is only to be asked (again)
 //   open     the id of the workout whose fields are shown; what they said at first, and
-//            whether its estimate had failed (Save then asks for it again)
+//            whether its estimate had failed
 //   chosen   the day's activity; rest: what the user chose instead, for a day with workouts
 let _dayForm = null;
 
 function openDayModal(entry, { add = false } = {}) {
-  _dayForm = { date: entry.date, chosen: entry.activity, rest: null, some: null, known: new Set(workoutsOn(entry.date).map((w) => w.id)), changes: new Map(), open: null, opened: null, again: false, filled: "" };
+  _dayForm = { date: entry.date, chosen: entry.activity, rest: null, some: null, known: new Set(), changes: new Map(), open: null, opened: null, failed: false, again: false };
   document.getElementById("day-modal-title").textContent = add ? "Add Workout" : "Edit Day";
   document.getElementById("day-date").value = entry.date;
   document.getElementById("day-weight").value = entry.weight;
@@ -1168,7 +1176,7 @@ function closeDayModal() {
 }
 
 // A workout of the form as it would be saved.
-function previewWorkout(id, { askAgain, ...after }) {
+function previewWorkout(id, { askAgain, untouched, ...after }) {
   const workouts = loadWorkouts(), before = workouts.find((w) => w.id === id);
   return { id, date: _dayForm.date, ...after, ...Workouts.resolve({ before, after, askAgain, workouts }) };
 }
@@ -1181,12 +1189,17 @@ function formWorkouts() {
 }
 
 const formWeight = () => parseFloat(document.getElementById("day-weight").value);
+// With workouts the list is about the rest of the day: a choice that includes one would
+// count it twice.
+function formActivity(some) {
+  const { date, chosen, rest } = _dayForm;
+  return some && !Workouts.isRest(chosen) ? rest || Workouts.lastRest(loadDayEntries(), date) : chosen;
+}
 
 function renderDayForm() {
   if (!_dayForm) return;
-  const { date, chosen, rest, changes, open } = _dayForm, workouts = formWorkouts(), lbs = formWeight();
-  // With workouts the list is about the rest of the day: a choice that includes one
-  // would count it twice.
+  const { date, chosen, known, changes, open } = _dayForm, workouts = formWorkouts(), lbs = formWeight();
+  workoutsOn(date).forEach((w) => known.add(w.id));
   const some = workouts.length > 0 || open !== null, instead = some && !Workouts.isRest(chosen);
   if (_dayForm.some !== some) { // only then, so that an open list stays open
     _dayForm.some = some;
@@ -1194,14 +1207,14 @@ function renderDayForm() {
     if (!some && !labels.includes(chosen)) labels.push(chosen); // from another build: not lost
     const select = document.getElementById("day-activity");
     select.innerHTML = labels.map((label) => `<option value="${escapeHtml(label)}">${escapeHtml(label)}</option>`).join("");
-    select.value = instead ? rest || Workouts.lastRest(loadDayEntries(), date) : chosen;
+    select.value = formActivity(some);
   }
   document.getElementById("day-activity-label").textContent = some ? "Rest of the day" : "Activity Type";
   const note = document.getElementById("day-activity-note");
   note.classList.toggle("hidden", !instead);
   note.textContent = instead ? `“${Workouts.nameOf(chosen)}” already includes a workout, so this is now the rest of the day, without the workouts below.` : "";
 
-  document.getElementById("workout-list").innerHTML = workouts.map((w) => `<div class="workout-row"><span>${workoutHtml(w, lbs, changes.has(w.id) ? "the AI will estimate" : undefined)}</span>
+  document.getElementById("workout-list").innerHTML = workouts.map((w) => `<div class="workout-row"><span>${workoutHtml(w, lbs, { link: false, ...(changes.has(w.id) && { waiting: "the AI will estimate" }) })}</span>
     <button type="button" class="btn-icon" onclick="openWorkout(${w.id})" title="Edit">&#9998;</button>
     <button type="button" class="btn-icon delete" onclick="dropWorkout(${w.id})" title="Remove">&#10005;</button></div>`).join("");
   document.getElementById("workout-editor").classList.toggle("hidden", open === null);
@@ -1239,7 +1252,10 @@ function takeOpenWorkout() {
     workoutErrors(errors);
     const wrong = WORKOUT_FIELDS.find((field) => errors[field]);
     if (wrong) { workoutField(wrong).reportValidity(); return false; }
-    if (again || failed || !Sync.matches(values, opened)) changes.set(open, { ...values, askAgain: again });
+    const untouched = Sync.matches(values, opened), typed = changes.get(open);
+    if (!untouched) changes.set(open, { ...values, askAgain: again });
+    else if (typed) changes.set(open, { ...typed, askAgain: again });
+    else if (again || failed) changes.set(open, { ...values, askAgain: again, untouched });
   }
   _dayForm.open = null;
   return true;
@@ -1248,7 +1264,7 @@ function takeOpenWorkout() {
 window.openWorkout = function (id) {
   if (!takeOpenWorkout()) return;
   const w = _dayForm.changes.get(id) || loadWorkouts().find((x) => x.id === id) || { what: "", minutes: 0, kcal: null };
-  Object.assign(_dayForm, { open: id, opened: { what: w.what.trim(), minutes: w.minutes, kcal: w.kcal }, failed: w.estimateStatus === "error", again: !!w.askAgain, filled: "" });
+  Object.assign(_dayForm, { open: id, opened: { what: w.what.trim(), minutes: w.minutes, kcal: w.kcal }, failed: w.estimateStatus === "error", again: !!w.askAgain });
   workoutField("what").value = w.what;
   workoutField("minutes").value = w.minutes ? String(w.minutes) : "";
   workoutField("kcal").value = w.kcal === null ? "" : String(w.kcal);
@@ -1264,14 +1280,17 @@ window.dropWorkout = function (id) {
   renderDayForm();
 };
 
-function workoutTyped(field) {
+function workoutTyped() {
+  if (!_dayForm) return;
+  workoutErrors({});
+  renderDayForm();
+}
+// No minutes yet: those of the last time. Once the words are complete, not while typing.
+function workoutNamed() {
   if (!_dayForm) return;
   const minutes = workoutField("minutes");
-  if (field === "what" && minutes.value === _dayForm.filled) { // nothing typed: those of the last time
-    const past = Workouts.suggestions(loadWorkouts()).find((s) => Workouts.sameWorkout(s.what, workoutField("what").value));
-    _dayForm.filled = minutes.value = past && past.minutes ? String(past.minutes) : "";
-  }
-  workoutErrors({});
+  const past = minutes.value === "" && Workouts.suggestions(loadWorkouts()).find((s) => Workouts.sameWorkout(s.what, workoutField("what").value));
+  if (past && past.minutes) minutes.value = String(past.minutes);
   renderDayForm();
 }
 
@@ -1296,20 +1315,27 @@ function storeWorkouts(date, typed) {
 
 function saveDay(e) {
   e.preventDefault();
-  if (!_dayForm || !takeOpenWorkout()) return;
-  const { date, known, changes } = _dayForm, typed = [];
-  for (const [id, after] of changes) {
-    if (!after) { removeWorkout(id); continue; }
-    const gone = known.has(id) && !loadWorkouts().some((w) => w.id === id);
-    if (!gone) typed.push({ id, ...after });
-    else if (confirm("This workout was deleted on another device or tab. Save it as a new one?")) typed.push({ id: newId(), ...after });
+  if (!_dayForm) return;
+  chooseActivity();
+  if (!takeOpenWorkout()) return;
+  const { date, known, changes } = _dayForm, typed = [], retry = [];
+  for (const [id, change] of changes) {
+    if (!change) { removeWorkout(id); continue; }
+    const { untouched, ...after } = change, now = loadWorkouts().find((w) => w.id === id);
+    if (untouched) {
+      if (now && after.askAgain) typed.push({ ...after, id, what: now.what, minutes: now.minutes, kcal: now.kcal });
+      else if (now && now.estimateStatus === "error") retry.push(id);
+    } else if (now || !known.has(id)) typed.push({ ...after, id });
+    else if (confirm("This workout was deleted on another device or tab. Save it as a new one?")) typed.push({ ...after, id: newId() });
   }
   ensureDayExists(date);
   const entries = loadDayEntries(), idx = entries.findIndex((d) => d.date === date);
-  entries[idx] = { ...entries[idx], weight: formWeight(), activity: document.getElementById("day-activity").value, incomplete: document.getElementById("day-incomplete").checked };
+  const activity = formActivity(typed.length > 0 || workoutsOn(date).length > 0);
+  entries[idx] = { ...entries[idx], weight: formWeight(), activity, incomplete: document.getElementById("day-incomplete").checked };
   saveDayEntries(entries);
-  closeDayModal();
   if (typed.length) storeWorkouts(date, typed);
+  retry.forEach((id) => retryWorkout(id));
+  closeDayModal();
   renderCalorieTracker();
 }
 
@@ -3103,6 +3129,7 @@ async function startApp() {
     initFromLocalStorage();
   }
   document.body.classList.remove('loading');
+  ensureDaysOfWorkouts();
 
   // Send whatever a previous session could not, and again whenever the
   // connection or the app comes back.
@@ -3137,7 +3164,8 @@ async function startApp() {
   document.getElementById("workout-add").addEventListener("click", () => openWorkout(newId()));
   document.getElementById("workout-remove").addEventListener("click", () => dropWorkout(_dayForm.open));
   document.getElementById("workout-ask").addEventListener("click", () => { _dayForm.again = true; renderDayForm(); });
-  WORKOUT_FIELDS.forEach((field) => workoutField(field).addEventListener("input", () => workoutTyped(field)));
+  WORKOUT_FIELDS.forEach((field) => workoutField(field).addEventListener("input", workoutTyped));
+  workoutField("what").addEventListener("change", workoutNamed);
   onBreakpointChange(renderCalorieTracker);
 
   // Food filter

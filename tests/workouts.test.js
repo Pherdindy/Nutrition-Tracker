@@ -155,8 +155,26 @@ test("case and spaces are not other words", () => {
   assert.deepEqual(save(w(), { what: "  stationary BIKE,  zone 2 " }), { effort: w().effort, estimateStatus: "done" });
 });
 
-test("other words are another workout", () => {
-  assert.deepEqual(save(w(), { what: "Run" }), { effort: {}, estimateStatus: "pending" });
+test("other words are another workout: asked about, with the old numbers until the answer (W3)", () => {
+  const renamed = { effort: { ...w().effort, refresh: true, of: "Stationary bike, zone 2" }, estimateStatus: "pending" };
+  assert.deepEqual(save(w(), { what: "Run" }), renamed);
+  assert.deepEqual(save(w({ ...renamed, what: "Run" }), { what: "Run" }), renamed, "still asked when saved as it is");
+  assert.deepEqual(save(w({ ...renamed, what: "Run" }), { what: "Swim" }), renamed, "and they are of the first words, however often it is renamed");
+  assert.deepEqual(save(w({ ...renamed, what: "Run" }), { what: " stationary BIKE, zone 2" }), { effort: w().effort, estimateStatus: "done" }, "taken back");
+  assert.deepEqual(save(w({ ...renamed, what: "Run" }), { what: "stationary bike, zone 2" }, { askAgain: true }), { effort: { ...w().effort, refresh: true }, estimateStatus: "pending" }, "taken back, but asked about");
+  assert.deepEqual(save(w({ effort: {}, estimateStatus: "pending" }), { what: "Run" }), { effort: {}, estimateStatus: "pending" }, "nothing to keep");
+  assert.deepEqual(save(w(), { what: "Run", kcal: 300 }), { effort: renamed.effort, estimateStatus: "done" }, "typed calories need no AI");
+  assert.deepEqual(save(w({ ...renamed, what: "Run", kcal: 300, estimateStatus: "done" }), { what: "Run" }).estimateStatus, "pending", "taken away: asked after all");
+});
+
+test("numbers of other words are nothing to remember, and end with any answer", () => {
+  const renamed = w({ what: "Run", effort: { ...w().effort, refresh: true, of: "Stationary bike, zone 2" }, estimateStatus: "pending" });
+  assert.deepEqual(save(null, { what: "Run" }, { workouts: [renamed] }), { effort: {}, estimateStatus: "pending" });
+  assert.deepEqual(apply(renamed, answer()), { effort: { at: 200, met: met(6, 7), why: answer().basis, how: "one" }, estimateStatus: "done" });
+  assert.deepEqual(apply(renamed, null), { effort: renamed.effort, estimateStatus: "error" });
+  assert.deepEqual(apply(renamed, null, { noCredit: true }), { effort: renamed.effort, estimateStatus: "error" }, "not taken back: they are another workout's");
+  assert.ok(W.explain(renamed, LBS, "2026-11-23")[0].startsWith("Still the numbers of “Stationary bike, zone 2”"));
+  assert.equal(W.tag(w({ ...renamed, effort: { ...renamed.effort, from: { id: 1, date: "2026-11-20" } } }), "2026-11-23"), "");
 });
 
 test("a workout logged before is reused without asking", () => {

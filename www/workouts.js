@@ -122,8 +122,14 @@
 
   // What a workout is saved with besides what the user typed (`after`).
   function resolve({ before, after, askAgain = false, workouts }) {
-    let effort = before && sameWorkout(before.what, after.what) ? before.effort : {};
-    if (after.kcal == null && !effort.met && !askAgain) {
+    let effort = before ? before.effort : {};
+    if (before && !sameWorkout(before.what, after.what)) {
+      const { refresh, of = before.what, ...rest } = effort;
+      if (!effort.met) effort = {};
+      else if (sameWorkout(of, after.what)) effort = rest; // taken back
+      else effort = { ...rest, refresh: true, of }; // those of the old words until the answer
+    }
+    if (after.kcal == null && (!effort.met || effort.of) && !askAgain) {
       const found = findRemembered(workouts, after, before && before.id);
       if (found) {
         effort = { ...found.effort, from: found.effort.from || { id: found.id, date: found.date } };
@@ -141,7 +147,7 @@
     const met = answer && answer.met;
     const usable = met && [met.low, met.high].every(Number.isFinite) && (w.minutes > 0 || answer.minutes > 0);
     if (!usable) {
-      if (noCredit && w.effort.refresh) { // asking again is taken back, if it was asked at all
+      if (noCredit && w.effort.refresh && !w.effort.of) { // asking again is taken back
         const { refresh, ...effort } = w.effort;
         if (!needsAnswer({ ...w, effort })) return { effort, estimateStatus: "done" };
       }
@@ -158,16 +164,17 @@
   const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
   function tag(w, today) {
-    const { from } = w.effort;
-    if (!from || w.kcal != null) return "";
+    const { from, of } = w.effort;
+    if (!from || of || w.kcal != null) return "";
     const [year, month, date] = from.date.split("-").map(Number);
     return `from ${MONTHS[month - 1]} ${date}${from.date.slice(0, 4) === today.slice(0, 4) ? "" : `, ${year}`}`;
   }
 
   function explain(w, lbs, today) {
     if (w.kcal != null) return ["The calories are your number"];
-    const { met, why = [], how } = w.effort, b = burn(w, lbs), lines = [];
+    const { met, why = [], how, of } = w.effort, b = burn(w, lbs), lines = [];
     if (!met) return lines;
+    if (of) lines.push(`Still the numbers of “${of}”`);
     const refs = [...new Set(why.map((e) => e.ref).filter(Boolean))];
     if (refs.length) lines.push(`Based on ${refs.join("; ")}`);
     const efforts = why.map((e) => e.met).filter((m) => m > 0);
@@ -178,7 +185,7 @@
     if (b) lines.push(`${range(tenth(met.low), tenth(met.high))} times resting for ${minutesText(w)} at ${tenth(lbs * KG)} kg, less what you burn anyway: ${kcalText(b)}`);
     lines.push(...new Set(why.map((e) => e.note).filter(Boolean)));
     lines.push("The AI works from what it knows about exercise. It does not look values up.");
-    if (w.effort.from) lines.push(`Effort ${tag(w, today)}`);
+    if (tag(w, today)) lines.push(`Effort ${tag(w, today)}`);
     return lines;
   }
 

@@ -65,7 +65,7 @@ primary key (user_id, id); RLS per_user_all; no access for anon
 ```
 
 `effort`: `{ at, met: { low, high }, minutes, why: [{ ref, note, met, minutes }], how,
-from: { id, date }, refresh }`, all optional. `met` is how many times resting energy
+from: { id, date }, refresh, of }`, all optional. `met` is how many times resting energy
 (gross). `minutes` only if the user gave none.
 
 In the app a workout is `{ id, date, what, minutes, kcal, effort, estimateStatus }`.
@@ -83,7 +83,8 @@ and says so. The AI is not sent the weight.
 - Other words, or new: the latest workout with the same words (case and spaces aside) and
   a known effort is reused, with `from` and without an AI call ("from Nov 23"). Typed
   calories are not reused: they differ from session to session.
-- Otherwise the AI is asked (`pending`).
+- Otherwise the AI is asked (`pending`). Renamed: with the numbers of the old words until
+  the answer (`of`: whose they are; never reused; taken back by the old words).
 - "Ask AI again" asks in any case; the old effort stays until the answer (`refresh`), and
   for good if there is no credit.
 - No minutes given: the AI judges them from the description ("10,000 steps"). Typed
@@ -95,7 +96,9 @@ Edit Day gains "Workouts" under the activity: the day's workouts with calories, 
 ✕, and "+ Add workout" (what, minutes, calories if a watch or machine shows them, "Ask AI
 again", "How was this worked out?"). Earlier workouts are suggested; picking one fills in
 its minutes. Nothing is stored until Save; Cancel drops all of it. Save also takes what
-is typed in an open workout, and asks if a workout being edited was deleted elsewhere.
+is typed in an open workout, and asks if a workout being edited was deleted elsewhere. One
+that was only looked at is left as it is; if its estimate had failed, it is tried again
+(only if that is still so).
 
 With workouts, the list is called "Rest of the day" and offers only `rest` choices. If
 the day had another one, it changes to the last `rest` choice before that day and says:
@@ -108,7 +111,9 @@ on each day.
 If a day with workouts nevertheless has another choice (two devices, an older build), it
 counts and shows as "Sat all day".
 
-Deleting a day deletes its workouts; the question says how many.
+Deleting a day deletes its workouts; the question says how many. A workout whose day is gone
+all the same (deleted on a device that did not know of it) brings the day back at the next
+start.
 
 ### Shown
 
