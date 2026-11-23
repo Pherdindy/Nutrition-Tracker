@@ -2276,12 +2276,12 @@ test("closing the form forgets what was typed in it", async () => {
 
 <!-- edit www/app.js @T7 -->
 ```js
-  return Nutrition.resolve({ before, after, form, others, tracked: getEnabledMacros(), now: Date.now() });
+  return Nutrition.resolve({ before, after, form, entries: loadFoodEntries(), tracked: getEnabledMacros(), now: Date.now() });
 }
 
 ```
 ```js
-  return Nutrition.resolve({ before, after, form, others, tracked: getEnabledMacros(), now: Date.now() });
+  return Nutrition.resolve({ before, after, form, entries: loadFoodEntries(), tracked: getEnabledMacros(), now: Date.now() });
 }
 
 // ---- Nutrition section of the food form ----
