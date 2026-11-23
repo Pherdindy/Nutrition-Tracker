@@ -3,7 +3,7 @@
 // www/macros.js) — do not rewrite the prompt text; it's the tested product voice.
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { computeCost, quotaState, mergeEstimates, mergedHow, rateLimited } from "../_shared/metering.mjs";
-import { MACRO_IDS, extractEstimateFields, extractBasis, knownTotals, toNestedMacros, mergePhotoItems } from "../_shared/proxy-shapes.mjs";
+import { MACRO_IDS, extractEstimateFields, extractBasis, knownTotals, weightNote, toNestedMacros, mergePhotoItems } from "../_shared/proxy-shapes.mjs";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -59,8 +59,8 @@ ${promptFields(ids)}
 Units: calories in kcal, sodium in mg, all other macros in grams.`;
 }
 
-// Ported from www/app.js buildEstimatePrompt(); the known totals added
-function buildEstimatePromptText(food: string, qty: unknown, unit: string, known: unknown) {
+// Ported from www/app.js buildEstimatePrompt(); the known totals and weight added
+function buildEstimatePromptText(food: string, qty: unknown, unit: string, known: unknown, grams: unknown) {
   const totals = knownTotals(known);
   const facts = totals
     ? `\n\nThese totals for this quantity are already known. Treat them as facts and make the other values consistent with them: ${totals}.`
@@ -68,7 +68,7 @@ function buildEstimatePromptText(food: string, qty: unknown, unit: string, known
   return `Estimate the nutritional content of this food:
 
 Food: ${food}
-Quantity: ${qty} ${unit}
+Quantity: ${qty} ${unit}${weightNote(grams)}
 
 Instructions:
 1. Identify the exact food item and its standard preparation method
@@ -79,7 +79,7 @@ Instructions:
 }
 
 function buildEstimatePrompt(payload: any) {
-  const user = buildEstimatePromptText(payload.food, payload.qty, payload.unit, payload.known);
+  const user = buildEstimatePromptText(payload.food, payload.qty, payload.unit, payload.known, payload.grams);
   return {
     system: buildSystemPromptEstimate(MACRO_IDS),
     userOpenAI: user,

@@ -89,9 +89,11 @@
   const newToken = () => Date.now().toString(36) + Math.random().toString(36).slice(2);
 
   // Unsent changes, at most one per row (the latest):
-  //   { [table]: { [key]: { t: token, row: {...} | null, ensure?: true, match?: {...} } } }
+  //   { [table]: { [key]: { t: token, row: {...} | null, ensure?: true, match?: {...},
+  //                         then?: { row, match } } } }
   // row null = delete. ensure = auto-created: add it if absent, never overwrite.
   // match = change these fields while the row still looks like that, never create it.
+  // then = another such change, to be made after that one.
   //
   //   owner()                     current account id, or null when signed out
   //   list(uid)                   all that is stored, in the shape above (asked for
@@ -100,13 +102,17 @@
   //                               store or drop one change, touching no other: with
   //                               a combined value, two tabs saving at the same
   //                               moment could drop each other's changes
-  //   send(uid, table, kind, items) -> { error, status }
+  //   send(uid, table, kind, items) -> { error, status, count }
   //                               items are rows; keys for "delete"; for "update" a
-  //                               single { key, row, match }. Must be sent as that
-  //                               account or not at all
+  //                               single { key, row, match }, and count is how many
+  //                               rows it changed. Must be sent as that account or
+  //                               not at all
+  //   missed(uid, table, key)     an update changed no row: it is no longer what this
+  //                               device thought. -> false if that cannot be dealt
+  //                               with now; the update is then sent again later
   //   lock(uid, fn)               runs fn while no other tab is sending
   //   schedule(fn, ms), cancel(handle), log(...)
-  function createOutbox({ owner, list, set, remove, send, lock, schedule, cancel, log }) {
+  function createOutbox({ owner, list, set, remove, send, missed, lock, schedule, cancel, log }) {
     const refusedTokens = new Set(); // not worth resending this session
     let flushing = null; // promise while a flush runs
     let again = false;   // something was asked of it since it last looked
@@ -134,8 +140,15 @@
       const uid = owner();
       if (!uid) return;
       const unsent = (load(uid)[table] || {})[key];
-      if (!unsent || unsent.match) set(uid, table, key, { t: newToken(), row: fields, match });
-      else if (unsent.row !== null && matches(unsent.row, match)) {
+      if (unsent && unsent.match) {
+        // That one may be on its way, so it is left as it is and this one follows it -
+        // unless this one is not for what that one leaves.
+        const then = unsent.then || { row: {}, match };
+        const follows = matches({ ...unsent.match, ...unsent.row, ...then.row }, match);
+        set(uid, table, key, follows ? { ...unsent, then: { row: { ...then.row, ...fields }, match: then.match } } : { t: newToken(), row: fields, match });
+      } else if (!unsent) {
+        set(uid, table, key, { t: newToken(), row: fields, match });
+      } else if (unsent.row !== null && matches(unsent.row, match)) {
         set(uid, table, key, { ...unsent, t: newToken(), row: { ...unsent.row, ...fields } });
       }
     }
@@ -143,7 +156,12 @@
     // Clears what was delivered, except rows changed again since (new token).
     function settle(uid, table, entries) {
       const ops = load(uid)[table] || {};
-      for (const [key, op] of entries) if (ops[key] && ops[key].t === op.t) remove(uid, table, key);
+      for (const [key, op] of entries) {
+        if (!ops[key] || ops[key].t !== op.t) continue;
+        if (!ops[key].then) { remove(uid, table, key); continue; }
+        set(uid, table, key, { t: newToken(), ...ops[key].then });
+        again = true;
+      }
     }
 
     // false = could not be sent now. A refused row counts as dealt with: it stays
@@ -153,7 +171,11 @@
       if (kind === "update" && entries.length > 1) return deliverEach(uid, table, kind, entries);
       const res = await send(uid, table, kind, entries.map(([key, op]) =>
         (kind === "delete" ? key : kind === "update" ? { key, row: op.row, match: op.match } : op.row)));
-      if (!res.error) { settle(uid, table, entries); return true; }
+      if (!res.error) {
+        if (kind === "update" && res.count === 0 && !(await missed(uid, table, entries[0][0]))) return false;
+        settle(uid, table, entries);
+        return true;
+      }
       if (!isRefusal(res.status)) return false;
       if (entries.length === 1) {
         refusedTokens.add(entries[0][1].t);
@@ -225,5 +247,5 @@
     return { put, update, flush, pending, count };
   }
 
-  return { createIdSource, fetchAll, takeChanges, matches, overlay, createOutbox };
+  return { createIdSource, fetchAll, takeChanges, matches, overlay, isRefusal, createOutbox };
 });

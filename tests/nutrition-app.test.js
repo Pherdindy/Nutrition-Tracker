@@ -123,6 +123,93 @@ for (const [answers, answer] of [["fails", { data: null, error: { context: { sta
   });
 }
 
+// ---- a device whose copy is behind ------------------------------------------------------
+
+const ALL = { calories: 90, protein: 22, carbs: 1, fat: 2, fiber: 0 };
+const typedAll = Object.fromEntries(Object.entries(ALL).map(([id, n]) => [id, mine(n)]));
+async function typeElsewhere(server, food) { // on another device, started just now
+  const laptop = await bootApp({ server, device: createDevice() });
+  laptop.run(`editFood(${laptop.entry(food).id})`);
+  for (const [id, n] of Object.entries(ALL)) { laptop.el(`nf-${id}`).value = String(n); laptop.fire(`nf-${id}`, "input"); }
+  laptop.fire("food-form", "submit");
+  await laptop.settle();
+}
+
+test("retrying on a device that has not seen the numbers typed elsewhere does not undo them", async () => {
+  const server = serverWith();
+  const good = server.ai;
+  server.ai = () => ({ data: null, error: { context: { status: 502 } } });
+  const phone = await bootApp({ server });
+  phone.addFood("Tofu");
+  await phone.settle();
+  await typeElsewhere(server, "Tofu");
+  server.ai = good;
+  phone.run(`retryEstimate(${phone.entry("Tofu").id})`);
+  await phone.settle();
+  assert.deepEqual([on(server, "Tofu").macros, on(server, "Tofu").estimate_status], [typedAll, "manual"]);
+  assert.deepEqual([phone.entry("Tofu").macros, phone.entry("Tofu").estimateStatus], [typedAll, "manual"], "and the phone shows them");
+});
+
+test("an answer refused by the server does not stay on the device, to be saved with the next edit", async () => {
+  const server = serverWith();
+  const phone = await bootApp({ server });
+  const release = holdAi(server);
+  phone.addFood("Tofu");
+  await phone.settle();
+  await typeElsewhere(server, "Tofu");
+  release();
+  await phone.settle();
+  assert.deepEqual(phone.entry("Tofu").macros, typedAll);
+  phone.editFood("Tofu", { time: "09:30" });
+  await phone.settle();
+  assert.deepEqual([on(server, "Tofu").macros, on(server, "Tofu").time], [typedAll, "09:30"]);
+});
+
+test("what the user changes while the server's row is fetched stands", async () => {
+  const server = serverWith();
+  const phone = await bootApp({ server });
+  const release = holdAi(server);
+  phone.addFood("Tofu");
+  await phone.settle();
+  await typeElsewhere(server, "Tofu");
+  server.afterSelect = async () => { server.afterSelect = null; phone.editFood("Tofu", { qty: 9 }); };
+  release();
+  await phone.settle();
+  assert.deepEqual([phone.entry("Tofu").qty, on(server, "Tofu").qty], [9, 9]);
+  assert.deepEqual(on(server, "Tofu").macros, phone.entry("Tofu").macros);
+});
+
+test("an answer for an entry deleted elsewhere leaves nothing to do", async () => {
+  const server = serverWith();
+  const phone = await bootApp({ server });
+  const release = holdAi(server);
+  phone.addFood("Tofu");
+  await phone.settle();
+  const laptop = await bootApp({ server, device: createDevice() });
+  laptop.deleteFood("Tofu");
+  await laptop.settle();
+  release();
+  await phone.settle();
+  assert.deepEqual([server.foods(), phone.run("outbox.count()"), phone.errors], [[], 0, []]);
+});
+
+test("retrying offline does not save anything over the server's row either", async () => {
+  const server = serverWith();
+  const device = createDevice();
+  server.ai = () => ({ data: null, error: { context: { status: 502 } } });
+  const phone = await bootApp({ server, device });
+  phone.addFood("Tofu");
+  await phone.settle();
+  await typeElsewhere(server, "Tofu");
+  device.online = false;
+  phone.run(`retryEstimate(${phone.entry("Tofu").id})`);
+  await phone.settle();
+  device.online = true;
+  await phone.windowEvent("online");
+  await phone.runTimers();
+  assert.deepEqual([on(server, "Tofu").macros, phone.entry("Tofu").macros, phone.run("outbox.count()")], [typedAll, typedAll, 0]);
+});
+
 test("an estimate that finds its numbers already there asks nobody", async () => {
   const server = serverWith(row(1, "Sardines", { estimate_status: "pending" }));
   const device = createDevice();

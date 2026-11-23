@@ -214,7 +214,7 @@ const outbox = Sync.createOutbox({
     if (kind === "delete") return asAccount(session, sb.from(table).delete().in(keyColumn, items));
     if (kind === "update") {
       const [{ key, row, match }] = items;
-      let query = sb.from(table).update(row).eq(keyColumn, key);
+      let query = sb.from(table).update(row, { count: "exact" }).eq(keyColumn, key);
       for (const [column, value] of Object.entries(match)) {
         query = query.eq(column, value && typeof value === "object" ? JSON.stringify(value) : value);
       }
@@ -222,6 +222,7 @@ const outbox = Sync.createOutbox({
     }
     return asAccount(session, sb.from(table).upsert(items, { onConflict, ignoreDuplicates: kind === "ensure" }));
   },
+  missed: takeOver,
   lock: (uid, fn) => (navigator.locks ? navigator.locks.request(`nt-sync-${uid}`, fn) : fn()),
   schedule: (fn, ms) => setTimeout(fn, ms),
   cancel: (handle) => clearTimeout(handle),
@@ -242,18 +243,38 @@ function queueDelete(spec, key) {
   outbox.flush();
 }
 
-// The AI's answer to each entry (or that there is none): not the user's change, so it
-// only fills in a row that is still waiting, for this food and amount, with the numbers
-// it had when the AI was asked. It must not bring back an entry deleted on another
-// device, undo an edit made there, or replace a number someone typed meanwhile.
-function saveEstimates(entries, answered) {
+// The AI's answer to each entry (or that there is none), or that it is to be asked once
+// more: not the user's change, so it only changes a row that is still waiting (or
+// failed), for this food and amount, with the numbers it had when the AI was asked. It
+// must not bring back an entry deleted on another device, undo an edit made there, or
+// replace a number someone typed meanwhile.
+function saveEstimates(entries, answered, was = "pending") {
   for (const { entry, asked } of answered) {
     const { macros, estimate_status, nutrition, cal_low, cal_high, pro_low, pro_high } = foodJsToRow(entry);
     outbox.update(FOOD_SYNC.table, FOOD_SYNC.keyOf(entry),
-      { macros, estimate_status, nutrition, cal_low, cal_high, pro_low, pro_high }, { ...asked, estimate_status: "pending" });
+      { macros, estimate_status, nutrition, cal_low, cal_high, pro_low, pro_high }, { ...asked, estimate_status: was });
     FOOD_SYNC.known.set(FOOD_SYNC.keyOf(entry), FOOD_SYNC.signature(entry));
   }
   saveFoodEntries(entries);
+}
+
+// Such a change found the row no longer as this device has it. Take over the server's,
+// or the next edit here would put the old one over it - unless the entry has been
+// changed here since. An entry that is gone there stays here until the next start.
+async function takeOver(uid, table, key) {
+  const known = FOOD_SYNC.known.get(key);
+  const session = await sessionFor(uid);
+  if (!session) return false;
+  const { data, error, status } = await asAccount(session, sb.from(table).select("*").eq("id", key).maybeSingle());
+  if (error) return Sync.isRefusal(status);
+  const entries = loadFoodEntries(), i = entries.findIndex((e) => FOOD_SYNC.keyOf(e) === key);
+  if (data && i !== -1 && currentUid() === uid && FOOD_SYNC.known.get(key) === known) {
+    entries[i] = foodRowToJs(data);
+    FOOD_SYNC.known.set(key, FOOD_SYNC.signature(entries[i]));
+    saveFoodEntries(entries);
+    renderFoodTable(); renderCalorieTracker(); renderNutrition();
+  }
+  return true;
 }
 // What an estimate is for. An entry's macros are replaced, never changed in place.
 const askedOf = ({ food, qty, unit, macros }) => ({ food, qty, unit, macros: macros || {} });
@@ -261,7 +282,8 @@ const askedAgain = (entry) => !!(entry.nutrition && entry.nutrition.refresh);
 const stillAsked = (entry, asked, again) => entry.estimateStatus === "pending" && Sync.matches(askedOf(entry), asked) && askedAgain(entry) === again;
 function applyEstimate(entry, op) {
   const row = foodJsToRow(entry);
-  return Sync.matches(row, op.match) ? foodRowToJs({ ...row, ...op.row }) : entry;
+  const next = Sync.matches(row, op.match) ? foodRowToJs({ ...row, ...op.row }) : entry;
+  return op.then ? applyEstimate(next, op.then) : next;
 }
 
 // What was just loaded is saved (or already in the outbox): not a change.
@@ -560,7 +582,12 @@ function statusBadge(entry) {
 window.retryEstimate = function (id) {
   const entries = loadFoodEntries();
   const e = entries.find((x) => x.id === id);
-  if (e) { e.estimateStatus = "pending"; saveFoodEntries(entries); renderFoodTable(); renderCalorieTracker(); enqueueEstimate(id); }
+  if (!e) return;
+  const was = e.estimateStatus;
+  e.estimateStatus = "pending";
+  saveEstimates(entries, [{ entry: e, asked: askedOf(e) }], was);
+  renderFoodTable(); renderCalorieTracker();
+  enqueueEstimate(id);
 };
 
 // ---- Calorie Tracker Table ----

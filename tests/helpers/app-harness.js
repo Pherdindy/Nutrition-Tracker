@@ -127,8 +127,9 @@ function createFakeServer({ food = [], days = [], profile = null, readCap = READ
     else if (q.op === "insert") { db[q.table].push({ user_id: uid, ...clone(q.payload) }); result = { data: null, error: null, status: 201, count: null }; }
     else if (q.op === "update") {
       const hit = filterFn(q.filters);
-      db[q.table].filter((r) => mine(r) && hit(r)).forEach((r) => Object.assign(r, clone(q.payload)));
-      result = { data: null, error: null, status: 204, count: null };
+      const hits = db[q.table].filter((r) => mine(r) && hit(r));
+      hits.forEach((r) => Object.assign(r, clone(q.payload)));
+      result = { data: null, error: null, status: 204, count: q.options.count === "exact" ? hits.length : null };
     } else if (q.op === "delete") {
       const hit = filterFn(q.filters);
       db[q.table] = db[q.table].filter((r) => !(mine(r) && hit(r)));
@@ -176,7 +177,7 @@ function createFakeServer({ food = [], days = [], profile = null, readCap = READ
         select(_cols, options) { q.options = options || {}; return b; },
         insert(row) { q.op = "insert"; q.payload = row; return b; },
         upsert(rows, options) { q.op = "upsert"; q.payload = rows; q.options = options || {}; return b; },
-        update(row) { q.op = "update"; q.payload = row; return b; },
+        update(row, options) { q.op = "update"; q.payload = row; q.options = options || {}; return b; },
         delete() { q.op = "delete"; return b; },
         eq(col, val) { q.filters.push(["eq", col, val]); return b; },
         gte(col, val) { q.filters.push(["gte", col, val]); return b; },

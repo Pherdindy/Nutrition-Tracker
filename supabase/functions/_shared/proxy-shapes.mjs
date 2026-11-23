@@ -56,6 +56,11 @@ export function knownTotals(known) {
     .join(", ");
 }
 
+// What a client knows the whole quantity weighs, for the prompt.
+export function weightNote(grams) {
+  return Number.isFinite(grams) && grams > 0 ? ` (weighs ${grams} g in total)` : "";
+}
+
 // Convert a merged/parsed estimate (flat macros) into the nested
 // { id: { low, high } } shape the client stores (Macros.parseMacros shape).
 export function toNestedMacros(est) {

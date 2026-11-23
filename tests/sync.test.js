@@ -134,13 +134,14 @@ test("overlay converts stored rows and tolerates no ops", () => {
 
 // A fake connection: answers every send with r.answer (default: accepted).
 function rig({ uid = "u1", store = {} } = {}) {
-  const r = { uid, store, sent: [], sentAs: [], stored: [], timers: [], logged: [], answer: () => ({ error: null, status: 201 }) };
+  const r = { uid, store, sent: [], sentAs: [], stored: [], timers: [], logged: [], misses: [], answer: () => ({ error: null, status: 201 }), dealWith: async () => true };
   r.box = Sync.createOutbox({
     owner: () => r.uid,
     list: (id) => JSON.parse(JSON.stringify(r.store[id] || {})),
     set: (id, table, key, op) => { ((r.store[id] ||= {})[table] ||= {})[key] = JSON.parse(JSON.stringify(op)); r.stored.push(["set", table, key]); },
     remove: (id, table, key) => { delete r.store[id][table][key]; r.stored.push(["remove", table, key]); },
     send: async (id, table, kind, items) => { r.sent.push([table, kind, items]); r.sentAs.push(id); return r.answer(table, kind, items); },
+    missed: (...args) => { r.misses.push(args); return r.dealWith(); },
     lock: (_uid, fn) => fn(),
     schedule: (fn, ms) => { r.timers.push({ fn, ms }); return r.timers.length - 1; },
     cancel: (i) => { r.timers[i] = null; },
@@ -334,6 +335,37 @@ test("an update is sent on its own, with the condition it depends on", async () 
   assert.equal(r.box.count(), 0);
 });
 
+test("an update that finds no such row is reported, and then done with", async () => {
+  const r = rig();
+  r.answer = (_table, kind) => ({ error: null, status: 204, count: kind === "update" ? 0 : null });
+  r.box.put("food", "1", { id: 1 });
+  r.box.update("food", "2", { kcal: 5 }, WAITING);
+  await r.box.flush();
+  assert.deepEqual([r.misses, r.box.count()], [[["u1", "food", "2"]], 0]);
+});
+
+test("if that cannot be dealt with now, the update stays for later", async () => {
+  const r = rig();
+  r.answer = () => ({ error: null, status: 204, count: 0 });
+  r.dealWith = async () => false;
+  r.box.update("food", "2", { kcal: 5 }, WAITING);
+  await r.box.flush();
+  assert.deepEqual([r.box.count(), r.pendingTimers().length], [1, 1]);
+  r.dealWith = async () => true;
+  await r.box.flush();
+  assert.deepEqual([r.misses.length, r.box.count()], [2, 0]);
+});
+
+test("an update that found its row is not reported, nor one whose count is unknown", async () => {
+  for (const count of [1, null, undefined]) {
+    const r = rig();
+    r.answer = () => ({ error: null, status: 204, count });
+    r.box.update("food", "2", { kcal: 5 }, WAITING);
+    await r.box.flush();
+    assert.deepEqual([r.misses, r.box.count()], [[], 0], String(count));
+  }
+});
+
 test("an update joins the unsent row it belongs to", async () => {
   const r = rig();
   r.box.put("food", "1", { id: 1, food: "Coffee", status: "pending" });
@@ -372,6 +404,56 @@ test("an update is dropped if the row has an unsent delete", async () => {
   r.box.update("food", "1", { status: "error" }, WAITING);
   await r.box.flush();
   assert.deepEqual(r.sent, [["food", "delete", ["1"]]]);
+});
+
+const FAILED = { food: "Coffee", status: "error" };
+const sentUpdates = (r) => r.sent.map(([, kind, items]) => [kind, items[0].row, items[0].match]);
+
+test("an update for what an unsent one leaves is sent after it", async () => {
+  const r = rig();
+  r.box.update("food", "1", { status: "error" }, WAITING);
+  r.box.update("food", "1", { status: "pending" }, FAILED);
+  r.box.update("food", "1", { status: "done", kcal: 5 }, WAITING); // after that one: they go together
+  await r.box.flush();
+  assert.deepEqual(sentUpdates(r), [["update", { status: "error" }, WAITING], ["update", { status: "done", kcal: 5 }, FAILED]]);
+  assert.equal(r.box.count(), 0);
+});
+
+test("also if the first one is on its way", async () => {
+  const r = rig();
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  r.answer = async () => { await gate; return { error: null, status: 204, count: 1 }; };
+  r.box.update("food", "1", { status: "pending" }, FAILED);
+  const done = r.box.flush();
+  await new Promise(setImmediate); // in flight
+  r.box.update("food", "1", { status: "done" }, WAITING);
+  release();
+  await done;
+  assert.deepEqual(sentUpdates(r), [["update", { status: "pending" }, FAILED], ["update", { status: "done" }, WAITING]]);
+  assert.equal(r.box.count(), 0);
+});
+
+test("also after a restart, and if the first one finds nothing any more", async () => {
+  const first = rig();
+  first.answer = OFFLINE;
+  first.box.update("food", "1", { status: "pending" }, FAILED);
+  first.box.update("food", "1", { status: "done" }, WAITING);
+  await first.box.flush();
+  const second = rig({ store: first.store });
+  second.answer = (_t, _k, [{ match }]) => ({ error: null, status: 204, count: match.status === "error" ? 0 : 1 });
+  await second.box.flush();
+  assert.deepEqual(sentUpdates(second), [["update", { status: "pending" }, FAILED], ["update", { status: "done" }, WAITING]]);
+  assert.deepEqual([second.misses.length, second.box.count()], [1, 0]);
+});
+
+test("the user's own change replaces all of them", async () => {
+  const r = rig();
+  r.box.update("food", "1", { status: "pending" }, FAILED);
+  r.box.update("food", "1", { status: "done" }, WAITING);
+  r.box.put("food", "1", { id: 1, status: "done", time: "19:30" });
+  await r.box.flush();
+  assert.deepEqual(r.sent, [["food", "upsert", [{ id: 1, status: "done", time: "19:30" }]]]);
 });
 
 test("a newer update replaces an unsent one; the user's own change replaces both", async () => {
