@@ -392,6 +392,22 @@ test("what another tab changes while this one is loading is not missed", async (
   }
 });
 
+test("if what another tab sent cannot be looked up now, it is later", async () => {
+  const server = serverWith(row(1, "Tofu"));
+  const device = createDevice();
+  const a = await bootApp({ server, device }), b = await bootApp({ server, device });
+  const key = `${a.run("outboxPrefix(currentUid())")}food_entries:1`;
+  a.editFood("Tofu", { time: "19:30" });
+  await a.settle();
+  server.unreadable = true;
+  await b.windowEvent("storage", { key, newValue: null });
+  await b.runTimers();
+  assert.equal(b.entry("Tofu").time, "08:00");
+  server.unreadable = false;
+  await b.runTimers();
+  assert.deepEqual([b.entry("Tofu").time, b.timers().length], ["19:30", 0]);
+});
+
 test("a tab that sends another's answer takes it over, whatever its own was", async () => {
   // Both asked; this one's failed, the other's arrived later and replaced it in the outbox.
   const server = serverWith(row(1, "Tofu", { estimate_status: "error", macros: {} }));

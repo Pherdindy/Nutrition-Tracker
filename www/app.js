@@ -329,7 +329,8 @@ function follow(uid, row) { // "food_entries:1"
   const [table, id] = row.split(":"), spec = ESTIMATED[table];
   const unsent = outbox.pending(table)[id];
   if (!unsent) {
-    takeOver(uid, table, id).catch((err) => console.error("[Sync]", err));
+    const later = () => { if (currentUid() === uid) follow(uid, row); };
+    takeOver(uid, table, id).then((done) => { if (!done) setTimeout(later, 15000); }, (err) => console.error("[Sync]", err));
     return;
   }
   const entries = withUnsent(spec, spec.load(), { [id]: unsent });
