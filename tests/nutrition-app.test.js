@@ -401,19 +401,34 @@ test("a tab that sends another's answer takes it over, whatever its own was", as
   assert.deepEqual([on(server, "Tofu").estimate_status, b.entry("Tofu").estimateStatus, b.entry("Tofu").macros], ["done", "done", eight(200)]);
 });
 
-test("a tab that had sent another's change before hearing of it looks it up", async () => {
-  const server = serverWith(row(1, "Tofu"));
+test("a tab that sends another's change knows it from then on, even if it has not heard of it", async () => {
+  const server = serverWith(row(1, "Tofu"), row(2, "Rice"), row(3, "Eggs"));
   const device = createDevice();
   const a = await bootApp({ server, device }), b = await bootApp({ server, device });
-  const key = `${a.run("outboxPrefix(currentUid())")}food_entries:1`;
   device.online = false;
   a.editFood("Tofu", { time: "19:30" });
-  const newValue = device.storage.getItem(key);
+  a.deleteFood("Rice");
+  a.editDay("2026-11-23", { weight: 150 });
+  await a.settle(); // could not send it
   device.online = true;
-  await b.windowEvent("online"); // sends it
-  assert.deepEqual([on(server, "Tofu").time, b.entry("Tofu").time], ["19:30", "08:00"]);
-  await b.windowEvent("storage", { key, newValue }); // and only then hears of it
-  assert.equal(b.entry("Tofu").time, "19:30");
+  let reads = 0;
+  server.afterSelect = async () => { reads++; };
+  await b.windowEvent("online");
+  assert.deepEqual([server.foods(), on(server, "Tofu").time], [["Eggs", "Tofu"], "19:30"]);
+  assert.deepEqual([b.foods(), b.entry("Tofu").time, reads], [["Eggs", "Tofu"], "19:30", 2]);
+});
+
+test("what a tab sends of its own is not looked up", async () => {
+  const server = serverWith(row(1, "Tofu"), row(2, "Rice"));
+  const app = await bootApp({ server });
+  let reads = 0;
+  server.afterSelect = async () => { reads++; };
+  app.editFood("Tofu", { time: "19:30" });
+  app.deleteFood("Rice");
+  app.addFood("Tofu", { qty: 8, unit: "pcs" });
+  app.editDay("2026-11-23", { weight: 150 });
+  await app.settle();
+  assert.deepEqual([server.foods(), app.run("outbox.count()"), reads], [["Tofu", "Tofu"], 0, 0]);
 });
 
 test("a tab that hears of another's change keeps what its user does while it looks", async () => {

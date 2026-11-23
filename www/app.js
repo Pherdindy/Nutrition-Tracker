@@ -224,8 +224,9 @@ const outbox = Sync.createOutbox({
   },
   missed: takeOver,
   agrees: (table, key, row) => {
+    if (table !== FOOD_SYNC.table) return true;
     const entry = loadFoodEntries().find((e) => FOOD_SYNC.keyOf(e) === key);
-    return !entry || Sync.matches(foodJsToRow(entry), row);
+    return !entry || (row !== null && Sync.matches(foodJsToRow(entry), row));
   },
   lock: (uid, fn) => (navigator.locks ? navigator.locks.request(`nt-sync-${uid}`, fn) : fn()),
   schedule: (fn, ms) => setTimeout(fn, ms),

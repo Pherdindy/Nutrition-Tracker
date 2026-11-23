@@ -377,6 +377,19 @@ test("an update that leaves something else than this tab has is reported too", a
   assert.deepEqual([asked, r.misses, r.box.count()], [[["food", "2", { kcal: 5 }]], [["u1", "food", "2"]], 0]);
 });
 
+test("so are rows and deletes sent for another tab; they are done with in any case", async () => {
+  for (const dealtWith of [true, false]) {
+    const r = rig();
+    r.dealWith = async () => dealtWith;
+    r.agrees = (_table, key) => key === "1";
+    r.box.put("food", "1", { id: 1 });
+    r.box.put("food", "2", { id: 2 });
+    r.box.put("food", "3", null);
+    await r.box.flush();
+    assert.deepEqual([r.misses.map(([, , key]) => key).sort(), r.box.count(), r.pendingTimers().length], [["2", "3"], 0, 0]);
+  }
+});
+
 test("an update joins the unsent row it belongs to", async () => {
   const r = rig();
   r.box.put("food", "1", { id: 1, food: "Coffee", status: "pending" });

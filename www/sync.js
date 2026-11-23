@@ -107,12 +107,12 @@
   //                               single { key, row, match }, and count is how many
   //                               rows it changed. Must be sent as that account or
   //                               not at all
-  //   missed(uid, table, key)     an update changed no row (or that is not known), or left
-  //                               something else than this tab has: the row may not be
+  //   missed(uid, table, key)     an update changed no row (or that is not known), or what
+  //                               was sent is not what this tab has: the row may not be
   //                               what is thought here. -> false if that cannot be dealt
-  //                               with now; it is then sent again later
-  //   agrees(table, key, row)     this tab's entry has these fields, or there is none (the
-  //                               update may be one that another tab stored)
+  //                               with now; an update is then sent again later
+  //   agrees(table, key, row)     this tab has what was sent: these fields, or no entry if
+  //                               row is null (another tab may have stored it)
   //   lock(uid, fn)               runs fn while no other tab is sending
   //   schedule(fn, ms), cancel(handle), log(...)
   function createOutbox({ owner, list, set, remove, send, missed, agrees, lock, schedule, cancel, log }) {
@@ -175,10 +175,13 @@
       const res = await send(uid, table, kind, entries.map(([key, op]) =>
         (kind === "delete" ? key : kind === "update" ? { key, row: op.row, match: op.match } : op.row)));
       if (!res.error) {
-        const [key, op] = entries[0];
-        const expected = kind !== "update" || (res.count > 0 && agrees(table, key, op.row));
-        if (!expected && !(await missed(uid, table, key))) return false;
-        settle(uid, table, entries);
+        const made = kind !== "update"; // an update may have found nothing
+        if (made) settle(uid, table, entries);
+        for (const [key, op] of entries) {
+          if ((made || res.count > 0) && agrees(table, key, op.row)) continue;
+          if (!(await missed(uid, table, key)) && !made) return false;
+        }
+        if (!made) settle(uid, table, entries);
         return true;
       }
       if (!isRefusal(res.status)) return false;
