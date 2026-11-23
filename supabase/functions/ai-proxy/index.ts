@@ -115,7 +115,7 @@ Instructions:
 2. Reference the closest entries of the 2024 Compendium of Physical Activities
 3. Zone 2 means easy, steady aerobic effort (about 60-70% of maximum heart rate)
 4. Use a tight range where the intensity is clear and a wider one where it is not, but stay evidence-based
-5. ${given ? "The duration is a fact: repeat it as minutes" : "Judge the duration in minutes from the description, for example from distance or steps"}`;
+5. ${given ? "The duration is a fact: repeat it as minutes" : "Judge the duration in minutes from the description, for example from distance or steps. If nothing indicates it, assume a typical session of that activity; never leave it out"}`;
 }
 
 function buildWorkoutPrompt(payload: any) {
