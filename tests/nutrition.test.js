@@ -231,11 +231,19 @@ test("a new name, or an amount that does not convert, asks again and keeps the o
   }
 });
 
-test("a new name or unit forgets the weight of what it was before", () => {
+test("a new name or unit forgets the weight of what it was before, and what typed numbers were per", () => {
   for (const after of [{ food: "Tuna" }, { qty: 2, unit: "cups" }]) {
-    const got = edit(entry({ nutrition: { at: 5, grams: 90, gramsMine: true } }), after);
-    assert.deepEqual(got.nutrition, { at: 5, refresh: true });
+    const e = entry({ macros: full(100, { protein: mine(9.429) }), nutrition: { at: 5, grams: 48, gramsMine: true, basis: amount(56, "g") } });
+    const got = edit(e, after);
+    assert.deepEqual([got.macros.protein, got.nutrition], [mine(9.429), { at: 5, refresh: true }], "typed numbers stay as totals");
   }
+});
+
+test("a typed number carried over to a remembered food is a total there", () => {
+  const tuna = entry({ id: 5, food: "Tuna", macros: full(300, { fat: mine(3) }), nutrition: { at: 700, grams: 60, basis: amount(56, "g") } });
+  const rename = (macros) => N.resolve({ before: entry({ macros }), after: { food: "Tuna", qty: 4, unit: "pcs" }, entries: [tuna], tracked: TRACKED, now: NOW });
+  assert.equal(rename(full(100, { protein: mine(22) })).nutrition.basis, undefined);
+  assert.deepEqual(rename(full(100)).nutrition.basis, amount(56, "g"));
 });
 
 test("a new name that is remembered takes those numbers, but never over a typed one", () => {
@@ -286,6 +294,15 @@ test("correcting the weight rescales the AI's numbers, not the typed ones", () =
   const got = edit(e, {}, { grams: 96 });
   assert.deepEqual([got.macros.calories.low, got.macros.protein, got.estimateStatus], [200, mine(22), "done"]);
   assert.deepEqual(got.nutrition, { at: NOW, grams: 96, gramsMine: true });
+});
+
+test("numbers typed per weight rest on the weight: correcting it moves them too", () => {
+  const e = entry({ macros: full(100, { protein: mine(9.429) }), nutrition: { at: 5, grams: 48, basis: amount(56, "g") } }); // 11 g per 56 g
+  const got = edit(e, {}, { grams: 96 });
+  assert.deepEqual([got.macros.protein, got.macros.calories.low], [mine(18.858), 200]);
+  assert.ok(N.explain({ ...e, ...got }, "2026-11-23").lines.includes("Protein 11 g per 56 g is your number"));
+  const typedPerPiece = edit(entry({ macros: full(100, { protein: mine(9) }), nutrition: { at: 5, grams: 48, basis: amount(2, "pcs") } }), {}, { grams: 96 });
+  assert.deepEqual(typedPerPiece.macros.protein, mine(9));
 });
 
 test("weight, amount and a typed number in one save", () => {
@@ -361,6 +378,16 @@ test("a partial answer keeps what it does not mention, and is an error if someth
 test("the user's own weight stands: the answer is brought to it", () => {
   const got = apply(entry({ nutrition: { refresh: true, grams: 96, gramsMine: true } }), answer(100));
   assert.deepEqual([got.macros.calories.low, got.nutrition.grams, got.nutrition.gramsMine], [200, 96, true]);
+});
+
+test("numbers typed per weight keep the weight they rest on when the AI answers again", () => {
+  const perWeight = { at: 5, grams: 48, basis: amount(56, "g"), refresh: true };
+  const heavier = answer(100, { basis: [{ ref: "r", grams: 60 }] });
+  const got = apply(entry({ macros: full(100, { protein: mine(9.429) }), nutrition: perWeight }), heavier);
+  assert.deepEqual([got.macros.protein, got.macros.calories.low, got.nutrition.grams], [mine(9.429), 80, 48]);
+  assert.ok(N.explain({ ...entry(), ...got }, "2026-11-23").lines.includes("Protein 11 g per 56 g is your number"));
+  const noneTyped = apply(entry({ nutrition: perWeight }), heavier);
+  assert.deepEqual([noneTyped.macros.calories.low, noneTyped.nutrition.grams], [100, 60], "nothing rests on it any more");
 });
 
 test("an entry in grams stores no assumed weight", () => {
@@ -522,6 +549,12 @@ test("correcting the weight shows its effect at once, on the AI's numbers only",
   assert.deepEqual([f.text("calories"), f.result().grams], ["206", null], "the new amount weighs that anyway");
   f.rebase({ qty: 8, unit: "pcs", macros: {}, nutrition: undefined });
   assert.equal(f.result().grams, null, "there is no weight to correct");
+});
+
+test("correcting the weight shows its effect on numbers typed per weight too", () => {
+  const f = form({ nutrition: { grams: 48, basis: amount(56, "g") } });
+  f.setWeight("96");
+  assert.deepEqual([f.text("calories"), f.text("protein")], ["206", "44"]);
 });
 
 test("numbers that arrive while the form is open appear, without touching what was typed", () => {

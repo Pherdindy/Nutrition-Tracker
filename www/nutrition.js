@@ -116,6 +116,12 @@
     return k === null ? { kind: "lookup" } : { kind: "scale", ratio: k };
   }
 
+  // The user's numbers were typed per weight for something that is not measured by
+  // weight, so they rest on what it weighs.
+  function restOnWeight({ macros, nutrition: n, unit: u }) {
+    return mineIds(macros).length > 0 && !!n && !!n.basis && isWeight(n.basis.unit) && !isWeight(u);
+  }
+
   // The numbers an entry is saved with.
   //   before   the entry as it was, or null when adding
   //   after    { food, qty, unit }
@@ -144,12 +150,14 @@
         delete n.gramsMine;
         if (theirIds(macros).length) n.refresh = true; // the old numbers stay until the answer lands
       }
+      if (Object.keys(own).length) delete n.basis; // they are totals now
       newStatus = true;
     }
 
     const weighed = grams > 0 && n.grams > 0 && grams !== n.grams;
     if (weighed) {
-      macros = { ...macros, ...scale(pick(macros, theirIds(macros)), grams / n.grams) };
+      const moved = restOnWeight({ macros, nutrition: n, unit: after.unit }) ? macros : pick(macros, theirIds(macros));
+      macros = { ...macros, ...scale(moved, grams / n.grams) };
       n.grams = grams;
       n.gramsMine = true;
     }
@@ -205,8 +213,8 @@
     const n = { ...(entry.nutrition || {}) };
     const basis = (answer.basis || []).slice(0, 2);
     const assumed = assumedGrams(basis);
-    const ownWeight = n.gramsMine && n.grams > 0;
-    const k = ownWeight && assumed ? n.grams / assumed : 1; // the answer is for the weight it assumed
+    const weightStands = n.grams > 0 && (n.gramsMine || restOnWeight(entry));
+    const k = weightStands && assumed ? n.grams / assumed : 1; // the answer is for the weight it assumed
 
     const macros = { ...before };
     for (const id of IDS) {
@@ -217,13 +225,13 @@
 
     if (n.refresh) {
       for (const field of ["refresh", "from", "why", "how", "asked", "photo"]) delete n[field];
-      if (!ownWeight) delete n.grams;
+      if (!weightStands) delete n.grams;
     }
     if (basis.length && !n.why) {
       n.why = basis;
       n.how = answer.how || (basis.length > 1 ? "average" : "one");
       n.asked = { qty: entry.qty, unit: entry.unit };
-      if (!ownWeight && !(n.grams > 0) && assumed && !isWeight(entry.unit)) n.grams = assumed;
+      if (!(n.grams > 0) && assumed && !isWeight(entry.unit)) n.grams = assumed;
     }
     n.at = now;
     const status = statusFor(macros, tracked, null);
@@ -243,7 +251,7 @@
   // otherwise (see resolve). All are shown for `basis`, a label's 56 g, or for the
   // entry's own amount until the user sets one.
   function createForm() {
-    let saved = {}, savedGrams = null, amount = {};
+    let saved = {}, savedGrams = null, amount = {}, allMove = false;
     let basis = null;    // { qty, unit }, once set
     let badBasis = null; // what its field says while that is not an amount
     let weightText = "";
@@ -255,7 +263,7 @@
 
     function savedText(id) {
       if (!has(saved, id)) return "";
-      const byWeight = savedGrams && weight() && !isMine(saved, id) ? weight() / savedGrams : 1;
+      const byWeight = savedGrams && weight() && (allMove || !isMine(saved, id)) ? weight() / savedGrams : 1;
       return show(((saved[id].low + saved[id].high) / 2) * byWeight * (times() || 1));
     }
     // Typing exactly what is saved changes nothing.
@@ -267,6 +275,7 @@
         saved = entry.macros || {};
         savedGrams = (entry.nutrition && entry.nutrition.grams) || null;
         amount = { qty: entry.qty, unit: entry.unit };
+        allMove = restOnWeight(entry); // with the weight
       },
       text: (id) => (typed.has(id) ? typed.get(id) : savedText(id)),
       isMine: (id) => (changed().some(([other]) => other === id) ? parseNumber(typed.get(id)) !== null : isMine(saved, id)),

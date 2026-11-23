@@ -490,11 +490,19 @@ test("a new name, or an amount that does not convert, asks again and keeps the o
   }
 });
 
-test("a new name or unit forgets the weight of what it was before", () => {
+test("a new name or unit forgets the weight of what it was before, and what typed numbers were per", () => {
   for (const after of [{ food: "Tuna" }, { qty: 2, unit: "cups" }]) {
-    const got = edit(entry({ nutrition: { at: 5, grams: 90, gramsMine: true } }), after);
-    assert.deepEqual(got.nutrition, { at: 5, refresh: true });
+    const e = entry({ macros: full(100, { protein: mine(9.429) }), nutrition: { at: 5, grams: 48, gramsMine: true, basis: amount(56, "g") } });
+    const got = edit(e, after);
+    assert.deepEqual([got.macros.protein, got.nutrition], [mine(9.429), { at: 5, refresh: true }], "typed numbers stay as totals");
   }
+});
+
+test("a typed number carried over to a remembered food is a total there", () => {
+  const tuna = entry({ id: 5, food: "Tuna", macros: full(300, { fat: mine(3) }), nutrition: { at: 700, grams: 60, basis: amount(56, "g") } });
+  const rename = (macros) => N.resolve({ before: entry({ macros }), after: { food: "Tuna", qty: 4, unit: "pcs" }, entries: [tuna], tracked: TRACKED, now: NOW });
+  assert.equal(rename(full(100, { protein: mine(22) })).nutrition.basis, undefined);
+  assert.deepEqual(rename(full(100)).nutrition.basis, amount(56, "g"));
 });
 
 test("a new name that is remembered takes those numbers, but never over a typed one", () => {
@@ -545,6 +553,15 @@ test("correcting the weight rescales the AI's numbers, not the typed ones", () =
   const got = edit(e, {}, { grams: 96 });
   assert.deepEqual([got.macros.calories.low, got.macros.protein, got.estimateStatus], [200, mine(22), "done"]);
   assert.deepEqual(got.nutrition, { at: NOW, grams: 96, gramsMine: true });
+});
+
+test("numbers typed per weight rest on the weight: correcting it moves them too", () => {
+  const e = entry({ macros: full(100, { protein: mine(9.429) }), nutrition: { at: 5, grams: 48, basis: amount(56, "g") } }); // 11 g per 56 g
+  const got = edit(e, {}, { grams: 96 });
+  assert.deepEqual([got.macros.protein, got.macros.calories.low], [mine(18.858), 200]);
+  assert.ok(N.explain({ ...e, ...got }, "2026-11-23").lines.includes("Protein 11 g per 56 g is your number"));
+  const typedPerPiece = edit(entry({ macros: full(100, { protein: mine(9) }), nutrition: { at: 5, grams: 48, basis: amount(2, "pcs") } }), {}, { grams: 96 });
+  assert.deepEqual(typedPerPiece.macros.protein, mine(9));
 });
 
 test("weight, amount and a typed number in one save", () => {
@@ -620,6 +637,16 @@ test("a partial answer keeps what it does not mention, and is an error if someth
 test("the user's own weight stands: the answer is brought to it", () => {
   const got = apply(entry({ nutrition: { refresh: true, grams: 96, gramsMine: true } }), answer(100));
   assert.deepEqual([got.macros.calories.low, got.nutrition.grams, got.nutrition.gramsMine], [200, 96, true]);
+});
+
+test("numbers typed per weight keep the weight they rest on when the AI answers again", () => {
+  const perWeight = { at: 5, grams: 48, basis: amount(56, "g"), refresh: true };
+  const heavier = answer(100, { basis: [{ ref: "r", grams: 60 }] });
+  const got = apply(entry({ macros: full(100, { protein: mine(9.429) }), nutrition: perWeight }), heavier);
+  assert.deepEqual([got.macros.protein, got.macros.calories.low, got.nutrition.grams], [mine(9.429), 80, 48]);
+  assert.ok(N.explain({ ...entry(), ...got }, "2026-11-23").lines.includes("Protein 11 g per 56 g is your number"));
+  const noneTyped = apply(entry({ nutrition: perWeight }), heavier);
+  assert.deepEqual([noneTyped.macros.calories.low, noneTyped.nutrition.grams], [100, 60], "nothing rests on it any more");
 });
 
 test("an entry in grams stores no assumed weight", () => {
@@ -710,6 +737,12 @@ test("numbers are stored without floating-point noise", () => {
     return k === null ? { kind: "lookup" } : { kind: "scale", ratio: k };
   }
 
+  // The user's numbers were typed per weight for something that is not measured by
+  // weight, so they rest on what it weighs.
+  function restOnWeight({ macros, nutrition: n, unit: u }) {
+    return mineIds(macros).length > 0 && !!n && !!n.basis && isWeight(n.basis.unit) && !isWeight(u);
+  }
+
   // The numbers an entry is saved with.
   //   before   the entry as it was, or null when adding
   //   after    { food, qty, unit }
@@ -738,12 +771,14 @@ test("numbers are stored without floating-point noise", () => {
         delete n.gramsMine;
         if (theirIds(macros).length) n.refresh = true; // the old numbers stay until the answer lands
       }
+      if (Object.keys(own).length) delete n.basis; // they are totals now
       newStatus = true;
     }
 
     const weighed = grams > 0 && n.grams > 0 && grams !== n.grams;
     if (weighed) {
-      macros = { ...macros, ...scale(pick(macros, theirIds(macros)), grams / n.grams) };
+      const moved = restOnWeight({ macros, nutrition: n, unit: after.unit }) ? macros : pick(macros, theirIds(macros));
+      macros = { ...macros, ...scale(moved, grams / n.grams) };
       n.grams = grams;
       n.gramsMine = true;
     }
@@ -799,8 +834,8 @@ test("numbers are stored without floating-point noise", () => {
     const n = { ...(entry.nutrition || {}) };
     const basis = (answer.basis || []).slice(0, 2);
     const assumed = assumedGrams(basis);
-    const ownWeight = n.gramsMine && n.grams > 0;
-    const k = ownWeight && assumed ? n.grams / assumed : 1; // the answer is for the weight it assumed
+    const weightStands = n.grams > 0 && (n.gramsMine || restOnWeight(entry));
+    const k = weightStands && assumed ? n.grams / assumed : 1; // the answer is for the weight it assumed
 
     const macros = { ...before };
     for (const id of IDS) {
@@ -811,13 +846,13 @@ test("numbers are stored without floating-point noise", () => {
 
     if (n.refresh) {
       for (const field of ["refresh", "from", "why", "how", "asked", "photo"]) delete n[field];
-      if (!ownWeight) delete n.grams;
+      if (!weightStands) delete n.grams;
     }
     if (basis.length && !n.why) {
       n.why = basis;
       n.how = answer.how || (basis.length > 1 ? "average" : "one");
       n.asked = { qty: entry.qty, unit: entry.unit };
-      if (!ownWeight && !(n.grams > 0) && assumed && !isWeight(entry.unit)) n.grams = assumed;
+      if (!(n.grams > 0) && assumed && !isWeight(entry.unit)) n.grams = assumed;
     }
     n.at = now;
     const status = statusFor(macros, tracked, null);
@@ -988,6 +1023,12 @@ test("correcting the weight shows its effect at once, on the AI's numbers only",
   assert.equal(f.result().grams, null, "there is no weight to correct");
 });
 
+test("correcting the weight shows its effect on numbers typed per weight too", () => {
+  const f = form({ nutrition: { grams: 48, basis: amount(56, "g") } });
+  f.setWeight("96");
+  assert.deepEqual([f.text("calories"), f.text("protein")], ["206", "44"]);
+});
+
 test("numbers that arrive while the form is open appear, without touching what was typed", () => {
   const f = form({ macros: {}, nutrition: undefined });
   f.type("protein", "22");
@@ -1102,7 +1143,7 @@ test("the tag names the day, and the year if it is another one", () => {
   // otherwise (see resolve). All are shown for `basis`, a label's 56 g, or for the
   // entry's own amount until the user sets one.
   function createForm() {
-    let saved = {}, savedGrams = null, amount = {};
+    let saved = {}, savedGrams = null, amount = {}, allMove = false;
     let basis = null;    // { qty, unit }, once set
     let badBasis = null; // what its field says while that is not an amount
     let weightText = "";
@@ -1114,7 +1155,7 @@ test("the tag names the day, and the year if it is another one", () => {
 
     function savedText(id) {
       if (!has(saved, id)) return "";
-      const byWeight = savedGrams && weight() && !isMine(saved, id) ? weight() / savedGrams : 1;
+      const byWeight = savedGrams && weight() && (allMove || !isMine(saved, id)) ? weight() / savedGrams : 1;
       return show(((saved[id].low + saved[id].high) / 2) * byWeight * (times() || 1));
     }
     // Typing exactly what is saved changes nothing.
@@ -1126,6 +1167,7 @@ test("the tag names the day, and the year if it is another one", () => {
         saved = entry.macros || {};
         savedGrams = (entry.nutrition && entry.nutrition.grams) || null;
         amount = { qty: entry.qty, unit: entry.unit };
+        allMove = restOnWeight(entry); // with the weight
       },
       text: (id) => (typed.has(id) ? typed.get(id) : savedText(id)),
       isMine: (id) => (changed().some(([other]) => other === id) ? parseNumber(typed.get(id)) !== null : isMine(saved, id)),

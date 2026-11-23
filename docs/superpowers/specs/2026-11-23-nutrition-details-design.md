@@ -161,9 +161,12 @@ The Nutrition section is open. On save, in this order:
    stay as they are, as totals. The others come from a remembered entry if there is
    one, else the AI is asked (`refresh`), the old ones staying until it answers.
    Before saving, the form says so: "AI will estimate the other numbers again."
-   The weight is forgotten: it was of what the entry was before.
+   The weight is forgotten: it was of what the entry was before. So is `basis`, if the
+   user had typed a number: it is a total now.
 3. **Weight corrected:** numbers not marked `mine` are multiplied by new ÷ old weight;
-   `grams` is the new one, `gramsMine` is set.
+   `grams` is the new one, `gramsMine` is set. Typed numbers **rest on the weight** when
+   `basis` is a weight and the entry's unit is not (11 g per 56 g, for 4 pcs): then they
+   are multiplied too, and an answer of the AI is brought to the weight they rest on.
 4. **A number typed:** it becomes `mine`. **A number cleared:** it is no longer `mine`
    and is blank; if it is tracked, the AI fills it.
 5. Only the date or time changed: nothing else happens.
@@ -376,4 +379,6 @@ minerals; the finance app.
   that is asked about again stops being the photo's.
 - Autofill only fills in an amount when adding.
 - The amount the numbers are for comes first, as on a label.
+- Numbers typed per weight for something counted move with its weight. Otherwise a
+  corrected weight would have left them wrong, and explained them wrongly.
 - The blank-fields message, and when three of the explanation's lines appear.
