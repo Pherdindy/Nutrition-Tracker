@@ -863,9 +863,14 @@ test("typing, clearing, and putting back what was there", () => {
   f.type("calories", "103");
   f.type("protein", "22");
   assert.deepEqual([f.result().typed, f.result().cleared], [{}, []]);
+});
+
+test("a field that was blank and is blank again takes the number that arrives", () => {
+  const f = form();
   f.type("carbs", "5");
   f.type("carbs", "");
-  assert.deepEqual([f.result().typed, f.result().cleared], [{}, []], "it was blank to begin with");
+  f.rebase({ qty: 4, unit: "pcs", macros: full(100) });
+  assert.deepEqual([f.text("carbs"), f.result().typed, f.result().cleared], ["1.5", {}, []]);
 });
 
 test("saved numbers follow the entry; a typed one stays as typed, for the amount shown", () => {
@@ -878,7 +883,7 @@ test("saved numbers follow the entry; a typed one stays as typed, for the amount
 });
 
 test("a label is typed as printed, before or after saying what it is for", () => {
-  const eaten = { food: "Sardines", qty: 80, unit: "g" };
+  const eaten = { food: "Sardines", qty: 80, unit: "g" }; // 11 g of protein as estimated, 11 g per 56 g on the label
   for (const numbersFirst of [true, false]) {
     const f = inGrams(80, full(160));
     if (numbersFirst) f.type("protein", "11");
@@ -1085,13 +1090,15 @@ test("the tag names the day, and the year if it is another one", () => {
     const weight = () => parseNumber(weightText) || null;
     const grams = () => (savedGrams && weight()) || savedGrams;
     const times = () => (basis ? ratio(amount, basis, grams()) : 1); // null if it does not convert
-    const numbers = () => [...typed].map(([id, text]) => [id, parseNumber(text)]).filter(([, n]) => n !== null);
 
     function savedText(id) {
       if (!has(saved, id)) return "";
       const byWeight = savedGrams && weight() && !isMine(saved, id) ? weight() / savedGrams : 1;
       return show(((saved[id].low + saved[id].high) / 2) * byWeight * (times() || 1));
     }
+    // Typing exactly what is saved changes nothing.
+    const changed = () => [...typed].filter(([id, text]) => text.trim() !== savedText(id));
+    const numbers = () => changed().map(([id, text]) => [id, parseNumber(text)]).filter(([, n]) => n !== null);
 
     return {
       rebase(entry) {
@@ -1100,9 +1107,9 @@ test("the tag names the day, and the year if it is another one", () => {
         amount = { qty: entry.qty, unit: entry.unit };
       },
       text: (id) => (typed.has(id) ? typed.get(id) : savedText(id)),
-      isMine: (id) => (typed.has(id) ? parseNumber(typed.get(id)) !== null : isMine(saved, id)),
+      isMine: (id) => (changed().some(([other]) => other === id) ? parseNumber(typed.get(id)) !== null : isMine(saved, id)),
       type(id, text) {
-        if (text.trim() === savedText(id)) typed.delete(id);
+        if (text.trim() === "" && !has(saved, id)) typed.delete(id); // still blank
         else typed.set(id, text);
       },
 
@@ -1131,7 +1138,7 @@ test("the tag names the day, and the year if it is another one", () => {
 
       errors() {
         const out = {};
-        for (const [id, text] of typed) {
+        for (const [id, text] of changed()) {
           if (text.trim() !== "" && parseNumber(text) === null) out[id] = "Enter a number from 0 to 99,999, like 12.5";
         }
         if (weightText.trim() !== "" && !weight()) out.weight = "Enter the weight in grams, above 0";
@@ -1141,7 +1148,7 @@ test("the tag names the day, and the year if it is another one", () => {
       },
       result: () => ({
         typed: Object.fromEntries(numbers()),
-        cleared: [...typed].filter(([id, text]) => text.trim() === "" && has(saved, id)).map(([id]) => id),
+        cleared: changed().filter(([, text]) => text.trim() === "").map(([id]) => id),
         basis: basis ? { ...basis } : null,
         grams: savedGrams && weight() !== savedGrams ? weight() : null,
       }),
@@ -2166,17 +2173,17 @@ test("closing the form forgets what was typed in it", async () => {
               <button type="button" id="nutrition-ask" class="btn btn-secondary btn-sm hidden">Ask AI again</button>
             </div>
             <p id="nutrition-state" class="nutrition-note hidden" role="status"></p>
-            <div id="nutrition-fields" class="nutrition-fields"></div>
-            <details id="nutrition-more" class="nutrition-more">
-              <summary>More nutrients</summary>
-              <div id="nutrition-more-fields" class="nutrition-fields"></div>
-            </details>
             <div id="nutrition-basis" class="nutrition-basis">
               <label for="nutrition-basis-qty">These numbers are for</label>
               <input type="text" inputmode="decimal" id="nutrition-basis-qty" autocomplete="off" aria-describedby="ne-basis">
               <select id="nutrition-basis-unit" aria-label="Unit these numbers are for"></select>
               <p id="ne-basis" class="field-error hidden" role="alert"></p>
             </div>
+            <div id="nutrition-fields" class="nutrition-fields"></div>
+            <details id="nutrition-more" class="nutrition-more">
+              <summary>More nutrients</summary>
+              <div id="nutrition-more-fields" class="nutrition-fields"></div>
+            </details>
             <details id="nutrition-why" class="nutrition-more hidden">
               <summary>How was this worked out?</summary>
               <div id="nutrition-weight-line" class="nutrition-weight hidden">
@@ -2487,7 +2494,7 @@ function submitFood(again = false) {
 .nutrition-input input { flex: 1 1 0; min-width: 0; }
 .mine-mark { color: var(--primary); font-size: 0.75rem; white-space: nowrap; }
 .field-error { color: var(--red); font-size: 0.8rem; margin: 4px 0 0; }
-.nutrition-basis, .nutrition-weight { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; margin: 12px 0; }
+.nutrition-basis, .nutrition-weight { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; margin: 0 0 12px; }
 .nutrition-basis input, .nutrition-weight input { flex: 0 1 6rem; min-width: 4.5rem; }
 .nutrition-basis select { flex: 0 1 8rem; min-width: 5rem; }
 .nutrition-basis .field-error, .nutrition-weight .field-error { flex-basis: 100%; }

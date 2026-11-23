@@ -265,16 +265,16 @@ Round 1, Round 2 and both size checks use the cut payload. About 1,442 entries f
 
 ```
 Nutrition · from Nov 20                    [Ask AI again]
+  These numbers are for [ 4 ] [ pcs ▾ ]
   Calories (kcal) [ 103 ]   Protein (g) [ 22 ] yours
   Carbs (g)       [   0 ]
   ▸ More nutrients
-  These numbers are for [ 4 ] [ pcs ▾ ]
 ▸ How was this worked out?
 [Cancel]                                   [Save entry]
 ```
 
 - One field per tracked nutrient; the others under **More nutrients**. An AI range is
-  shown as its middle and is kept as a range unless the field is changed.
+  shown as its middle and is kept as a range unless the field differs at saving.
 - **These numbers are for:** follows the entry's own amount until the user changes it.
   - A number typed in this form stays as typed: it is for the amount shown, whatever
     that becomes. So a label can be typed as printed, before or after setting its amount.
@@ -375,4 +375,5 @@ minerals; the finance app.
 - A new food or an amount that does not convert forgets the old weight, and a photo entry
   that is asked about again stops being the photo's.
 - Autofill only fills in an amount when adding.
+- The amount the numbers are for comes first, as on a label.
 - The blank-fields message, and when three of the explanation's lines appear.

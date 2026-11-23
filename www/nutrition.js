@@ -230,8 +230,155 @@
     return { macros, nutrition: n, estimateStatus: status === "pending" ? "error" : status };
   }
 
+  // ---- The form ----------------------------------------------------------------------
+
+  // A typed number, or null. No commas: 1,5 and 1,200 would be guesses.
+  function parseNumber(text) {
+    const t = String(text).trim();
+    if (!/^(\d+\.?\d*|\.\d+)$/.test(t)) return null;
+    return Number(t) <= 99999 ? Number(t) : null;
+  }
+
+  // What is typed into an entry's form, on top of the numbers it would be saved with
+  // otherwise (see resolve). All are shown for `basis`, a label's 56 g, or for the
+  // entry's own amount until the user sets one.
+  function createForm() {
+    let saved = {}, savedGrams = null, amount = {};
+    let basis = null;    // { qty, unit }, once set
+    let badBasis = null; // what its field says while that is not an amount
+    let weightText = "";
+    const typed = new Map(); // id -> text
+
+    const weight = () => parseNumber(weightText) || null;
+    const grams = () => (savedGrams && weight()) || savedGrams;
+    const times = () => (basis ? ratio(amount, basis, grams()) : 1); // null if it does not convert
+
+    function savedText(id) {
+      if (!has(saved, id)) return "";
+      const byWeight = savedGrams && weight() && !isMine(saved, id) ? weight() / savedGrams : 1;
+      return show(((saved[id].low + saved[id].high) / 2) * byWeight * (times() || 1));
+    }
+    // Typing exactly what is saved changes nothing.
+    const changed = () => [...typed].filter(([id, text]) => text.trim() !== savedText(id));
+    const numbers = () => changed().map(([id, text]) => [id, parseNumber(text)]).filter(([, n]) => n !== null);
+
+    return {
+      rebase(entry) {
+        saved = entry.macros || {};
+        savedGrams = (entry.nutrition && entry.nutrition.grams) || null;
+        amount = { qty: entry.qty, unit: entry.unit };
+      },
+      text: (id) => (typed.has(id) ? typed.get(id) : savedText(id)),
+      isMine: (id) => (changed().some(([other]) => other === id) ? parseNumber(typed.get(id)) !== null : isMine(saved, id)),
+      type(id, text) {
+        if (text.trim() === "" && !has(saved, id)) typed.delete(id); // still blank
+        else typed.set(id, text);
+      },
+
+      basis() {
+        const { qty, unit: u } = basis || amount;
+        return { text: badBasis !== null ? badBasis : qty > 0 ? String(qty) : "", unit: u };
+      },
+      setBasis(text) {
+        const qty = parseNumber(text);
+        badBasis = qty > 0 ? null : text;
+        if (qty > 0) basis = { qty, unit: (basis || amount).unit };
+      },
+      // The same amount in another unit: 4 pcs becomes 48 g.
+      setBasisUnit(u) {
+        const one = ratio(amount, { qty: 1, unit: u }, grams());
+        const qty = times() && one ? Number((times() / one).toPrecision(4)) : (basis || amount).qty;
+        basis = { qty, unit: u };
+        badBasis = null;
+      },
+      units() {
+        const units = unitsFor(amount, grams());
+        return !basis || units.some((u) => unit(u) === unit(basis.unit)) ? units : [...units, basis.unit];
+      },
+
+      setWeight(text) { weightText = String(text); },
+
+      errors() {
+        const out = {};
+        for (const [id, text] of changed()) {
+          if (text.trim() !== "" && parseNumber(text) === null) out[id] = "Enter a number from 0 to 99,999, like 12.5";
+        }
+        if (weightText.trim() !== "" && !weight()) out.weight = "Enter the weight in grams, above 0";
+        if (numbers().length && badBasis !== null) out.basis = "Enter an amount above 0";
+        else if (numbers().length && times() === null) out.basis = `${sayAmount(basis)} does not convert to ${sayAmount(amount)}`;
+        return out;
+      },
+      result: () => ({
+        typed: Object.fromEntries(numbers()),
+        cleared: changed().filter(([, text]) => text.trim() === "").map(([id]) => id),
+        basis: basis ? { ...basis } : null,
+        grams: savedGrams && weight() !== savedGrams ? weight() : null,
+      }),
+    };
+  }
+
+  // ---- The explanation -----------------------------------------------------------------
+
+  const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  const dayName = (date) => { const [, m, d] = date.split("-").map(Number); return `${MONTHS[m - 1]} ${d}`; };
+  const sayAmount = ({ qty, unit: u }) => `${show(Number(qty))} ${u}`;
+
+  function explainWeight(entry, n, estimates) {
+    if (!(n.grams > 0) || isWeight(entry.unit)) return null;
+    const each = Number(entry.qty) > 0 && Number(entry.qty) !== 1 ? ` (${show(n.grams / entry.qty)} g each)` : "";
+    if (n.gramsMine) return `Your weight ${show(n.grams)} g${each}`;
+    const weights = estimates.map((w) => w.grams).filter((g) => g > 0);
+    const low = Math.min(...weights), high = Math.max(...weights);
+    if (weights.length > 1 && (high - low) / high > 0.2) {
+      const k = n.grams / (weights.reduce((a, b) => a + b, 0) / weights.length); // scaled since
+      return `Assumed weight ${Math.round(low * k)}–${Math.round(high * k)} g, using ${show(n.grams)} g`;
+    }
+    return `Assumed weight ${show(n.grams)} g${each}`;
+  }
+
+  function explain(entry) {
+    const n = entry.nutrition || {};
+    const estimates = n.why || [];
+    const lines = [];
+
+    if (estimates.length) {
+      const refs = [...new Set(estimates.map((w) => w.ref).filter(Boolean))];
+      if (refs.length) lines.push(`Based on ${refs.join("; ")}`);
+      const kcal = estimates.map((w) => w.kcal).filter((k) => k != null);
+      const say = kcal.length === estimates.length ? `, ${kcal.join(" and ")} kcal` : "";
+      lines.push(n.how === "both" ? `Two estimates${say}, disagreed, so the range covers both`
+        : estimates.length > 1 ? `Two estimates${say}, averaged`
+        : `One estimate${say}`);
+      const k = n.asked ? ratio(n.asked, entry) : 1;
+      if (k === null && n.refresh) lines.push(`For ${sayAmount(n.asked)}`); // not scaled: a new answer is due
+      else if (k !== 1) lines.push(`For ${sayAmount(n.asked)}, scaled to ${sayAmount(entry)}`);
+      lines.push(...new Set(estimates.map((w) => w.note).filter(Boolean)));
+      lines.push("The AI works from what it knows about food. It does not look values up.");
+    }
+
+    const per = n.basis ? ratio(entry, n.basis, n.grams) : null;
+    for (const id of mineIds(entry.macros)) {
+      const m = Macros.byId(id), total = entry.macros[id].low;
+      lines.push(`${m.label} ${show(per ? total * per : total)} ${m.unit}${per ? ` per ${sayAmount(n.basis)}` : ""} is your number`);
+    }
+    if (n.from) lines.push(`Numbers from ${dayName(n.from.date)}`);
+    if (n.photo) lines.push("Estimated from your photo");
+    if (!lines.length && hasTheirs(entry)) lines.push("No explanation was saved for this entry. Ask AI again to get one.");
+    return { weight: explainWeight(entry, n, estimates), lines };
+  }
+
+  function tag(entry, today) {
+    const from = entry.nutrition && entry.nutrition.from;
+    if (!from) return "";
+    const year = from.date.slice(0, 4);
+    return `from ${dayName(from.date)}${year === today.slice(0, 4) ? "" : `, ${year}`}`;
+  }
+
+  const hasTheirs = (entry) => theirIds(entry.macros).length > 0;
+
   return {
     unit, ratio, unitsFor, scale, sameFood,
     findRemembered, reuse, latestLog, statusFor, editPlan, resolve, needsAnswer, known, applyAnswer,
+    createForm, explain, tag, hasTheirs,
   };
 });

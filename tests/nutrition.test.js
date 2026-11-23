@@ -373,3 +373,221 @@ test("gaps filled on a reused entry keep the explanation of the rest", () => {
 test("numbers are stored without floating-point noise", () => {
   assert.deepEqual(apply(entry({ macros: {} }), { macros: full(0.6499999999999999) }).macros.calories, { low: 0.65, high: 0.65 });
 });
+
+// ---- the form ---------------------------------------------------------------------
+
+const form = (over = {}) => {
+  const f = N.createForm();
+  f.rebase({ qty: 4, unit: "pcs", macros: { calories: { low: 100, high: 106 }, protein: mine(22) }, nutrition: { grams: 48 }, ...over });
+  return f;
+};
+const inGrams = (qty, macros = {}) => form({ qty, unit: "g", macros, nutrition: undefined });
+
+test("the form shows saved numbers, an AI range as its middle", () => {
+  const f = form();
+  assert.deepEqual([f.text("calories"), f.text("protein"), f.text("carbs")], ["103", "22", ""]);
+  assert.deepEqual([f.isMine("calories"), f.isMine("protein"), f.isMine("carbs")], [false, true, false]);
+  assert.deepEqual(f.basis(), { text: "4", unit: "pcs" });
+  assert.deepEqual(f.result(), { typed: {}, cleared: [], basis: null, grams: null });
+});
+
+test("typing, clearing, and putting back what was there", () => {
+  const f = form();
+  f.type("calories", "120");
+  f.type("protein", "");
+  assert.deepEqual([f.text("calories"), f.isMine("calories"), f.isMine("protein")], ["120", true, false]);
+  assert.deepEqual([f.result().typed, f.result().cleared], [{ calories: 120 }, ["protein"]]);
+  f.type("calories", "103");
+  f.type("protein", "22");
+  assert.deepEqual([f.result().typed, f.result().cleared], [{}, []]);
+});
+
+test("a field that was blank and is blank again takes the number that arrives", () => {
+  const f = form();
+  f.type("carbs", "5");
+  f.type("carbs", "");
+  f.rebase({ qty: 4, unit: "pcs", macros: full(100) });
+  assert.deepEqual([f.text("carbs"), f.result().typed, f.result().cleared], ["1.5", {}, []]);
+});
+
+test("saved numbers follow the entry; a typed one stays as typed, for the amount shown", () => {
+  const f = form();
+  f.type("carbs", "5");
+  f.rebase({ qty: 6, unit: "pcs", macros: { calories: { low: 150, high: 159 }, protein: mine(33) }, nutrition: { grams: 72 } });
+  assert.deepEqual([f.text("calories"), f.text("protein"), f.text("carbs")], ["154.5", "33", "5"]);
+  assert.deepEqual(f.basis(), { text: "6", unit: "pcs" });
+  assert.equal(f.result().basis, null);
+});
+
+test("a label is typed as printed, before or after saying what it is for", () => {
+  const eaten = { food: "Sardines", qty: 80, unit: "g" }; // 11 g of protein as estimated, 11 g per 56 g on the label
+  for (const numbersFirst of [true, false]) {
+    const f = inGrams(80, full(160));
+    if (numbersFirst) f.type("protein", "11");
+    f.setBasis("5"); // on the way to 56
+    f.setBasis("56");
+    if (!numbersFirst) f.type("protein", "11");
+    assert.deepEqual([f.text("protein"), f.text("calories")], ["11", "112"]);
+    const saved = N.resolve({ before: entry({ ...eaten, macros: full(160) }), after: eaten, form: f.result(), tracked: TRACKED, now: NOW });
+    assert.deepEqual([saved.macros.protein, saved.macros.calories], [mine(15.714), { low: 160, high: 160 }]);
+    assert.deepEqual(saved.nutrition.basis, amount(56, "g"));
+  }
+});
+
+test("the label's amount stays put when the amount eaten changes", () => {
+  const f = inGrams(80);
+  f.setBasis("56");
+  f.type("protein", "11");
+  f.rebase({ qty: 100, unit: "g", macros: {} });
+  assert.deepEqual([f.text("protein"), f.basis().text, f.result().typed], ["11", "56", { protein: 11 }]);
+});
+
+test("another unit for the same amount changes no number", () => {
+  const f = form();
+  f.setBasisUnit("g");
+  assert.deepEqual([f.basis(), f.text("calories"), f.text("protein")], [{ text: "48", unit: "g" }, "103", "22"]);
+  f.setBasis("24");
+  assert.deepEqual([f.text("calories"), f.text("protein")], ["51.5", "11"]);
+  f.setBasisUnit("oz");
+  assert.deepEqual([f.basis(), f.text("protein")], [{ text: "0.8466", unit: "oz" }, "11"]);
+  f.setBasisUnit("pcs");
+  assert.deepEqual(f.basis(), { text: "2", unit: "pcs" });
+  assert.deepEqual(f.units(), ["pcs", "g", "kg", "oz", "lb"]);
+});
+
+test("an amount the label's does not convert to is refused, not taken for something else", () => {
+  const f = inGrams(80);
+  f.setBasis("56");
+  f.type("protein", "11");
+  f.rebase({ qty: 1, unit: "plate", macros: {} });
+  assert.equal(f.errors().basis, "56 g does not convert to 1 plate");
+  assert.deepEqual([f.basis(), f.units()], [{ text: "56", unit: "g" }, ["plate", "g"]]);
+  f.rebase({ qty: 3, unit: "oz", macros: {} });
+  assert.deepEqual([f.errors(), f.result().basis], [{}, amount(56, "g")]);
+});
+
+test("invalid input is reported and kept", () => {
+  const f = form();
+  for (const bad of ["abc", "-1", "1,200", "1e3", "100000", "."]) {
+    f.type("calories", bad);
+    assert.deepEqual([f.text("calories"), f.isMine("calories")], [bad, false]);
+    assert.match(f.errors().calories, /number/, bad);
+  }
+  for (const good of ["0", "12.5", ".5", "12.", "99999", " 7 "]) {
+    f.type("calories", good);
+    assert.deepEqual(f.errors(), {}, good);
+  }
+  for (const bad of ["0", "", "x"]) {
+    f.setBasis(bad);
+    assert.deepEqual([f.basis().text, f.errors().basis], [bad, "Enter an amount above 0"]);
+  }
+  f.setBasis("4");
+  for (const bad of ["0", "x"]) {
+    f.setWeight(bad);
+    assert.match(f.errors().weight, /weight/);
+  }
+  f.setWeight("");
+  assert.deepEqual(f.errors(), {});
+});
+
+test("what the numbers are for does not matter while none is typed", () => {
+  const f = form();
+  f.setBasis("");
+  assert.deepEqual(f.errors(), {});
+});
+
+test("correcting the weight shows its effect at once, on the AI's numbers only", () => {
+  const f = form();
+  f.setWeight("96");
+  assert.deepEqual([f.text("calories"), f.text("protein"), f.result().grams], ["206", "22", 96]);
+  f.rebase({ qty: 8, unit: "pcs", macros: { calories: { low: 200, high: 212 } }, nutrition: { grams: 96 } });
+  assert.deepEqual([f.text("calories"), f.result().grams], ["206", null], "the new amount weighs that anyway");
+  f.rebase({ qty: 8, unit: "pcs", macros: {}, nutrition: undefined });
+  assert.equal(f.result().grams, null, "there is no weight to correct");
+});
+
+test("numbers that arrive while the form is open appear, without touching what was typed", () => {
+  const f = form({ macros: {}, nutrition: undefined });
+  f.type("protein", "22");
+  f.rebase({ qty: 4, unit: "pcs", macros: full(100), nutrition: { grams: 48 } });
+  assert.deepEqual([f.text("calories"), f.text("protein"), f.result().typed], ["100", "22", { protein: 22 }]);
+});
+
+test("a form for something that has no amount yet", () => {
+  const f = form({ qty: NaN, unit: "", macros: {}, nutrition: undefined });
+  assert.deepEqual(f.basis(), { text: "", unit: "" });
+  f.type("protein", "22");
+  f.rebase({ qty: 1, unit: "pc", macros: {} });
+  assert.deepEqual([f.errors(), f.result().typed, f.result().basis], [{}, { protein: 22 }, null]);
+});
+
+test("whether an entry has numbers the user did not type", () => {
+  assert.equal(N.hasTheirs(entry()), true);
+  assert.equal(N.hasTheirs(entry({ macros: { protein: mine(1) } })), false);
+  assert.equal(N.hasTheirs(entry({ macros: {} })), false);
+});
+
+// ---- the explanation ----------------------------------------------------------------
+
+const why = [{ ref: "canned sardines in oil, drained", note: "From USDA.", grams: 46, kcal: 95 }, { ref: "canned sardines in oil, drained", note: "Label values.", grams: 50, kcal: 110 }];
+const explained = (over, nutrition) => N.explain(entry({ ...over, nutrition }));
+
+test("two estimates, averaged", () => {
+  assert.deepEqual(explained({}, { grams: 48, why, how: "average", asked: amount(4, "pcs") }), {
+    weight: "Assumed weight 48 g (12 g each)",
+    lines: [
+      "Based on canned sardines in oil, drained",
+      "Two estimates, 95 and 110 kcal, averaged",
+      "From USDA.",
+      "Label values.",
+      "The AI works from what it knows about food. It does not look values up.",
+    ],
+  });
+});
+
+test("weights that differ a lot are both shown", () => {
+  const apart = [{ ...why[0], grams: 40 }, { ...why[1], grams: 56 }];
+  assert.equal(explained({}, { grams: 48, why: apart, how: "average", asked: amount(4, "pcs") }).weight, "Assumed weight 40–56 g, using 48 g");
+  assert.equal(explained({ qty: 8 }, { grams: 96, why: apart, how: "average", asked: amount(4, "pcs") }).weight, "Assumed weight 80–112 g, using 96 g");
+});
+
+test("a corrected weight, one piece, and an entry already in grams", () => {
+  assert.equal(explained({}, { grams: 90, gramsMine: true, why }).weight, "Your weight 90 g (22.5 g each)");
+  assert.equal(explained({ qty: 1 }, { grams: 12, why: [why[0]] }).weight, "Assumed weight 12 g");
+  assert.equal(explained({ qty: 80, unit: "g" }, { grams: 80, why }).weight, null);
+});
+
+test("estimates that disagreed, a single one, and unknown calories", () => {
+  const second = (how, w) => explained({}, { why: w, how, asked: amount(4, "pcs") }).lines[1];
+  assert.equal(second("both", [{ ...why[0], kcal: 60 }, { ...why[1], kcal: 200 }]), "Two estimates, 60 and 200 kcal, disagreed, so the range covers both");
+  assert.equal(second("one", [why[0]]), "One estimate, 95 kcal");
+  assert.equal(second("average", [{ ...why[0], kcal: null }, { ...why[1], kcal: null }]), "Two estimates, averaged");
+});
+
+test("numbers scaled from another amount say so", () => {
+  const says = (over, nutrition) => explained(over, { why, how: "average", asked: amount(4, "pcs"), ...nutrition }).lines.find((l) => /^For /.test(l));
+  assert.equal(says({ qty: 6 }), "For 4 pcs, scaled to 6 pcs");
+  assert.equal(says({ unit: "pieces" }), undefined);
+  assert.equal(says({ qty: 96, unit: "g" }, { grams: 96 }), "For 4 pcs, scaled to 96 g");
+  assert.equal(says({ qty: 2, unit: "cups" }, { refresh: true }), "For 4 pcs", "not scaled: waiting for a new answer");
+});
+
+test("typed numbers, per the label's amount if there was one", () => {
+  const macros = full(100, { protein: mine(15.714), sodium: mine(300) });
+  assert.deepEqual(explained({ qty: 80, unit: "g", macros }, { basis: amount(56, "g") }).lines, ["Protein 11 g per 56 g is your number", "Sodium 210 mg per 56 g is your number"]);
+  assert.deepEqual(explained({ macros: full(100, { protein: mine(22) }) }, {}).lines, ["Protein 22 g is your number"]);
+});
+
+test("reused, photographed, and unexplained entries", () => {
+  assert.ok(explained({}, { from: { id: 1, date: "2026-11-20" } }).lines.includes("Numbers from Nov 20"));
+  assert.deepEqual(explained({}, { photo: true }).lines, ["Estimated from your photo"]);
+  assert.deepEqual(N.explain(entry()).lines, ["No explanation was saved for this entry. Ask AI again to get one."]);
+  assert.deepEqual(N.explain(entry({ macros: {}, estimateStatus: "pending" })), { weight: null, lines: [] });
+});
+
+test("the tag names the day, and the year if it is another one", () => {
+  const from = (date) => N.tag(entry({ nutrition: { from: { id: 1, date } } }), "2026-11-23");
+  assert.equal(from("2026-11-20"), "from Nov 20");
+  assert.equal(from("2025-02-03"), "from Feb 3, 2025");
+  assert.equal(N.tag(entry(), "2026-11-23"), "");
+});
