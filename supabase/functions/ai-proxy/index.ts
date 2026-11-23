@@ -52,7 +52,7 @@ function buildSystemPromptEstimate(ids: string[]) {
 Respond with ONLY a JSON object (no markdown fences) in this exact format:
 {
   "reasoning": "<one short sentence naming the reference food and serving you scaled from>",
-  "reference": "<the food these values are for and where they come from, e.g. canned sardines in oil, drained (USDA)>",
+  "reference": "<the food these values are for, as specific as you assumed it, and where they come from>",
   "total_grams": <weight in grams of the whole quantity, or null if it cannot be judged>,
 ${promptFields(ids)}
 }

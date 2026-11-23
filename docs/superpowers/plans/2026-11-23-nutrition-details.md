@@ -3086,7 +3086,7 @@ function buildEstimatePromptText(food: string, qty: unknown, unit: string) {
 ```
 ```ts
   "reasoning": "<one short sentence naming the reference food and serving you scaled from>",
-  "reference": "<the food these values are for and where they come from, e.g. canned sardines in oil, drained (USDA)>",
+  "reference": "<the food these values are for, as specific as you assumed it, and where they come from>",
   "total_grams": <weight in grams of the whole quantity, or null if it cannot be judged>,
 ${promptFields(ids)}
 }
