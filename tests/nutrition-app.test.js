@@ -427,6 +427,20 @@ test("a tab that sends another's change knows it from then on, even if it has no
   assert.deepEqual([b.foods(), b.entry("Tofu").time, reads], [["Eggs", "Tofu"], "19:30", 2]);
 });
 
+test("nor what has changed again here by the time it is sent", async () => {
+  const server = serverWith(row(1, "Tofu"));
+  const app = await bootApp({ server });
+  let reads = 0;
+  server.afterSelect = async () => { reads++; };
+  const release = server.holdWrites();
+  app.editFood("Tofu", { time: "19:30" });
+  await app.settle();
+  app.editFood("Tofu", { time: "20:15" });
+  release();
+  await app.settle();
+  assert.deepEqual([on(server, "Tofu").time, app.run("outbox.count()"), reads], ["20:15", 0, 0]);
+});
+
 test("what a tab sends of its own is not looked up", async () => {
   const server = serverWith(row(1, "Tofu"), row(2, "Rice"));
   const app = await bootApp({ server });

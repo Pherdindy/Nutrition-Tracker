@@ -21,6 +21,12 @@ for (const [place, when, today] of [["Manila after midnight", MANILA, "2026-11-2
     assert.equal(app.el("batch-date").value, today);
   });
 
+  test(`${place}: a workout is added to today`, async () => {
+    const app = await at(when);
+    app.fire("add-workout-btn", "click");
+    assert.equal(app.el("day-date").value, today);
+  });
+
   test(`${place}: photo items are dated today`, async () => {
     const app = await at(when);
     app.addPhotoItems(["Soup"]);

@@ -212,7 +212,7 @@ const WORKOUT_SYNC = {
   load: () => loadWorkouts(), save: (workouts) => saveWorkouts(workouts),
   show: () => { renderCalorieTracker(); renderDayForm(); },
   asked: ({ what, minutes }) => ({ what, minutes }),
-  again: (w) => !!w.effort.refresh,
+  again: () => false, // an answer is as good for the question asked again
   answered: ["effort", "estimate_status"],
 };
 const SPECS = Object.fromEntries([FOOD_SYNC, DAY_SYNC, WORKOUT_SYNC].map((spec) => [spec.table, spec]));
@@ -294,13 +294,15 @@ function saveEstimates(spec, entries, answered, was = "pending") {
 // since: by the user (that is unsent now), or by an answer (which is sent next).
 async function takeOver(uid, table, key) {
   const spec = ESTIMATED[table], known = spec.known.get(key);
+  const changed = () => { const op = outbox.pending(table)[key]; return op && !op.match; };
+  if (changed()) return true;
   const session = await sessionFor(uid);
   if (!session) return false;
   const { data, error, status } = await asAccount(session, sb.from(table).select("*").eq("id", key).maybeSingle());
   if (error) return Sync.isRefusal(status);
   const unsent = outbox.pending(table)[key];
   const entries = spec.load(), i = entries.findIndex((e) => spec.keyOf(e) === key);
-  if (currentUid() !== uid || i === -1 || (unsent && !unsent.match) || spec.known.get(key) !== known) return true;
+  if (currentUid() !== uid || i === -1 || changed() || spec.known.get(key) !== known) return true;
   if (data) {
     entries[i] = unsent ? applyEstimate(spec)(spec.fromRow(data), unsent) : spec.fromRow(data);
     spec.known.set(key, spec.signature(entries[i]));

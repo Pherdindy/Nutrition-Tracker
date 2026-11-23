@@ -31,6 +31,34 @@ test("a workout reaches the server as it is, and the next device", async () => {
   const b = await bootApp({ server, device: createDevice() });
   assert.deepEqual(b.workouts(), [js(7, "Bike", { minutes: 22.5, kcal: 500 })]);
   assert.deepEqual([a.errors, b.errors], [[], []]);
+  Object.assign(server.rowOf("workouts", "Bike"), { minutes: "22.5", kcal: "500" }); // a numeric may come as text
+  const c = await bootApp({ server, device: createDevice() });
+  assert.deepEqual(c.workouts(), b.workouts());
+});
+
+test("what is unsent is laid over what is loaded, and over what is cached", async () => {
+  const server = serverWith({ workouts: [row(1, "Bike"), row(2, "Run")] }), device = createDevice();
+  const a = await bootApp({ server, device });
+  const release = server.holdWrites();
+  put(a, js(7, "Swim"));
+  a.run("removeWorkout(1)");
+  const online = await bootApp({ server, device });
+  assert.deepEqual(online.workouts().map((w) => w.what).sort(), ["Run", "Swim"]);
+  const other = await bootApp({ server, device });
+  other.run("_cache.workouts = _cache.workouts.filter((w) => w.id === 2); saveWorkouts(loadWorkouts())"); // a tab that has not heard of them caches its own
+  device.online = false;
+  const offline = await bootApp({ server, device });
+  assert.deepEqual(offline.workouts().map((w) => w.what).sort(), ["Run", "Swim"]);
+  release();
+});
+
+test("deleted, delivered and gone, also from this device's copy", async () => {
+  const server = serverWith({ workouts: [row(1, "Bike")] }), device = createDevice();
+  const a = await bootApp({ server, device });
+  a.run("removeWorkout(1)");
+  await a.settle();
+  device.online = false;
+  assert.deepEqual((await bootApp({ server, device })).workouts(), []);
 });
 
 test("loading saves nothing", async () => {
@@ -174,6 +202,7 @@ test("the day's line names its workouts, what is known about them, and escapes t
   for (const part of ["🚶 Light activity", "&lt;b&gt;Bike&lt;/b&gt; · 90 min · 612–735 kcal", "Run · 120 kcal", "yours", "Swim · 90 min", "not estimated", "Row · 90 min", "estimating…", "Walk · 90 min · 245 kcal", "from Nov 20"]) assert.ok(text.includes(part), part);
   assert.ok(!text.includes("(walked / errands)"), "the bracket would contradict the workouts");
   assert.ok(/onclick="retryWorkout\(3\)"/.test(tr) && !/retryWorkout\(4\)/.test(tr));
+  assert.equal(text.split("estimating…").length, 2, "only the one that waits");
 });
 
 test("on phones too", async () => {
@@ -253,7 +282,8 @@ test("the day's total follows the answer", async () => {
   log(app, {});
   assert.equal(numbersOf(trackerRow(app))[2], (BMR * 1.2).toFixed(1));
   await app.settle();
-  assert.equal(numbersOf(trackerRow(app))[2], (BMR * 1.2 + 4.5 * KG * 1.5).toFixed(1));
+  const shown = app.run("document.querySelector('#calorie-tracker-table tbody').innerHTML"); // without being asked to
+  assert.ok(shown.includes((BMR * 1.2 + 4.5 * KG * 1.5).toFixed(1)));
 });
 
 test("no answer: it says so and can be tried again", async () => {
@@ -476,8 +506,23 @@ test("nothing is stored before Save, and Cancel drops all of it", async () => {
   app.fire("day-cancel", "click");
   await app.settle();
   assert.deepEqual([app.workouts(), server.writes, server.aiCalls], [[js(1, "Bike")], [], []]);
+  assert.equal(app.run("_dayForm"), null);
   openDay(app);
   assert.deepEqual([app.isOpen("workout-editor"), listed(app).includes("Bike"), listed(app).includes("Run"), app.el("day-activity").value], [false, true, false, SAT]);
+});
+
+test("one that was only typed can be taken away again", async () => {
+  const server = serverWith();
+  const app = await bootApp({ server });
+  openDay(app);
+  addIn(app, { what: "Bike", minutes: 90 });
+  addIn(app, { what: "Run", minutes: 20 });
+  const id = /dropWorkout\((\d+)\)/.exec(listed(app))[1];
+  app.run(`dropWorkout(${id})`);
+  assert.equal(listed(app), "");
+  saveForm(app);
+  await app.settle();
+  assert.deepEqual(stored(server), [["Run", 20, null]]);
 });
 
 test("several at once; Save takes the open one and leaves out an empty one", async () => {
@@ -507,6 +552,7 @@ test("what cannot be meant is refused, and said at the field", async () => {
     await app.settle();
     assert.deepEqual([app.isOpen("day-modal"), !!app.el(`workout-${field}`).validity, server.writes], [true, true, []], JSON.stringify(fields));
     typeIn(app, { what: "Bike", minutes: 90, kcal: "" });
+    assert.ok(!app.el(`workout-${field}`).validity, "the browser would not let it be saved");
     saveForm(app);
     assert.equal(app.isOpen("day-modal"), false, "and taken once it is right");
   }
@@ -528,6 +574,7 @@ test("changing one changes only that one, and opening it changes nothing", async
   const app = await bootApp({ server });
   openDay(app);
   app.run("openWorkout(1)");
+  assert.deepEqual([listed(app).includes("Bike"), listed(app).includes("Run")], [false, true], "the open one is in its fields");
   assert.deepEqual(["what", "minutes", "kcal"].map((f) => app.el(`workout-${f}`).value), ["Bike", "90", ""]);
   app.run("openWorkout(2)");
   saveForm(app);
@@ -570,6 +617,29 @@ test("an error does not outlive its workout: it would block Save from a hidden f
   app.fire("day-cancel", "click");
   openDay(app);
   assert.deepEqual(errors(), []);
+});
+
+test("emptying one is not removing it", async () => {
+  const server = serverWith({ workouts: [row(1, "Bike")] });
+  const app = await bootApp({ server });
+  openDay(app);
+  app.run("openWorkout(1)");
+  typeIn(app, { what: "", minutes: "", kcal: "" });
+  saveForm(app);
+  await app.settle();
+  assert.deepEqual([app.isOpen("day-modal"), !!app.el("workout-what").validity, server.writes], [true, true, []]);
+});
+
+test("what is only looked at here keeps a change made elsewhere", async () => {
+  const server = serverWith({ workouts: [row(1, "Bike")] });
+  const app = await bootApp({ server });
+  openDay(app);
+  app.run("openWorkout(1)");
+  log(app, { id: 1, minutes: 30 }); // as another tab would
+  app.run("openWorkout(newId())");
+  saveForm(app);
+  await app.settle();
+  assert.deepEqual(stored(server), [["Bike", 30, null]]);
 });
 
 test("removing one counts from Save on", async () => {
@@ -679,6 +749,19 @@ test("a choice that includes a workout gives way to the rest of the day, and say
   assert.equal(server.days().find((d) => d.date === DATE).activity, LIGHT);
 });
 
+test("a rest choice is remembered while the form is open, and is not the day's own", async () => {
+  const app = await bootApp({ server: serverWith({ days: [dayRow({ activity: GYM })] }) });
+  openDay(app);
+  app.fire("workout-add", "click");
+  choose(app, LIGHT);
+  app.run("renderDayForm()");
+  assert.deepEqual([app.el("day-activity").value, app.isOpen("day-activity-note")], [LIGHT, true]);
+  app.fire("workout-remove", "click");
+  assert.equal(app.el("day-activity").value, GYM);
+  app.fire("workout-add", "click");
+  assert.equal(app.el("day-activity").value, LIGHT);
+});
+
 test("the rest of the day stays as chosen", async () => {
   const server = serverWith({ days: [dayRow({ activity: GYM })], workouts: [] });
   const app = await bootApp({ server });
@@ -726,8 +809,10 @@ test("a workout on a day that does not exist yet: created on Save, not before", 
   await app.settle();
   const made = server.days().find((d) => d.date === DATE);
   assert.deepEqual([made.activity, made.weight, stored(server)], [LIGHT, 175, [["Bike", 90, null]]]);
+  app.editDay(DATE, { weight: 171, incomplete: true });
   app.fire("add-workout-btn", "click");
   assert.ok(listed(app).includes("Bike · 90 min"), "the day is there now");
+  assert.deepEqual([app.el("day-weight").value, app.el("day-incomplete").checked], [171, true], "with what it has");
 });
 
 test("it does not overwrite a day another device made meanwhile, unless the user chose something", async () => {
