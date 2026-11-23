@@ -401,8 +401,8 @@ test("a tab that sends another's answer takes it over, whatever its own was", as
   server.rowOf("food_entries", "Tofu").estimate_status = "pending";
   for (const tab of [a, b]) tab.run("{ const e = _cache.food[0]; e.estimateStatus = 'pending'; FOOD_SYNC.known.set('1', FOOD_SYNC.signature(e)); }");
   device.online = false;
-  b.run("{ const entries = loadFoodEntries(), e = entries[0]; saveEstimates(entries, [{ entry: Object.assign(e, { estimateStatus: 'error' }), asked: askedOf(e) }]); }");
-  a.run(`{ const entries = loadFoodEntries(), e = entries[0], asked = askedOf(e); saveEstimates(entries, [{ entry: Object.assign(e, { estimateStatus: "done", macros: ${JSON.stringify(eight(200))} }), asked }]); }`);
+  b.run("{ const entries = loadFoodEntries(), e = entries[0]; saveEstimates(FOOD_SYNC, entries, [{ entry: Object.assign(e, { estimateStatus: 'error' }), asked: FOOD_SYNC.asked(e) }]); }");
+  a.run(`{ const entries = loadFoodEntries(), e = entries[0], asked = FOOD_SYNC.asked(e); saveEstimates(FOOD_SYNC, entries, [{ entry: Object.assign(e, { estimateStatus: "done", macros: ${JSON.stringify(eight(200))} }), asked }]); }`);
   await b.windowEvent("storage", { key, newValue: device.storage.getItem(key) });
   assert.equal(b.entry("Tofu").estimateStatus, "error");
   device.online = true;

@@ -180,17 +180,26 @@ const newId = Sync.createIdSource();
 
 const FOOD_SYNC = {
   table: "food_entries", keyColumn: "id", known: new Map(),
-  keyOf: (e) => String(e.id), toRow: foodJsToRow,
+  keyOf: (e) => String(e.id), toRow: foodJsToRow, fromRow: foodRowToJs,
   signature: (e) => JSON.stringify(foodJsToRow(e)),
+  load: () => loadFoodEntries(), save: (entries) => saveFoodEntries(entries),
+  show: () => { renderFoodTable(); renderCalorieTracker(); renderNutrition(); },
+  // What an estimate is for (an entry's macros are replaced, never changed in place),
+  // and the columns its answer may change.
+  asked: ({ food, qty, unit, macros }) => ({ food, qty, unit, macros: macros || {} }),
+  again: (e) => !!(e.nutrition && e.nutrition.refresh),
+  answered: ["macros", "estimate_status", "nutrition", "cal_low", "cal_high", "pro_low", "pro_high"],
 };
 // Days go by date, not id: two devices can each auto-create the same day.
 const DAY_SYNC = {
   table: "days", keyColumn: "date", onConflict: "user_id,date", known: new Map(),
-  keyOf: (d) => d.date, toRow: dayJsToRow,
+  keyOf: (d) => d.date, toRow: dayJsToRow, fromRow: dayRowToJs,
   // Only what the user edits on a day. The row also copies profile values, and a
   // profile change is not an edit to every day.
   signature: (d) => JSON.stringify([d.weight, d.activity, !!d.incomplete]),
 };
+const SPECS = Object.fromEntries([FOOD_SYNC, DAY_SYNC].map((spec) => [spec.table, spec]));
+const ESTIMATED = Object.fromEntries([FOOD_SYNC].map((spec) => [spec.table, spec])); // by the AI
 
 const outbox = Sync.createOutbox({
   owner: currentUid,
@@ -210,7 +219,7 @@ const outbox = Sync.createOutbox({
   send: async (uid, table, kind, items) => {
     const session = await sessionFor(uid);
     if (!session) return { error: { message: "no session for this account" }, status: 0 };
-    const { keyColumn, onConflict } = table === DAY_SYNC.table ? DAY_SYNC : FOOD_SYNC;
+    const { keyColumn, onConflict } = SPECS[table];
     if (kind === "delete") return asAccount(session, sb.from(table).delete().in(keyColumn, items));
     if (kind === "update") {
       const [{ key, row, match }] = items;
@@ -224,8 +233,8 @@ const outbox = Sync.createOutbox({
   },
   missed: takeOver,
   agrees: (table, key, row) => {
-    const entry = loadFoodEntries().find((e) => FOOD_SYNC.keyOf(e) === key); // no day has such a key
-    return !entry || (row !== null && Sync.matches(foodJsToRow(entry), row));
+    const spec = ESTIMATED[table], entry = spec && spec.load().find((e) => spec.keyOf(e) === key);
+    return !entry || (row !== null && Sync.matches(spec.toRow(entry), row));
   },
   lock: (uid, fn) => (navigator.locks ? navigator.locks.request(`nt-sync-${uid}`, fn) : fn()),
   schedule: (fn, ms) => setTimeout(fn, ms),
@@ -252,14 +261,14 @@ function queueDelete(spec, key) {
 // failed), for this food and amount, with the numbers it had when the AI was asked. It
 // must not bring back an entry deleted on another device, undo an edit made there, or
 // replace a number someone typed meanwhile.
-function saveEstimates(entries, answered, was = "pending") {
+function saveEstimates(spec, entries, answered, was = "pending") {
   for (const { entry, asked } of answered) {
-    const { macros, estimate_status, nutrition, cal_low, cal_high, pro_low, pro_high } = foodJsToRow(entry);
-    outbox.update(FOOD_SYNC.table, FOOD_SYNC.keyOf(entry),
-      { macros, estimate_status, nutrition, cal_low, cal_high, pro_low, pro_high }, { ...asked, estimate_status: was });
-    FOOD_SYNC.known.set(FOOD_SYNC.keyOf(entry), FOOD_SYNC.signature(entry));
+    const row = spec.toRow(entry);
+    outbox.update(spec.table, spec.keyOf(entry),
+      Object.fromEntries(spec.answered.map((column) => [column, row[column]])), { ...asked, estimate_status: was });
+    spec.known.set(spec.keyOf(entry), spec.signature(entry));
   }
-  saveFoodEntries(entries);
+  spec.save(entries);
 }
 
 // Such a change found the row no longer as this device has it, or another tab has sent
@@ -267,56 +276,56 @@ function saveEstimates(entries, answered, was = "pending") {
 // would put the old one over it, or bring it back. Not if the entry has been changed here
 // since: by the user (that is unsent now), or by an answer (which is sent next).
 async function takeOver(uid, table, key) {
-  const known = FOOD_SYNC.known.get(key);
+  const spec = ESTIMATED[table], known = spec.known.get(key);
   const session = await sessionFor(uid);
   if (!session) return false;
   const { data, error, status } = await asAccount(session, sb.from(table).select("*").eq("id", key).maybeSingle());
   if (error) return Sync.isRefusal(status);
   const unsent = outbox.pending(table)[key];
-  const entries = loadFoodEntries(), i = entries.findIndex((e) => FOOD_SYNC.keyOf(e) === key);
-  if (currentUid() !== uid || i === -1 || (unsent && !unsent.match) || FOOD_SYNC.known.get(key) !== known) return true;
+  const entries = spec.load(), i = entries.findIndex((e) => spec.keyOf(e) === key);
+  if (currentUid() !== uid || i === -1 || (unsent && !unsent.match) || spec.known.get(key) !== known) return true;
   if (data) {
-    entries[i] = unsent ? applyEstimate(foodRowToJs(data), unsent) : foodRowToJs(data);
-    FOOD_SYNC.known.set(key, FOOD_SYNC.signature(entries[i]));
+    entries[i] = unsent ? applyEstimate(spec)(spec.fromRow(data), unsent) : spec.fromRow(data);
+    spec.known.set(key, spec.signature(entries[i]));
   } else {
     entries.splice(i, 1);
-    FOOD_SYNC.known.delete(key);
+    spec.known.delete(key);
   }
-  saveFoodEntries(entries);
-  renderFoodTable(); renderCalorieTracker(); renderNutrition();
+  spec.save(entries);
+  spec.show();
   return true;
 }
 // Another tab of this browser stored a change to an entry: it counts here too. Or it sent
 // one, and cleared it: see what the entry is now.
 const _heardWhileLoading = new Set();
 function changedElsewhere({ key }) {
-  const uid = currentUid(), prefix = uid && `${outboxPrefix(uid)}${FOOD_SYNC.table}:`;
+  const uid = currentUid(), prefix = uid && outboxPrefix(uid);
   if (!prefix || !key || !key.startsWith(prefix)) return;
-  const id = key.slice(prefix.length);
-  if (_cache.ready) follow(uid, id);
-  else _heardWhileLoading.add(id);
+  const row = key.slice(prefix.length);
+  if (!ESTIMATED[row.split(":")[0]]) return;
+  if (_cache.ready) follow(uid, row);
+  else _heardWhileLoading.add(row);
 }
-function follow(uid, id) {
-  const unsent = outbox.pending(FOOD_SYNC.table)[id];
+function follow(uid, row) { // "food_entries:1"
+  const [table, id] = row.split(":"), spec = ESTIMATED[table];
+  const unsent = outbox.pending(table)[id];
   if (!unsent) {
-    takeOver(uid, FOOD_SYNC.table, id).catch((err) => console.error("[Sync]", err));
+    takeOver(uid, table, id).catch((err) => console.error("[Sync]", err));
     return;
   }
-  const entries = Sync.overlay(loadFoodEntries(), { [id]: unsent }, FOOD_SYNC.keyOf, foodRowToJs, applyEstimate);
-  const entry = entries.find((e) => FOOD_SYNC.keyOf(e) === id);
-  if (entry) FOOD_SYNC.known.set(id, FOOD_SYNC.signature(entry));
-  saveFoodEntries(entries);
-  renderFoodTable(); renderCalorieTracker(); renderNutrition();
+  const entries = withUnsent(spec, spec.load(), { [id]: unsent });
+  const entry = entries.find((e) => spec.keyOf(e) === id);
+  if (entry) spec.known.set(id, spec.signature(entry));
+  spec.save(entries);
+  spec.show();
 }
-// What an estimate is for. An entry's macros are replaced, never changed in place.
-const askedOf = ({ food, qty, unit, macros }) => ({ food, qty, unit, macros: macros || {} });
-const askedAgain = (entry) => !!(entry.nutrition && entry.nutrition.refresh);
-const stillAsked = (entry, asked, again) => entry.estimateStatus === "pending" && Sync.matches(askedOf(entry), asked) && askedAgain(entry) === again;
-function applyEstimate(entry, op) {
-  const row = foodJsToRow(entry);
-  const next = Sync.matches(row, op.match) ? foodRowToJs({ ...row, ...op.row }) : entry;
-  return op.then ? applyEstimate(next, op.then) : next;
-}
+const stillAsked = (spec, entry, asked, again) => entry.estimateStatus === "pending" && Sync.matches(spec.asked(entry), asked) && spec.again(entry) === again;
+const applyEstimate = (spec) => function apply(entry, op) {
+  const row = spec.toRow(entry);
+  const next = Sync.matches(row, op.match) ? spec.fromRow({ ...row, ...op.row }) : entry;
+  return op.then ? apply(next, op.then) : next;
+};
+const withUnsent = (spec, entries, ops) => Sync.overlay(entries, ops, spec.keyOf, spec.fromRow, applyEstimate(spec));
 
 // What was just loaded is saved (or already in the outbox): not a change.
 function markKnown(spec, entries) {
@@ -426,11 +435,11 @@ async function initFromSupabase() {
   const hasProfileData = profileRes.data != null;
 
   // Populate cache from Supabase data, with this device's unsent changes on top
-  _cache.food = Sync.overlay(foodRows.map(foodRowToJs), unsent("food_entries"), FOOD_SYNC.keyOf, foodRowToJs, applyEstimate);
+  _cache.food = withUnsent(FOOD_SYNC, foodRows.map(foodRowToJs), unsent("food_entries"));
   _cache.profile = hasProfileData ? profileRowToJs(profileRes.data) : { ...DEFAULT_PROFILE };
   const _needSeed = _cache.profile.age == null || _cache.profile.weightLossGoal == null;
   _cache.profile = Targets.migrateProfile(_cache.profile, dayRows.map((r) => ({ age: r.age, deficit: r.deficit })));
-  _cache.days = Sync.overlay(dayRows.map(dayRowToJs), unsent("days"), DAY_SYNC.keyOf, dayRowToJs);
+  _cache.days = withUnsent(DAY_SYNC, dayRows.map(dayRowToJs), unsent("days"));
   markKnown(FOOD_SYNC, _cache.food);
   markKnown(DAY_SYNC, _cache.days);
   // An estimate that is pending only in the cloud is being worked on by the device
@@ -438,7 +447,7 @@ async function initFromSupabase() {
   // start, having cached it as pending now.
   let cachedFood = [];
   try { cachedFood = JSON.parse(lsGet("food")) || []; } catch (e) { /* unreadable: nothing to resume */ }
-  markResumable([...cachedFood, ...Object.values(unsent("food_entries")).filter((op) => op.row && !op.match).map((op) => foodRowToJs(op.row))]);
+  markResumable(FOOD_SYNC, [...cachedFood, ...Object.values(unsent("food_entries")).filter((op) => op.row && !op.match).map((op) => foodRowToJs(op.row))]);
   _cache.assessments = (assessRes.data || []).map(r => r.data);
 
   // Settings (key-value pairs)
@@ -467,17 +476,17 @@ async function initFromSupabase() {
 function initFromLocalStorage() {
   // Fallback: populate cache from localStorage (same as old behavior)
   const savedFood = lsGet("food");
-  _cache.food = Sync.overlay(savedFood ? JSON.parse(savedFood).map(Macros.migrateEntry) : [], outbox.pending("food_entries"), FOOD_SYNC.keyOf, foodRowToJs, applyEstimate);
+  _cache.food = withUnsent(FOOD_SYNC, savedFood ? JSON.parse(savedFood).map(Macros.migrateEntry) : [], outbox.pending("food_entries"));
   const savedDays = lsGet("days");
   const parsedDays = savedDays ? JSON.parse(savedDays) : [];
   const savedProfile = lsGet("profile");
   _cache.profile = savedProfile ? JSON.parse(savedProfile) : { ...DEFAULT_PROFILE };
   const _needSeed = _cache.profile.age == null || _cache.profile.weightLossGoal == null;
   _cache.profile = Targets.migrateProfile(_cache.profile, parsedDays);
-  _cache.days = Sync.overlay(parsedDays.map(Targets.migrateDay), outbox.pending("days"), DAY_SYNC.keyOf, dayRowToJs);
+  _cache.days = withUnsent(DAY_SYNC, parsedDays.map(Targets.migrateDay), outbox.pending("days"));
   markKnown(FOOD_SYNC, _cache.food);
   markKnown(DAY_SYNC, _cache.days);
-  markResumable(_cache.food);
+  markResumable(FOOD_SYNC, _cache.food);
   const savedAssessments = lsGet("assessments");
   _cache.assessments = savedAssessments ? JSON.parse(savedAssessments) : [];
 
@@ -611,16 +620,17 @@ function statusBadge(entry) {
   if (entry.estimateStatus === "error") return `<button class="btn-icon est-badge est-error" onclick="retryEstimate(${entry.id})" title="Estimate failed — tap to retry">!</button>`;
   return "";
 }
-window.retryEstimate = function (id) {
-  const entries = loadFoodEntries();
+window.retryEstimate = (id) => askOnceMore(FOOD, id);
+function askOnceMore(kind, id) {
+  const { spec } = kind, entries = spec.load();
   const e = entries.find((x) => x.id === id);
   if (!e) return;
   const was = e.estimateStatus;
   e.estimateStatus = "pending";
-  saveEstimates(entries, [{ entry: e, asked: askedOf(e) }], was);
-  renderFoodTable(); renderCalorieTracker();
-  enqueueEstimate(id);
-};
+  saveEstimates(spec, entries, [{ entry: e, asked: spec.asked(e) }], was);
+  spec.show();
+  enqueueEstimate(kind, id);
+}
 
 // ---- Calorie Tracker Table ----
 
@@ -937,33 +947,43 @@ function submitFood(again = false) {
   closeFoodModal();
   renderFoodTable();
   renderCalorieTracker();
-  if (saved.estimateStatus === "pending") enqueueEstimate(saved.id);
+  if (saved.estimateStatus === "pending") enqueueEstimate(FOOD, saved.id);
 }
 
-const _estimateQueue = [];
+// What the AI estimates: whose entries, whether it has to be asked (if not, what the
+// status is), what it is asked, and what its answer, or that there is none, makes of an
+// entry.
+const FOOD = {
+  spec: FOOD_SYNC,
+  needs: (e) => Nutrition.needsAnswer(e, getEnabledMacros()),
+  without: (e) => Nutrition.statusFor(e.macros, getEnabledMacros(), e.nutrition),
+  ask: (e, { food, qty, unit }) => {
+    const known = Nutrition.known(e), grams = Nutrition.knownWeight(e);
+    return callAi("estimate", { food, qty, unit, ...(known && { known }), ...(grams && { grams }) });
+  },
+  answer: (e, answer, noCredit) => Nutrition.applyAnswer(e, answer, { tracked: getEnabledMacros(), now: Date.now(), noCredit }),
+};
+const KINDS = [FOOD];
+const _estimateQueue = []; // [kind, id]
 let _estimateRunning = false;
 
-function enqueueEstimate(entryId) {
-  const entries = loadFoodEntries();
-  const t = entries.find((e) => e.id === entryId);
-  if (_aiExhausted && t && Nutrition.needsAnswer(t, getEnabledMacros())) {
+function enqueueEstimate(kind, id) {
+  const { spec } = kind, entries = spec.load();
+  const t = entries.find((e) => e.id === id);
+  if (_aiExhausted && t && kind.needs(t)) {
     // Credit exhausted: the entry is already saved (manual logging untouched) —
     // don't burn a proxy call; mark it retryable and show the paywall instead.
     if (t.estimateStatus === "pending") {
-      const asked = askedOf(t);
-      Object.assign(t, unanswered(t));
-      saveEstimates(entries, [{ entry: t, asked }]);
-      renderFoodTable(); renderCalorieTracker();
+      const asked = spec.asked(t);
+      Object.assign(t, kind.answer(t, null, true));
+      saveEstimates(spec, entries, [{ entry: t, asked }]);
+      spec.show();
     }
     openPaywall();
     return;
   }
-  if (!_estimateQueue.includes(entryId)) _estimateQueue.push(entryId);
+  if (!_estimateQueue.some(([k, queued]) => k === kind && queued === id)) _estimateQueue.push([kind, id]);
   runEstimateQueue();
-}
-// An entry the AI was not asked about because the credit is used up.
-function unanswered(entry) {
-  return Nutrition.applyAnswer(entry, null, { tracked: getEnabledMacros(), now: Date.now(), noCredit: true });
 }
 
 async function runEstimateQueue() {
@@ -971,65 +991,67 @@ async function runEstimateQueue() {
   _estimateRunning = true;
   try {
     while (_estimateQueue.length) {
-      const id = _estimateQueue.shift();
-      const snapshot = loadFoodEntries();
+      const [kind, id] = _estimateQueue.shift(), { spec } = kind;
+      const snapshot = spec.load();
       const entry = snapshot.find((e) => e.id === id);
       if (!entry || entry.estimateStatus !== "pending") continue;
-      const tracked = getEnabledMacros();
-      const asked = askedOf(entry);
-      if (!Nutrition.needsAnswer(entry, tracked)) {
-        entry.estimateStatus = Nutrition.statusFor(entry.macros, tracked, entry.nutrition);
-        saveEstimates(snapshot, [{ entry, asked }]);
-        renderFoodTable(); renderCalorieTracker();
+      const asked = spec.asked(entry);
+      if (!kind.needs(entry)) {
+        entry.estimateStatus = kind.without(entry);
+        saveEstimates(spec, snapshot, [{ entry, asked }]);
+        spec.show();
         continue;
       }
       let answer = null, errStatus = null;
-      const { food, qty, unit } = asked, known = Nutrition.known(entry), grams = Nutrition.knownWeight(entry);
-      const again = askedAgain(entry);
+      const again = spec.again(entry);
       try {
-        answer = await callAi("estimate", { food, qty, unit, ...(known && { known }), ...(grams && { grams }) });
+        answer = await kind.ask(entry, asked);
       } catch (err) {
         errStatus = err && err.status;
         console.error("[AI] estimate failed:", err);
       }
-      // Reload fresh AFTER the await so a concurrent user edit isn't overwritten.
-      const fresh = loadFoodEntries();
-      const found = fresh.find((e) => e.id === id);
-      // Changed while this ran (food, amount, a number typed, or asked again): the
-      // answer is for something else, and saving that change has queued a new estimate
-      // if one is still needed.
-      const t = found && stillAsked(found, asked, again) ? found : null;
       // Quota exhausted (402): every remaining attempt would fail the same way —
       // fail the rest of the queue without burning proxy calls, then show the
       // paywall once. 429 is transient, so it does NOT drain: remaining entries
       // keep their own attempts.
-      const drained = errStatus === 402 ? _estimateQueue.splice(0, _estimateQueue.length) : [];
-      const answered = [];
-      for (const qid of drained) {
-        const q = fresh.find((e) => e.id === qid);
-        if (q && q.estimateStatus === "pending") {
-          answered.push({ entry: q, asked: askedOf(q) });
-          Object.assign(q, unanswered(q));
+      const noCredit = errStatus === 402;
+      const drained = noCredit ? _estimateQueue.splice(0, _estimateQueue.length) : [];
+      for (const k of new Set([kind, ...drained.map(([other]) => other)])) {
+        // Reload fresh AFTER the await so a concurrent user edit isn't overwritten.
+        const fresh = k.spec.load(), answered = [];
+        for (const [, qid] of drained.filter(([other]) => other === k)) {
+          const q = fresh.find((e) => e.id === qid);
+          if (q && q.estimateStatus === "pending") {
+            answered.push({ entry: q, asked: k.spec.asked(q) });
+            Object.assign(q, k.answer(q, null, true));
+          }
+        }
+        // Changed while this ran (food, amount, a number typed, or asked again): the
+        // answer is for something else, and saving that change has queued a new estimate
+        // if one is still needed. Or it was deleted.
+        const found = k === kind && fresh.find((e) => e.id === id);
+        if (found && stillAsked(spec, found, asked, again)) {
+          Object.assign(found, kind.answer(found, answer, noCredit));
+          answered.push({ entry: found, asked });
+        }
+        if (answered.length) {
+          saveEstimates(k.spec, fresh, answered);
+          k.spec.show();
         }
       }
-      if (t) { // the entry may have been deleted or changed while the estimate was in flight
-        Object.assign(t, Nutrition.applyAnswer(t, answer, { tracked, now: Date.now(), noCredit: errStatus === 402 }));
-        answered.push({ entry: t, asked });
-      }
-      if (answered.length) {
-        saveEstimates(fresh, answered);
-        renderFoodTable(); renderCalorieTracker(); renderNutrition();
-      }
-      if (errStatus === 402) openPaywall();
+      if (noCredit) openPaywall();
     }
   } finally { _estimateRunning = false; }
 }
-let _resumableEstimates = new Set();
-function markResumable(entries) {
-  _resumableEstimates = new Set(entries.filter((e) => e.estimateStatus === "pending").map((e) => e.id));
+const _resumable = new Map(); // spec -> ids
+function markResumable(spec, entries) {
+  _resumable.set(spec, new Set(entries.filter((e) => e.estimateStatus === "pending").map((e) => e.id)));
 }
 function resumePendingEstimates() {
-  loadFoodEntries().filter((e) => e.estimateStatus === "pending" && _resumableEstimates.has(e.id)).forEach((e) => enqueueEstimate(e.id));
+  for (const kind of KINDS) {
+    const ids = _resumable.get(kind.spec);
+    kind.spec.load().filter((e) => e.estimateStatus === "pending" && ids.has(e.id)).forEach((e) => enqueueEstimate(kind, e.id));
+  }
 }
 
 window.editFood = function (id) {
@@ -2487,7 +2509,7 @@ function saveBatchFoods() {
   ensureDayExists(date);
   closeFoodModal();
   renderFoodTable(); renderCalorieTracker();
-  created.forEach((e) => enqueueEstimate(e.id));
+  created.forEach((e) => enqueueEstimate(FOOD, e.id));
 }
 
 // ============================================================
@@ -2871,7 +2893,7 @@ async function startApp() {
   // Send whatever a previous session could not, and again whenever the
   // connection or the app comes back.
   outbox.flush();
-  _heardWhileLoading.forEach((id) => follow(currentUid(), id));
+  _heardWhileLoading.forEach((row) => follow(currentUid(), row));
   window.addEventListener("online", () => outbox.flush());
   document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") outbox.flush(); });
 
