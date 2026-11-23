@@ -493,6 +493,7 @@ test("matches compares objects by value, whatever the order of their keys", () =
   assert.equal(Sync.matches(row, { macros: { fat: { high: 2, low: 1 }, protein: { mine: true, high: 22, low: 22 } } }), true);
   assert.equal(Sync.matches(row, { macros: { fat: { low: 1, high: 2 }, protein: { low: 22, high: 22 } } }), false);
   assert.equal(Sync.matches(row, { macros: { protein: { low: 22, high: 22, mine: true } } }), false);
+  assert.equal(Sync.matches({ macros: { protein: row.macros.protein } }, row), false);
   assert.equal(Sync.matches({ macros: {} }, { macros: {} }), true);
   assert.equal(Sync.matches({ macros: null }, { macros: {} }), false);
   assert.equal(Sync.matches({ x: 1 }, { x: "1" }), false);

@@ -250,8 +250,8 @@ function saveEstimates(entries, answered) {
   }
   saveFoodEntries(entries);
 }
-// What an estimate is for; the numbers are copied, since entries are edited in place.
-const askedOf = ({ food, qty, unit, macros }) => ({ food, qty, unit, macros: JSON.parse(JSON.stringify(macros || {})) });
+// What an estimate is for. An entry's macros are replaced, never changed in place.
+const askedOf = ({ food, qty, unit, macros }) => ({ food, qty, unit, macros: macros || {} });
 const stillAsked = (entry, asked) => entry.estimateStatus === "pending" && Sync.matches(askedOf(entry), asked);
 function applyEstimate(entry, op) {
   const row = foodJsToRow(entry);
@@ -829,7 +829,6 @@ function populateFoodSuggestions() {
 }
 
 function closeFoodModal() {
-  closeNutrition();
   document.getElementById("food-modal").classList.add("hidden");
 }
 
@@ -1178,7 +1177,7 @@ function confirmPhotoItems() {
   const now = new Date();
   const date = localDate(now), time = now.toTimeString().slice(0, 5);
   const created = PhotoEstimate.itemsToEntries(_photoItems, date, time, newId(_photoItems.length))
-    .map((e) => ({ ...e, nutrition: { photo: true, at: Date.now() } }));
+    .map((e) => ({ ...e, nutrition: { photo: true } }));
   if (!created.length) return;
   saveFoodEntries([...entries, ...created]);
   ensureDayExists(date);

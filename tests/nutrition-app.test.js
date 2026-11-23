@@ -77,6 +77,34 @@ test("a number typed on another device while the AI works is not overwritten", a
   assert.equal(on(server, "Tofu").estimate_status, "pending");
 });
 
+for (const [answers, answer] of [["fails", { data: null, error: { context: { status: 502 } } }], ["arrives", { data: { macros: eight(200) }, error: null }]]) {
+  test(`an answer that ${answers} changes nothing once another device has settled the entry`, async () => {
+    const server = serverWith();
+    const app = await bootApp({ server });
+    server.ai = () => answer;
+    const release = holdAi(server);
+    app.addFood("Tofu");
+    await app.settle();
+    Object.assign(server.rowOf("food_entries", "Tofu"), { estimate_status: "manual" });
+    release();
+    await app.settle();
+    assert.deepEqual([on(server, "Tofu").estimate_status, on(server, "Tofu").macros], ["manual", {}]);
+  });
+
+  test(`an answer that ${answers} changes nothing once the entry is settled here`, async () => {
+    const server = serverWith();
+    const app = await bootApp({ server });
+    server.ai = () => answer;
+    const release = holdAi(server);
+    app.addFood("Tofu");
+    await app.settle();
+    app.run(`_cache.food.find((e) => e.food === "Tofu").estimateStatus = "manual"`);
+    release();
+    await app.settle();
+    assert.deepEqual([app.entry("Tofu").estimateStatus, app.entry("Tofu").macros], ["manual", {}]);
+  });
+}
+
 test("an estimate that finds its numbers already there asks nobody", async () => {
   const server = serverWith(row(1, "Sardines", { estimate_status: "pending" }));
   const device = createDevice();
@@ -344,6 +372,7 @@ test("correcting a number makes the entry the one to remember", async () => {
   const server = serverWith(row(1, "Sardines"), row(2, "Sardines", { date: "2026-11-22", macros: eight(300) }));
   const app = await bootApp({ server });
   app.run("editFood(1)");
+  assert.equal(app.isOpen("nm-protein"), false);
   type(app, "nf-protein", "22");
   assert.equal(app.isOpen("nm-protein"), true);
   save(app);
@@ -376,6 +405,27 @@ test("an invalid number is refused beside its field and everything typed stays",
   assert.deepEqual([on(server, "Sardines").macros.protein, on(server, "Sardines").macros.carbs], [mine(22), mine(5)]);
 });
 
+test("messages of a refused save do not greet the next entry", async () => {
+  const app = await bootApp({ server: serverWith(row(1, "Sardines"), row(2, "Tuna")) });
+  openEdit(app, "Sardines");
+  type(app, "nf-protein", "abc");
+  save(app);
+  app.fire("food-cancel", "click");
+  openEdit(app, "Tuna");
+  type(app, "nf-protein", "abc");
+  assert.equal(app.isOpen("ne-protein"), false);
+});
+
+test("ask AI again is offered for numbers the AI gave, and after a failure", async () => {
+  const server = serverWith(row(1, "Sardines"), row(2, "Tuna", { estimate_status: "error", macros: {} }), row(3, "Soup", { estimate_status: "pending", macros: {} }), row(4, "Yakult", { estimate_status: "manual", macros: { calories: mine(1), protein: mine(1), carbs: mine(1), fat: mine(1), fiber: mine(1) } }));
+  const app = await bootApp({ server });
+  const offered = (food) => { openEdit(app, food); return app.isOpen("nutrition-ask"); };
+  assert.deepEqual(["Sardines", "Tuna", "Soup", "Yakult"].map(offered), [true, true, false, false]);
+  openAdd(app, { food: "Sardines", qty: 4, unit: "pcs" });
+  app.fire("nutrition-open", "click");
+  assert.equal(app.isOpen("nutrition-ask"), false, "nothing to ask again about while adding");
+});
+
 test("a label's amount that no longer converts is refused, not read as something else", async () => {
   const server = serverWith();
   const app = await bootApp({ server });
@@ -383,8 +433,8 @@ test("a label's amount that no longer converts is refused, not read as something
   app.fire("nutrition-open", "click");
   type(app, "nutrition-basis-qty", 56);
   type(app, "nf-protein", 11);
-  type(app, "food-unit", "plate");
   type(app, "food-qty", 1);
+  type(app, "food-unit", "plate");
   save(app);
   await app.settle();
   assert.equal(app.el("ne-basis").textContent, "56 g does not convert to 1 plate");
