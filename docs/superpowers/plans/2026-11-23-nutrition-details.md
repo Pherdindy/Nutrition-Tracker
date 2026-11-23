@@ -391,6 +391,14 @@ test("a copy of a copy names the original and keeps its time", () => {
   assert.deepEqual(N.reuse({ entry: second, ratio: 1 }).nutrition, { at: 500, from: { id: 1, date: "2026-11-20" } });
 });
 
+test("the weight of a light food does not drift from copy to copy", () => {
+  const clove = entry({ qty: 1, unit: "clove", nutrition: { at: 500, grams: 3 } });
+  const quarter = entry({ id: 2, qty: 0.25, unit: "clove", ...N.reuse({ entry: clove, ratio: 0.25 }) });
+  assert.equal(N.reuse({ entry: quarter, ratio: 4 }).nutrition.grams, 3);
+  const scaled = (e, qty) => ({ ...e, qty, ...N.resolve({ before: e, after: { food: e.food, qty, unit: "clove" }, tracked: TRACKED, now: NOW }) });
+  assert.equal(scaled(scaled(clove, 0.25), 1).nutrition.grams, 3);
+});
+
 test("an entry with no recorded time is remembered as of when it was eaten", () => {
   assert.equal(N.reuse({ entry: entry(), ratio: 1 }).nutrition.at, Date.parse("2026-11-20T08:00"));
 });
@@ -666,7 +674,7 @@ test("numbers are stored without floating-point noise", () => {
     const { refresh, ...nutrition } = entry.nutrition || {};
     nutrition.at = decidedAt(entry);
     nutrition.from = nutrition.from || { id: entry.id, date: entry.date };
-    if (nutrition.grams > 0) nutrition.grams = round(nutrition.grams * k, 1);
+    if (nutrition.grams > 0) nutrition.grams = round(nutrition.grams * k, 3);
     return { macros: scale(entry.macros, k), nutrition };
   }
 
@@ -706,7 +714,7 @@ test("numbers are stored without floating-point noise", () => {
     const plan = before ? editPlan(before, after) : { kind: "lookup" };
     if (plan.kind === "scale") {
       macros = scale(macros, plan.ratio);
-      if (n.grams > 0) n.grams = round(n.grams * plan.ratio, 1);
+      if (n.grams > 0) n.grams = round(n.grams * plan.ratio, 3);
     } else if (plan.kind === "lookup") {
       const own = pick(macros, mineIds(macros));
       const found = findRemembered(others, after.food, after);

@@ -91,7 +91,7 @@
     const { refresh, ...nutrition } = entry.nutrition || {};
     nutrition.at = decidedAt(entry);
     nutrition.from = nutrition.from || { id: entry.id, date: entry.date };
-    if (nutrition.grams > 0) nutrition.grams = round(nutrition.grams * k, 1);
+    if (nutrition.grams > 0) nutrition.grams = round(nutrition.grams * k, 3);
     return { macros: scale(entry.macros, k), nutrition };
   }
 
@@ -131,7 +131,7 @@
     const plan = before ? editPlan(before, after) : { kind: "lookup" };
     if (plan.kind === "scale") {
       macros = scale(macros, plan.ratio);
-      if (n.grams > 0) n.grams = round(n.grams * plan.ratio, 1);
+      if (n.grams > 0) n.grams = round(n.grams * plan.ratio, 3);
     } else if (plan.kind === "lookup") {
       const own = pick(macros, mineIds(macros));
       const found = findRemembered(others, after.food, after);
