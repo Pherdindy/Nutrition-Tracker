@@ -1,7 +1,106 @@
-# Project Handoff — state as of 2026-07-29
+# Project Handoff — state as of 2026-11-23
 
 Cross-machine session state. **Agent: read this before doing anything; update
 it at the end of each working session.**
+
+## Food/day sync data-loss bugs — FIXED 2026-11-23 (on `main`)
+
+**Any tab, phone or emulator still running an older build keeps deleting rows it
+does not know about: reload every open tab, pull on the laptop, reinstall every
+device.** (Pixel_7 emulator: sync fix installed 2026-11-23, date fix below not yet;
+`android/` assets are git-ignored, so run `npx cap sync android` after pulling.)
+
+1. **Rejected saves.** `food_entries.cal_low/cal_high/pro_low/pro_high` were NOT
+   NULL, so an entry without numbers (estimate pending/failed, credit exhausted)
+   was refused and took the whole-table save with it: 15 rejections in 24 h.
+   Migration `food_nullable_macros_01` APPLIED
+   (`docs/sql/2026-11-23-food-nullable-macros-01.sql`); the identical insert fails
+   before and succeeds after (rolled-back transactions as the test2 account).
+2. **The local list was taken to be the whole table.** Every save upserted all
+   rows and deleted every server row not in the list, with `max + 1` ids and an
+   unpaginated load. Two devices destroyed each other's entries; an app that
+   started while the server was unreachable wiped the account on its first save
+   (reproduced in the harness); anything logged offline was dropped at the next
+   online start; past 1,000 rows the oldest would have been deleted.
+
+**How sync works now** — `www/sync.js` (pure logic, `window.Sync`) plus the
+"Food + day sync" block in `www/app.js`:
+- A save puts only the rows that changed into an outbox: one localStorage entry
+  per change, per account (`nt_u<uid8>_outbox:<table>:<key>`). A flush sends them
+  and clears each only if that row has not changed again since (token). Failures
+  retry on a timer, when the connection or app comes back, and at the next start.
+  At load the outbox is laid over the cloud rows.
+- Only `removeFoodEntry`/`removeDayEntry` delete. Absence never means deletion.
+- Ids come from `newId()` (seconds since 2026 × 2^23 + 23 random bits), not
+  `max + 1`. Days are keyed by date (`on_conflict=user_id,date`); an auto-created
+  day is sent add-if-absent.
+- **AI results are conditional updates** (`saveEstimates` → `outbox.update`): they
+  fill in a row only while it is still pending with the same food/qty/unit, so
+  they cannot resurrect a deleted entry or undo an edit made on another device.
+  A start resumes only estimates this device itself left unfinished
+  (`markResumable`). An answer for a food renamed meanwhile is discarded.
+- Loads and sends are pinned to the account's token (`sessionFor`/`asAccount`):
+  without a session supabase-js silently uses the public key, and the server then
+  answers "no rows" to a read and "done" to a delete of nothing.
+- A row the server refuses (4xx) does not hold back the others.
+  `Sync.fetchAll` pages until the exact count.
+- Sign-out sends first, asks before discarding unsent changes, and wipes only if
+  Supabase really signed out (it keeps the session when offline). Another account
+  signing in from another tab reloads the app.
+
+**Verified:** `tests/sync.test.js` + `tests/food-sync.test.js` run the real
+`www/app.js` in a Node vm against a fake server that enforces production's keys,
+NOT NULLs, read cap and sessions (`tests/helpers/app-harness.js`); 45 of the
+66 app tests fail on the old code (a few only for lack of the new API); every
+protection was mutation-checked.
+Headless Chrome with the real supabase-js against a stand-in PostgREST (11
+scenarios, incl. two tabs and Web Locks). A random multi-device fuzzer (not in the
+repo): the old code lost data in every session; the final code lost nothing in
+22,113 sessions with guaranteed-unique ids. With real ids it lost one entry in
+~7,700 sessions, not reproducible and put down to an id collision: the fuzzer packs
+hours of use into one second, while real use needs two devices adding in the same
+second and a 1-in-8-million draw. The
+by-date upsert SQL ran against production under RLS (rolled back). On the
+emulator with the owner's session: 5 no-op changes queued in airplane mode, app
+killed, relaunched offline, delivered when back online, all rows byte-identical
+before and after; the update filters matched exactly one row for all 99 distinct
+food names. **Not yet seen:** a real new entry from the owner (expect POST 201
+then PATCH 204 in the edge log, and no 400).
+
+**Known limits:** two devices editing the *same row* is last-write-wins; profile,
+settings and assessments are still fire-and-forget (an offline change to those is
+lost at the next online start, and the sign-out prompt does not count them); a
+permanently refused row is only logged in the console; on Android a change is on
+disk within ~2 s, or at once when the app goes to the background, so a hard kill
+inside that window loses it (WebView localStorage; measured); two open tabs do not
+refresh each other's lists; an entry deleted on one device while another has not yet
+confirmed creating it can reappear (seen once by the fuzzer; needs tombstones).
+
+**Noticed, not fixed:** (a) picking a previous food after a reload autofills
+qty/unit from the *oldest* match, not the latest (verified: "Eggs" gives 111 g from
+February) — the nutrition-details spec fixes it; (b) if the startup load fails on a
+device with no local profile, onboarding is shown to an existing user and would
+overwrite their cloud profile; (c) the profile form accepts cleared fields; (d) the
+finance app's new-transaction date has the UTC bug described next
+(`finance/app.js`, `txnDateInput.value`).
+
+## Date bug — FIXED 2026-11-23 (on `main`)
+
+"Today" was the UTC date everywhere: in UTC+8 anything logged between midnight and
+8 AM was filed under the previous day; in the Americas, evening meals went to
+tomorrow; assessment periods were off by a day at the same hours. Now
+`localDate()` in `www/app.js`. `tests/local-date.test.js` runs the real app at a
+fixed instant in Manila and New York. The one entry misfiled so far (id 174, the
+01:04 shake of Nov 23, under Nov 22) was left as it is.
+
+## In design: macro override, label photo, macro set, AI explanation
+
+User request 2026-11-23; **user chose option C** (a correction is remembered for
+the food, and AI estimates are remembered too), with a visible "from <date>" tag
+and an "Ask AI again" button as requirements. **Design approved 2026-11-23**; spec
+on branch `feat/nutrition-details`:
+`docs/superpowers/specs/2026-11-23-nutrition-details-design.md` (awaiting the
+user's review; then the plan). Label photo is a later spec of its own.
 
 ## Where things stand
 

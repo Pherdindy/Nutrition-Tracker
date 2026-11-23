@@ -15,7 +15,7 @@ Update it at the end of each working session.
 
 ## Commands
 
-- `npm test` — Node `--test` unit suite over `tests/` (125 tests)
+- `npm test` — Node `--test` unit suite over `tests/` (258 tests)
 - `npx http-server www -p 8080 -c-1` — browser preview (mobile layout ≤720px)
 - After editing anything in `www/`: `npx cap sync android`
 - Debug install: `cd android; .\gradlew.bat installDebug` (see `BUILD.md` for
@@ -25,8 +25,13 @@ Update it at the end of each working session.
 
 - Supabase client is `sb` (never `supabase` — avoids CDN global collision),
   PKCE flow; vendored at `www/vendor/supabase.min.js`
-- Data reads are synchronous from in-memory `_cache`; writes go cache →
-  localStorage → fire-and-forget `bgWrite()` to Supabase
+- Data reads are synchronous from in-memory `_cache`. Food and day writes go
+  cache → localStorage + a persistent per-account outbox (`www/sync.js`) → Supabase,
+  row by row; a save never implies a delete (use `removeFoodEntry`/
+  `removeDayEntry`), new ids come from `newId()`, AI results go through
+  `saveEstimates`. Profile, settings and assessments still use `bgWrite()`
+- "Today" is `localDate()`, never `toISOString().slice(0, 10)` (that is the UTC
+  date, a different day for part of every day)
 - AI provider API keys (`nt_key_openai`, `nt_key_anthropic`) live in
   localStorage ONLY — never sent to Supabase (server-side proxy is Phase B)
 - Theme + API keys are device-global; the five data keys (`food`, `days`,
