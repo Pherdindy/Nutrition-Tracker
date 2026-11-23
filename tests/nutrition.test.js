@@ -403,7 +403,7 @@ test("ask again does not look at remembered foods, even under a new name", () =>
   const tuna = entry({ id: 5, food: "Tuna", macros: full(300, { protein: mine(30) }), nutrition: { at: 700 } });
   const e = entry();
   const got = N.resolve({ before: e, after: { food: "Tuna", qty: 4, unit: "pcs" }, form: { askAgain: true }, entries: [tuna], tracked: TRACKED, now: NOW });
-  assert.deepEqual([got.macros, got.estimateStatus, got.nutrition], [e.macros, "pending", { refresh: true, stale: true, was: "done" }]);
+  assert.deepEqual([got.macros, got.estimateStatus, got.nutrition], [e.macros, "pending", { refresh: true, stale: true }]);
 });
 
 // ---- the AI's answer -------------------------------------------------------------
@@ -498,8 +498,13 @@ test("without credit, asking again is taken back; a renamed entry still waits", 
     const twice = { ...asked, ...edit(asked, {}, { askAgain: true }) };
     assert.equal(broke(twice).estimateStatus, status, "asked twice");
   }
-  const asked = entry({ estimateStatus: "pending", nutrition: { at: 5, refresh: true, from: { id: 9, date: "2026-11-01" } } });
-  assert.deepEqual(broke(asked), { macros: asked.macros, nutrition: { at: 5, from: { id: 9, date: "2026-11-01" } }, estimateStatus: "done" });
+  // but not over what the user did since, or in the same save
+  const asked = { ...entry(), ...edit(entry(), {}, { askAgain: true }) };
+  assert.equal(broke({ ...asked, ...edit(asked, {}, { cleared: ["carbs"] }) }).estimateStatus, "error");
+  assert.equal(broke({ ...asked, ...edit(entry(), {}, { askAgain: true, cleared: ["carbs"] }) }).estimateStatus, "error");
+  assert.equal(broke({ ...asked, ...edit(asked, {}, { typed: { calories: 1, protein: 2 } }) }).estimateStatus, "done");
+  const copy = entry({ estimateStatus: "pending", nutrition: { at: 5, refresh: true, from: { id: 9, date: "2026-11-01" } } });
+  assert.deepEqual(broke(copy), { macros: copy.macros, nutrition: { at: 5, from: { id: 9, date: "2026-11-01" } }, estimateStatus: "done" });
   const renamed = entry({ estimateStatus: "pending", nutrition: { refresh: true, stale: true } });
   assert.deepEqual(broke(renamed), { macros: renamed.macros, nutrition: renamed.nutrition, estimateStatus: "error" });
   assert.equal(broke(entry({ macros: {}, estimateStatus: "pending" })).estimateStatus, "error");

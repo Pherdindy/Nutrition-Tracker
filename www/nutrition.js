@@ -192,9 +192,10 @@
     if (typedIds.length || cleared.length || weighed) { n.at = now; delete n.from; }
     if (typedIds.length || cleared.length) newStatus = true;
 
+    if (newStatus) delete n.was;
     if (askAgain) {
       n.refresh = true;
-      if (before.estimateStatus !== "pending") n.was = before.estimateStatus; // should there be no credit
+      if (!newStatus && before.estimateStatus !== "pending") n.was = before.estimateStatus; // should there be no credit
       newStatus = true;
     } else if (form && tracked.every((id) => isMine(macros, id))) { // nobody will be asked
       if (n.stale) macros = pick(macros, mineIds(macros));
