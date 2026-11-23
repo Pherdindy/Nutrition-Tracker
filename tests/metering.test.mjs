@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert";
-import { computeCost, quotaState, mergeEstimates, mergedHow, rateLimited } from "../supabase/functions/_shared/metering.mjs";
+import { computeCost, quotaState, mergeEstimates, mergedHow, mergeWorkouts, rateLimited } from "../supabase/functions/_shared/metering.mjs";
 
 const PRICES = {
   "model-a": { in_per_mtok: 1.0, out_per_mtok: 5.0 },
@@ -177,4 +177,16 @@ test("mergedHow says what mergeEstimates did", () => {
     const m = mergeEstimates(a, b, 0.4);
     assert.equal(how === "both", m.cal_low !== m.cal_high || m.pro_low !== m.pro_high, "agrees with the merge");
   }
+});
+
+test("mergeWorkouts averages two answers, or covers both if they disagree", () => {
+  const w = (low, high, minutes = 60) => ({ met_low: low, met_high: high, minutes, basis: {} });
+  assert.deepEqual(mergeWorkouts(w(6, 7), w(6.4, 7.2, 90), 0.4), { met: { low: 6.2, high: 7.1 }, minutes: 75, how: "average" });
+  assert.deepEqual(mergeWorkouts(w(3, 4), w(8, 9), 0.4), { met: { low: 3, high: 9 }, minutes: 60, how: "both" });
+  assert.deepEqual(mergeWorkouts(w(8, 9), w(3, 4), 0.4), { met: { low: 3, high: 9 }, minutes: 60, how: "both" });
+  assert.deepEqual(mergeWorkouts(w(6, 6), w(10, 10), 0.4).how, "average", "exactly at the threshold");
+  assert.deepEqual(mergeWorkouts(w(6, 7, 45.5), null, 0.4), { met: { low: 6, high: 7 }, minutes: 45.5, how: "one" });
+  assert.deepEqual(mergeWorkouts(null, w(5, 6), 0.4), { met: { low: 5, high: 6 }, minutes: 60, how: "one" });
+  assert.deepEqual(mergeWorkouts(w(6.1, 6.1, 50), w(6.2, 6.224, 55), 0.4), { met: { low: 6.15, high: 6.16 }, minutes: 53, how: "average" }, "rounded");
+  assert.equal(mergeWorkouts(w(6, 6, 22.5), w(6, 6, 22.5), 0.4).minutes, 22.5, "but not the minutes the user gave");
 });

@@ -2,8 +2,8 @@
 // Prompts are ported VERBATIM from the pre-B client (www/app.js, www/photo.js,
 // www/macros.js) — do not rewrite the prompt text; it's the tested product voice.
 import { createClient } from "npm:@supabase/supabase-js@2";
-import { computeCost, quotaState, mergeEstimates, mergedHow, rateLimited } from "../_shared/metering.mjs";
-import { MACRO_IDS, extractEstimateFields, extractBasis, knownTotals, weightNote, toNestedMacros, mergePhotoItems } from "../_shared/proxy-shapes.mjs";
+import { computeCost, quotaState, mergeEstimates, mergedHow, mergeWorkouts, rateLimited } from "../_shared/metering.mjs";
+import { MACRO_IDS, extractEstimateFields, extractBasis, extractWorkout, minutesGiven, knownTotals, weightNote, toNestedMacros, mergePhotoItems } from "../_shared/proxy-shapes.mjs";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -85,6 +85,46 @@ function buildEstimatePrompt(payload: any) {
     userOpenAI: user,
     userAnthropic: user,
     tokens: 650,
+    timeoutMs: 30_000,
+  };
+}
+
+function buildSystemPromptWorkout() {
+  return `You are a precise exercise physiology assistant. You base estimates on the 2024 Compendium of Physical Activities and published studies of energy cost. Be consistent and deterministic.
+
+Respond with ONLY a JSON object (no markdown fences) in this exact format:
+{
+  "reasoning": "<one short sentence naming the activity and effort you assumed>",
+  "reference": "<the closest reference activity and where its value comes from, in at most 15 words>",
+  "minutes": <duration in minutes>,
+  "met_lower": <number>,
+  "met_upper": <number>
+}
+MET is the gross metabolic equivalent (1 = resting), averaged over the whole duration with its usual rests.`;
+}
+
+function buildWorkoutPromptText(what: string, minutes: unknown) {
+  const given = minutesGiven(minutes);
+  return `Estimate how hard this workout is, in METs:
+
+Workout: ${what}
+Duration: ${given ? `${given} minutes` : "not given"}
+
+Instructions:
+1. Identify the activity and its intensity. Use any heart rate, pace, speed, power, incline, load, distance or steps that are mentioned
+2. Reference the closest entries of the 2024 Compendium of Physical Activities
+3. Zone 2 means easy, steady aerobic effort (about 60-70% of maximum heart rate)
+4. Use a tight range where the intensity is clear and a wider one where it is not, but stay evidence-based
+5. ${given ? "The duration is a fact: repeat it as minutes" : "Judge the duration in minutes from the description, for example from distance or steps"}`;
+}
+
+function buildWorkoutPrompt(payload: any) {
+  const user = buildWorkoutPromptText(payload.what, payload.minutes);
+  return {
+    system: buildSystemPromptWorkout(),
+    userOpenAI: user,
+    userAnthropic: user,
+    tokens: 400,
     timeoutMs: 30_000,
   };
 }
@@ -491,6 +531,10 @@ function parseEstimate(text: string) {
   return fields && { ...fields, basis: extractBasis(parsed) };
 }
 
+function parseWorkout(text: string, given: number) {
+  try { return extractWorkout(JSON.parse(stripFencesApp(text)), given); } catch { return null; }
+}
+
 // Ported from www/photo.js parseVisionResponse() item extraction. Returns the
 // raw item objects (flat macro fields) or null when the JSON is unparseable.
 function parsePhotoItems(text: string) {
@@ -644,14 +688,20 @@ Deno.serve(async (req) => {
   const feature = reqBody?.feature;
   const payload = (reqBody && typeof reqBody.payload === "object" && reqBody.payload !== null && !Array.isArray(reqBody.payload))
     ? reqBody.payload : {};
-  if (!["estimate", "photo", "assess-round1", "assess-round2"].includes(feature)) {
+  if (!["estimate", "workout", "photo", "assess-round1", "assess-round2"].includes(feature)) {
     return json(400, { error: "unknown feature" });
+  }
+  if (feature === "workout" && (typeof payload.what !== "string" || !payload.what.trim())) {
+    return json(400, { error: "bad request" });
   }
   if (feature === "photo" && (payload.imageDataUrl?.length ?? 0) > 5_000_000) {
     return json(400, { error: "image too large" });
   }
   // Size caps mirroring the photo cap — bound what a client can make us relay.
   if (feature === "estimate" && JSON.stringify(payload).length > 10_000) {
+    return json(400, { error: "payload too large" });
+  }
+  if (feature === "workout" && JSON.stringify(payload).length > 2_000) {
     return json(400, { error: "payload too large" });
   }
   if (feature === "photo" && JSON.stringify(payload.hint ?? null).length > 10_000) {
@@ -719,7 +769,7 @@ Deno.serve(async (req) => {
   if (!quota.allowed) return json(402, { error: "quota exhausted", pct_used: quota.pctUsed });
 
   // 5. Model pair for this feature class
-  const featureClass = feature.startsWith("assess") ? "assess" : feature;
+  const featureClass = feature.startsWith("assess") ? "assess" : feature === "workout" ? "estimate" : feature;
   const pair = planCfg.models?.[featureClass];
   if (!Array.isArray(pair) || pair.length < 2) {
     console.error("missing model pair", plan, featureClass);
@@ -737,6 +787,7 @@ Deno.serve(async (req) => {
   // 6. Build prompts (ported verbatim from the pre-B client)
   const { system, userOpenAI, userAnthropic, tokens, timeoutMs } =
     feature === "estimate" ? buildEstimatePrompt(payload)
+    : feature === "workout" ? buildWorkoutPrompt(payload)
     : feature === "photo" ? buildPhotoPrompt(payload)
     : feature === "assess-round1" ? buildAssessR1Prompt(payload)
     : buildAssessR2Prompt(payload);
@@ -817,6 +868,17 @@ Deno.serve(async (req) => {
       // answers were combined. Shown to the user: no model names.
       basis: [estA, estB].flatMap((est) => (est ? [est.basis] : [])),
       how: mergedHow(estA, estB, widenThreshold),
+      ai_thought_process: { a: okA?.text ?? null, b: okB?.text ?? null },
+    });
+  }
+  if (feature === "workout") {
+    const given = minutesGiven(payload.minutes);
+    const a = okA ? parseWorkout(okA.text, given) : null;
+    const b = okB ? parseWorkout(okB.text, given) : null;
+    if (!a && !b) return json(502, { error: "unparseable model output" });
+    return json(200, {
+      ...mergeWorkouts(a, b, widenThreshold), // met, minutes, how
+      basis: [a, b].flatMap((w) => (w ? [w.basis] : [])), // no model names
       ai_thought_process: { a: okA?.text ?? null, b: okB?.text ?? null },
     });
   }

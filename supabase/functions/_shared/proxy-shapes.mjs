@@ -62,6 +62,25 @@ export function weightNote(grams) {
   return Number.isFinite(grams) && grams > 0 ? ` (weighs ${grams} g in total)` : "";
 }
 
+// The duration a client gives, or 0.
+export function minutesGiven(minutes) {
+  return Number.isFinite(minutes) && minutes > 0 && minutes <= 1440 ? minutes : 0;
+}
+
+// What one model says about a workout, or null if it cannot be right. given: the minutes
+// the user gave, which are a fact.
+export function extractWorkout(o, given = 0) {
+  if (!o || typeof o !== "object") return null;
+  const number = (x) => (typeof x === "number" || (typeof x === "string" && x.trim()) ? Number(x) : NaN);
+  const mets = [number(o.met_lower), number(o.met_upper)], minutes = given || number(o.minutes);
+  if (!mets.every((m) => m >= 1 && m <= 25) || !(minutes > 0 && minutes <= 1440)) return null;
+  const met_low = Math.min(...mets), met_high = Math.max(...mets);
+  return {
+    met_low, met_high, minutes,
+    basis: { ref: line(o.reference, 120), note: line(o.reasoning, 200), met: Math.round((met_low + met_high) * 5) / 10, minutes },
+  };
+}
+
 // Convert a merged/parsed estimate (flat macros) into the nested
 // { id: { low, high } } shape the client stores (Macros.parseMacros shape).
 export function toNestedMacros(est) {

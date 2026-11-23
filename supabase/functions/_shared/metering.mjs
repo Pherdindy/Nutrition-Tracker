@@ -69,6 +69,24 @@ export function mergeEstimates(a, b, widenThreshold) {
   };
 }
 
+// Two answers about a workout as one.
+export function mergeWorkouts(a, b, widenThreshold) {
+  const hundredth = (n) => Math.round(n * 100) / 100;
+  if (!a || !b) {
+    const w = a || b;
+    return { met: { low: w.met_low, high: w.met_high }, minutes: w.minutes, how: "one" };
+  }
+  const both = diverges(avg(a.met_low, a.met_high), avg(b.met_low, b.met_high), widenThreshold);
+  return {
+    met: {
+      low: hundredth(both ? Math.min(a.met_low, b.met_low) : avg(a.met_low, b.met_low)),
+      high: hundredth(both ? Math.max(a.met_high, b.met_high) : avg(a.met_high, b.met_high)),
+    },
+    minutes: a.minutes === b.minutes ? a.minutes : Math.round(avg(a.minutes, b.minutes)),
+    how: both ? "both" : "average",
+  };
+}
+
 export function rateLimited(recentCount, ratePerMin) {
   return recentCount >= ratePerMin;
 }
