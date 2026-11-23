@@ -44,7 +44,7 @@ const _cache = { transactions: null, categories: null, ready: false };
 const DEFAULT_CATEGORIES = {
   expense: {
     'Rent': [], 'Groceries': [], 'Dining Out': [], 'Transport': [], 'Utilities': [],
-    'Subscriptions': [], 'Shopping': [], 'Entertainment': [], 'Health': [], 'Education': [], 'Other': []
+    'Subscriptions': [], 'Shopping': [], 'Entertainment': [], 'Health': [], 'Education': [], 'Travel': [], 'Other': []
   },
   income: {
     'Salary': [], 'Freelance': [], 'Investment': [], 'Gift': [], 'Other': []
@@ -52,10 +52,35 @@ const DEFAULT_CATEGORIES = {
 };
 const UNCATEGORIZED_CATEGORY = 'Uncategorized';
 
+// Built-in categories introduced after the first release. A saved category
+// list never picks up new defaults on its own, so each of these is added to
+// it once per device (see addNewDefaultCategories).
+const ADDED_DEFAULT_CATEGORIES = [{ type: 'expense', name: 'Travel' }];
+const ADDED_DEFAULTS_KEY = 'ft_added_default_categories';
+
 // ---- bgWrite ----
 
 function bgWrite(fn) {
-  Promise.resolve().then(fn).catch(err => console.error('[Supabase bgWrite]', err));
+  return Promise.resolve().then(fn).catch(err => console.error('[Supabase bgWrite]', err));
+}
+
+// ---- Temporary transaction ids ----
+// A new transaction is shown right away under a temporary client id
+// (Date.now()); the server assigns the real id when the background insert
+// returns. Buttons already on the page and open dialogs keep holding the
+// temporary id, so lookups go through resolveTxnId, and server writes go
+// through serverTxnId so they wait for an insert that is still in flight.
+
+const _serverIds = new Map();     // temporary id -> server id, once the insert has landed
+const _insertSettled = new Map(); // temporary id -> promise that settles when the insert finishes or fails
+
+function resolveTxnId(id) {
+  return _serverIds.has(id) ? _serverIds.get(id) : id;
+}
+
+async function serverTxnId(id) {
+  await _insertSettled.get(id);
+  return resolveTxnId(id);
 }
 
 // ---- Category functions ----
@@ -81,8 +106,9 @@ function persistTransactions(list, changedRows = []) {
   if (!changedRows.length) return;
   bgWrite(async () => {
     for (const txn of changedRows) {
-      const { created_at, ...row } = txn;
-      const { error } = await sb.from('transactions').update(row).eq('id', txn.id);
+      const id = await serverTxnId(txn.id);
+      const { created_at, ...row } = { ...txn, id };
+      const { error } = await sb.from('transactions').update(row).eq('id', id);
       if (error) throw error;
     }
   });
@@ -105,6 +131,24 @@ function ensureCategoryExists(cats, type, name) {
   if (!cats[type]) cats[type] = {};
   if (!cats[type][name]) cats[type][name] = [];
   return name;
+}
+
+// The localStorage marker records which additions this device has already
+// applied, so renaming or deleting one later is not undone on the next load.
+function addNewDefaultCategories() {
+  const done = JSON.parse(localStorage.getItem(ADDED_DEFAULTS_KEY) || '[]');
+  const cats = loadCategories();
+  let changed = false;
+  for (const { type, name } of ADDED_DEFAULT_CATEGORIES) {
+    const tag = `${type}/${name}`;
+    if (done.includes(tag)) continue;
+    done.push(tag);
+    if (cats[type] && cats[type][name]) continue;
+    ensureCategoryExists(cats, type, name);
+    changed = true;
+  }
+  if (changed) saveCategories(cats);
+  localStorage.setItem(ADDED_DEFAULTS_KEY, JSON.stringify(done));
 }
 
 function getDeletedCategoryFallback(cats, type, removedName) {
@@ -156,36 +200,45 @@ function saveTransaction(txn) {
   _cache.transactions = list;
   localStorage.setItem('ft_transactions', JSON.stringify(list));
   const tempId = txn.id;
-  bgWrite(async () => {
+  // If the insert fails (offline) the row simply stays on its temporary id
+  // and the next load's resync pushes it.
+  _insertSettled.set(tempId, bgWrite(async () => {
     const { id, created_at, ...row } = txn;
     const { data, error } = await sb.from('transactions').insert(row).select();
     if (error) throw error;
     if (data && data[0]) {
-      _cache.transactions = _cache.transactions.map(t => t.id === tempId ? data[0] : t);
+      _serverIds.set(tempId, data[0].id);
+      // Take the server's id but keep the local fields: the row may have been
+      // edited while the insert was in flight.
+      _cache.transactions = _cache.transactions.map(t => t.id === tempId ? { ...data[0], ...t, id: data[0].id } : t);
       localStorage.setItem('ft_transactions', JSON.stringify(_cache.transactions));
     }
-  });
+  }));
 }
 
 function updateTransaction(txn) {
+  const id = resolveTxnId(txn.id);
   const list = loadTransactions();
-  const idx = list.findIndex(t => t.id === txn.id);
+  const idx = list.findIndex(t => t.id === id);
   if (idx === -1) return;
-  list[idx] = { ...txn };
+  list[idx] = { ...txn, id };
   _cache.transactions = list;
   localStorage.setItem('ft_transactions', JSON.stringify(list));
   bgWrite(async () => {
-    const { created_at, ...row } = txn;
-    const { error } = await sb.from('transactions').update(row).eq('id', txn.id);
+    const serverId = await serverTxnId(id);
+    const { created_at, ...row } = { ...txn, id: serverId };
+    const { error } = await sb.from('transactions').update(row).eq('id', serverId);
     if (error) throw error;
   });
 }
 
 function deleteTransaction(id) {
-  _cache.transactions = loadTransactions().filter(t => t.id !== id);
+  const rowId = resolveTxnId(id);
+  _cache.transactions = loadTransactions().filter(t => t.id !== rowId);
   localStorage.setItem('ft_transactions', JSON.stringify(_cache.transactions));
   bgWrite(async () => {
-    const { error } = await sb.from('transactions').delete().eq('id', id);
+    const serverId = await serverTxnId(rowId);
+    const { error } = await sb.from('transactions').delete().eq('id', serverId);
     if (error) throw error;
   });
 }
@@ -1153,8 +1206,9 @@ function openAddModal() {
 }
 
 function openEditModal(id) {
-  const txn = loadTransactions().find(t => t.id === id); if (!txn) return;
-  editingId = id;
+  const rowId = resolveTxnId(id);
+  const txn = loadTransactions().find(t => t.id === rowId); if (!txn) return;
+  editingId = rowId;
   document.getElementById('txn-modal-title').textContent = 'Edit Transaction';
   txnDateInput.value = txn.date; txnTypeSelect.value = txn.type; populateCategories();
   txnCategorySelect.value = txn.category; populateSubcategories();
@@ -1279,6 +1333,8 @@ async function startApp() {
   populateCategories();
   await initFromSupabase();
   await resyncOfflineData(snapshot);
+  // Before reconcile, which moves transactions of an unlisted category to Uncategorized.
+  addNewDefaultCategories();
   // Reconcile AFTER resync: its bgWrite updates need real server ids to exist.
   reconcileTransactionsWithCategories();
   render();
