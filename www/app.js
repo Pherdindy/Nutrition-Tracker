@@ -224,8 +224,7 @@ const outbox = Sync.createOutbox({
   },
   missed: takeOver,
   agrees: (table, key, row) => {
-    if (table !== FOOD_SYNC.table) return true;
-    const entry = loadFoodEntries().find((e) => FOOD_SYNC.keyOf(e) === key);
+    const entry = loadFoodEntries().find((e) => FOOD_SYNC.keyOf(e) === key); // no day has such a key
     return !entry || (row !== null && Sync.matches(foodJsToRow(entry), row));
   },
   lock: (uid, fn) => (navigator.locks ? navigator.locks.request(`nt-sync-${uid}`, fn) : fn()),
@@ -290,24 +289,22 @@ async function takeOver(uid, table, key) {
 // Another tab of this browser stored a change to an entry: it counts here too. Or it sent
 // one, and cleared it: see what the entry is now.
 const _heardWhileLoading = new Set();
-function changedElsewhere({ key, newValue }) {
+function changedElsewhere({ key }) {
   const uid = currentUid(), prefix = uid && `${outboxPrefix(uid)}${FOOD_SYNC.table}:`;
   if (!prefix || !key || !key.startsWith(prefix)) return;
   const id = key.slice(prefix.length);
-  if (_cache.ready) follow(uid, id, newValue);
+  if (_cache.ready) follow(uid, id);
   else _heardWhileLoading.add(id);
 }
-function follow(uid, id, newValue) {
+function follow(uid, id) {
   const unsent = outbox.pending(FOOD_SYNC.table)[id];
   if (!unsent) {
     takeOver(uid, FOOD_SYNC.table, id).catch((err) => console.error("[Sync]", err));
     return;
   }
-  if (newValue !== undefined && JSON.stringify(unsent) !== newValue) return; // changed again since
   const entries = Sync.overlay(loadFoodEntries(), { [id]: unsent }, FOOD_SYNC.keyOf, foodRowToJs, applyEstimate);
   const entry = entries.find((e) => FOOD_SYNC.keyOf(e) === id);
   if (entry) FOOD_SYNC.known.set(id, FOOD_SYNC.signature(entry));
-  else FOOD_SYNC.known.delete(id);
   saveFoodEntries(entries);
   renderFoodTable(); renderCalorieTracker(); renderNutrition();
 }

@@ -227,8 +227,11 @@ its numbers with the "…" badge.
   copy may be behind: it takes over the server's row, or that it is gone. Otherwise the
   refused numbers would go up with the next edit. Not if the user changed the entry here
   meanwhile, and a following answer that still has to be sent is kept. If the row cannot
-  be read now, the update stays in the outbox and this is done later. Another tab of the
-  same browser does the same when it sees that a change to an entry was sent.
+  be read now, the update stays in the outbox and this is done later.
+- **Tabs of one browser** share the outbox but not their lists. A tab follows what another
+  one stores (`storage` events, also while it is loading), and after sending anything
+  that is not what it has itself it looks the entry up. Otherwise its next edit would put
+  an old copy over another tab's change.
 - Two such updates to one row (a retry, then its answer) are sent one after the other.
 
 ## Explanation
@@ -350,6 +353,7 @@ has a saved choice and is not affected.
 | The source entry is deleted | Entries that reused it keep their numbers and tag. The next log uses the next latest. |
 | Quantity 0 or blank | Not a reuse source; the form requires a quantity above 0, except of an old entry that has none and keeps it. Batch Add skips such a row. |
 | Asked again on one device while another fills a gap | The filling answer counts; the question has to be asked once more. |
+| The entry is deleted elsewhere while its form is open | Saving asks whether to save it as a new entry. |
 | 4 pcs → 48 g → 4 pcs | The way back does not convert (the weight of a piece is no longer known), so the AI is asked. |
 | The AI omits `total_grams` or `reference` | Those lines do not appear. Nothing else changes. |
 | Change on a weight of 0 or not a number | Message beside the field, nothing saved. |
@@ -422,4 +426,6 @@ could undo typed numbers), `stale`, `of`, what is remembered and in which order,
 before a lookup, typed always means the user's, what happens to a typed weight, the
 weight told to the AI instead of its answer being rescaled, autofill over a typed amount,
 402, and the display of small numbers. After its second round: what taking over the
-server's row must leave alone, other tabs, `basis` per number, `was`, quantities.
+server's row must leave alone, other tabs, `basis` per number, `was`, quantities. After
+its third: a tab that sends another tab's change, a label for just what the entry weighs,
+an entry deleted while its form is open.
