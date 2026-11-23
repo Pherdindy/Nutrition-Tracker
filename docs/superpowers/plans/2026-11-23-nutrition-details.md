@@ -3264,8 +3264,9 @@ Nothing above touches production. `main` is the folder the user runs, so the cli
 
 Tasks 1–9 were applied as written above (checked: the blocks, applied in order to
 `ea44b1c`, gave the code of `937cb20`). An independent review of that code then found 16
-defects; the fixes are the commits after it, and the spec's "Amendments" list what they
-changed. The blocks above are therefore the first version, not the final code.
+defects, and two more rounds some more, mostly between tabs and devices; the fixes are the
+commits after it, and the spec's "Amendments" list what they changed. The blocks above are
+therefore the first version, not the final code.
 
 ---
 

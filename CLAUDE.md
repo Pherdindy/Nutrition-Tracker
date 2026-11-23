@@ -15,7 +15,7 @@ Update it at the end of each working session.
 
 ## Commands
 
-- `npm test` — Node `--test` unit suite over `tests/` (273 tests)
+- `npm test` — Node `--test` unit suite over `tests/` (499 tests)
 - `npx http-server www -p 8080 -c-1` — browser preview (mobile layout ≤720px)
 - After editing anything in `www/`: `npx cap sync android`
 - Debug install: `cd android; .\gradlew.bat installDebug` (see `BUILD.md` for
@@ -30,6 +30,10 @@ Update it at the end of each working session.
   row by row; a save never implies a delete (use `removeFoodEntry`/
   `removeDayEntry`), new ids come from `newId()`, AI results go through
   `saveEstimates`. Profile, settings and assessments still use `bgWrite()`
+- An entry's numbers are decided in `www/nutrition.js` (pure) and reach a save only
+  through `numbersFor()`. `entry.macros` is always the total eaten; a nutrient with
+  `mine: true` was typed by the user and no AI answer may change it; the rest
+  (explanation, assumed weight, source) is in `entry.nutrition`
 - "Today" is `localDate()`, never `toISOString().slice(0, 10)` (that is the UTC
   date, a different day for part of every day)
 - AI provider API keys (`nt_key_openai`, `nt_key_anthropic`) live in

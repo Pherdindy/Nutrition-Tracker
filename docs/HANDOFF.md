@@ -7,7 +7,7 @@ it at the end of each working session.**
 
 **Any tab, phone or emulator still running an older build keeps deleting rows it
 does not know about: reload every open tab, pull on the laptop, reinstall every
-device.** (Pixel_7 emulator: sync fix installed 2026-11-23, date fix below not yet;
+device.** (Pixel_7 emulator: `main` as of `829279f` installed 2026-11-23;
 `android/` assets are git-ignored, so run `npx cap sync android` after pulling.)
 
 1. **Rejected saves.** `food_entries.cal_low/cal_high/pro_low/pro_high` were NOT
@@ -73,14 +73,14 @@ lost at the next online start, and the sign-out prompt does not count them); a
 permanently refused row is only logged in the console; on Android a change is on
 disk within ~2 s, or at once when the app goes to the background, so a hard kill
 inside that window loses it (WebView localStorage; measured); two open tabs do not
-refresh each other's lists; an entry deleted on one device while another has not yet
+refresh each other's lists (food entries: they do since `feat/nutrition-details`); an
+entry deleted on one device while another has not yet
 confirmed creating it can reappear (seen once by the fuzzer; needs tombstones).
 
-**Noticed, not fixed:** (a) picking a previous food after a reload autofills
-qty/unit from the *oldest* match, not the latest (verified: "Eggs" gives 111 g from
-February) — the nutrition-details spec fixes it; (b) if the startup load fails on a
+**Noticed, not fixed:** (a) if the startup load fails on a
 device with no local profile, onboarding is shown to an existing user and would
-overwrite their cloud profile; (c) the profile form accepts cleared fields.
+overwrite their cloud profile; (b) the profile form accepts cleared fields. (Autofill
+from the oldest match is fixed on `feat/nutrition-details`.)
 
 ## Date bug — FIXED 2026-11-23 (on `main`)
 
@@ -93,14 +93,78 @@ fixed instant in Manila and New York. The one entry misfiled so far (id 174, the
 had the same bug (early on the 1st, a new transaction landed in last month); it now
 uses its own `currentDateValue()`.
 
-## In design: macro override, label photo, macro set, AI explanation
+## Nutrition details — BUILT 2026-11-23 on `feat/nutrition-details`, NOT on `main`
 
-User request 2026-11-23; **user chose option C** (a correction is remembered for
-the food, and AI estimates are remembered too), with a visible "from <date>" tag
-and an "Ask AI again" button as requirements. **Design approved 2026-11-23**; spec
-on branch `feat/nutrition-details`:
-`docs/superpowers/specs/2026-11-23-nutrition-details-design.md` (awaiting the
-user's review; then the plan). Label photo is a later spec of its own.
+User request 2026-11-23: correct the AI's numbers, photograph a label, which
+nutrients, how the numbers were worked out. **User chose option C** (corrections and
+AI estimates are both remembered), with a visible "from <date>" tag and an "Ask AI
+again" button as requirements. Design approved; the user waived review of the spec
+and the plan ("proceed to implementation, I won't look through it anymore").
+Spec `docs/superpowers/specs/2026-11-23-nutrition-details-design.md` (describes the
+final behaviour), plan `docs/superpowers/plans/2026-11-23-nutrition-details.md` (the
+first version of the code; see its "After the plan"). Label photo is a later spec.
+
+**Waiting for the user's explicit yes, in this order (plan, Task 11):**
+1. Migration `food_nutrition_01` (`docs/sql/2026-11-23-food-nutrition-01.sql`): one
+   nullable column, `food_entries.nutrition jsonb`.
+2. Merge to `main` and push; `npx cap sync android`, reinstall; reload every open tab.
+   **Never before step 1**: `main` is the folder the user serves, and PostgREST refuses
+   a save that names a column it does not know. (Such saves wait on the device and
+   arrive once the column exists; checked in a browser.)
+3. Deploy ai-proxy v12 (a few cents of smoke test on both providers). Until then
+   everything works except the weight and explanation lines, which do not appear.
+
+**What it does:** Edit (and Add, behind "Enter numbers yourself") has a Nutrition
+section: one field per nutrient, "These numbers are for 56 g" for labels, "Ask AI
+again", "How was this worked out?" with the assumed weight and a correction for it.
+Typed numbers are marked yours and no AI answer ever changes them. The same food in a
+convertible amount reuses its latest numbers without an AI call and says "from Nov 20".
+Changing an amount scales instead of asking again. All eight nutrients are saved; fiber
+is on by default (the owner has a saved choice and is not affected). Assessments send
+only what their prompt reads (about 1,440 entries fit instead of 926).
+
+**How it works:** `www/nutrition.js` (pure, `window.Nutrition`) decides everything about
+an entry's numbers; `numbersFor` in `www/app.js` is the only way a save gets numbers;
+`entry.macros` is always the total eaten; per nutrient `{ low, high, mine?, basis? }`;
+everything else about the numbers is in `entry.nutrition` (in the column with `of`: the
+food and amount it is about; ignored if the row is no longer that, which an older build
+can cause). An AI answer, and a retry, is applied only while the entry is as it was when
+asked (food, amount, unit, **macros**, status), here and in the conditional update
+(`macros=eq.<json>`).
+
+**Sync changed with it** (`www/sync.js`, `takeOver`/`follow` in `app.js`): conditional
+updates ask for the row count; one that changed nothing makes this device take over the
+server's row (or that it is gone) instead of keeping a refused answer that its next edit
+would put over another device's typed numbers. Two conditional changes to a row are sent
+in order (`op.then`). A tab follows what another tab of the browser stores, and looks up
+what it sent if it has something else itself.
+
+**Verified:** 499 unit and app tests; about 390 mutations of the final code, all noticed by
+a test but two that change nothing; an independent reviewer in three rounds (each finding
+reproduced, then fixed with a test or listed below; the last ones two-tab corner cases);
+random sessions with late, lost, partial and failing answers (not in the repo), on the
+final code without a failure: 3,142 nutrition and 2,883 sync sessions on several devices,
+1,100 with lost answers, 900 with two tabs and a second device, 60,000 of the form alone;
+22 scenarios in headless Chrome with the real supabase-js, mouse, keyboard and two real
+tabs, plus the 13 sync ones; layout at 320–1280 px, 125% and 150% scaling, larger text,
+both themes; the live build against the new column and the new proxy's answer; the whole
+proxy handler run locally against the live version (20 scenarios: only the intended parts
+differ). On the real server (read-only or no-op, all
+rows' fingerprint unchanged): `macros=eq.<json>` matches exactly, an update reports count
+0 or 1, a missing row reads as null. On the emulator with the owner's 176 entries, look
+only: saving unchanged changes nothing, doubling doubles every number, and 73 of the past
+logs (41%) would have been reused had they been complete. **Not yet seen:** a new entry
+on production.
+
+**Known limits:** two devices changing the same entry is last-write-wins, as before (a
+device or tab left open for long shows old rows until it is reloaded); a device still on
+an older build that changes an amount asks the AI and drops typed numbers, and its
+answers do not know about them; nothing saved before this feature is reused until it was
+asked about once more; 4 pcs → 48 g → 4 pcs asks the AI; photo entries are never reused;
+an entry that is reused with gaps leaves the others blank; asking again on one device
+while another fills a gap has to be repeated; an entry taken over as pending waits for the
+other device or the next start; a row that cannot be read holds back later unsent changes
+until it can.
 
 ## Where things stand
 
