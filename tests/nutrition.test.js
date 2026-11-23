@@ -326,6 +326,15 @@ test("typing on a failed entry asks for the rest, or for nothing if that was all
   assert.equal(edit(failed, {}, { typed: { calories: 1, protein: 22, carbs: 0 } }).estimateStatus, "manual");
 });
 
+test("a label that is for just what the entry weighs is still per weight", () => {
+  const e = entry({ nutrition: { at: 5, grams: 48 } });
+  const typed = { ...e, ...edit(e, {}, { typed: { protein: 11 }, basis: amount(48, "g") }) };
+  assert.deepEqual(typed.macros.protein, { ...mine(11), basis: amount(48, "g") });
+  const heavier = { ...typed, ...edit(typed, {}, { grams: 96 }) };
+  assert.equal(heavier.macros.protein.low, 22);
+  assert.ok(N.explain(heavier, "2026-11-23").lines.includes("Protein 11 g per 48 g is your number"));
+});
+
 test("an amount that is the entry's own is nothing to keep", () => {
   assert.deepEqual(edit(entry(), {}, { typed: { protein: 22 }, basis: amount(4, "pieces") }).macros.protein, mine(22));
 });

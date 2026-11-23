@@ -186,7 +186,8 @@
     const per = (basis && ratio(after, basis, n.grams)) || 1; // how many times the entry the basis is
     for (const id of typedIds) {
       const all = tidy(typed[id] / per);
-      macros[id] = { low: all, high: all, mine: true, ...(per !== 1 && { basis: { qty: basis.qty, unit: basis.unit } }) };
+      const other = basis && (per !== 1 || unit(basis.unit) !== unit(after.unit)); // 4 pcs may weigh just 48 g
+      macros[id] = { low: all, high: all, mine: true, ...(other && { basis: { qty: basis.qty, unit: basis.unit } }) };
     }
     for (const id of cleared) delete macros[id];
     if (typedIds.length || cleared.length || weighed) { n.at = now; delete n.from; }

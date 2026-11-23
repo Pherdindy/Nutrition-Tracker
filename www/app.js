@@ -282,12 +282,24 @@ async function takeOver(uid, table, key) {
   renderFoodTable(); renderCalorieTracker(); renderNutrition();
   return true;
 }
-// Another tab of this browser sent a change to an entry (and cleared it from the outbox).
-function sentElsewhere({ key, newValue }) {
+// Another tab of this browser stored a change to an entry: it counts here too. Or it sent
+// one, and cleared it: see what the entry is now.
+function changedElsewhere({ key, newValue }) {
   const uid = currentUid(), prefix = uid && `${outboxPrefix(uid)}${FOOD_SYNC.table}:`;
-  if (prefix && key && newValue === null && key.startsWith(prefix)) {
-    takeOver(uid, FOOD_SYNC.table, key.slice(prefix.length)).catch((err) => console.error("[Sync]", err));
+  if (!prefix || !key || !key.startsWith(prefix)) return;
+  const id = key.slice(prefix.length);
+  if (newValue === null) {
+    takeOver(uid, FOOD_SYNC.table, id).catch((err) => console.error("[Sync]", err));
+    return;
   }
+  const unsent = outbox.pending(FOOD_SYNC.table)[id];
+  if (!unsent || JSON.stringify(unsent) !== newValue) return; // not any more
+  const entries = Sync.overlay(loadFoodEntries(), { [id]: unsent }, FOOD_SYNC.keyOf, foodRowToJs, applyEstimate);
+  const entry = entries.find((e) => FOOD_SYNC.keyOf(e) === id);
+  if (entry) FOOD_SYNC.known.set(id, FOOD_SYNC.signature(entry));
+  else FOOD_SYNC.known.delete(id);
+  saveFoodEntries(entries);
+  renderFoodTable(); renderCalorieTracker(); renderNutrition();
 }
 // What an estimate is for. An entry's macros are replaced, never changed in place.
 const askedOf = ({ food, qty, unit, macros }) => ({ food, qty, unit, macros: macros || {} });
@@ -902,7 +914,7 @@ function submitFood(again = false) {
   if (!checkNutrition()) return;
   const id = document.getElementById("food-id").value;
   const before = editedEntry();
-  if (id && !before) { console.warn("saveFood: entry not found for id", id); return; }
+  if (id && !before && !confirm("This entry was deleted on another device or tab. Save it as a new entry?")) { closeFoodModal(); return; }
   const base = { date: document.getElementById("food-date").value, time: document.getElementById("food-time").value, ...formFood() };
   const qty = document.getElementById("food-qty");
   const fine = base.qty > 0 || (before && before.qty === base.qty);
@@ -2852,7 +2864,7 @@ async function startApp() {
   // connection or the app comes back.
   outbox.flush();
   window.addEventListener("online", () => outbox.flush());
-  window.addEventListener("storage", sentElsewhere);
+  window.addEventListener("storage", changedElsewhere);
   document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") outbox.flush(); });
 
   maybeShowOnboarding();

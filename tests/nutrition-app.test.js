@@ -326,10 +326,38 @@ test("a tab ignores storage events that are nothing to it", async () => {
   server.rowOf("food_entries", "Tofu").time = "23:00";
   let reads = 0;
   server.afterSelect = async () => { reads++; };
-  for (const event of [{ key: null, newValue: null }, { key: "nt_theme", newValue: null }, { key: `${prefix}days:2026-11-23`, newValue: null }, { key: `${prefix}food_entries:1`, newValue: "{}" }, { key: `${prefix}food_entries:999`, newValue: null }]) {
+  const op = JSON.stringify({ t: "x", row: { id: 1, date: "2026-11-20", time: "22:00", food: "Tofu", qty: 4, unit: "pcs", macros: {} } });
+  for (const event of [{ key: null, newValue: null }, { key: "nt_theme", newValue: null }, { key: `${prefix}days:2026-11-23`, newValue: null }, { key: `${prefix}food_entries:1`, newValue: op }, { key: `${prefix}food_entries:999`, newValue: null }]) {
     await app.windowEvent("storage", event);
   }
   assert.deepEqual([JSON.stringify(app.food()), app.errors, reads], [before, [], 1], "only the last one is an entry's, and that is not here");
+});
+
+test("a tab follows what another tab stores, so that it cannot put its old copy over it", async () => {
+  const server = serverWith(row(1, "Tofu"), row(2, "Rice"), row(3, "Eggs", { estimate_status: "pending", macros: {} }));
+  const device = createDevice();
+  const a = await bootApp({ server, device }), b = await bootApp({ server, device });
+  const prefix = a.run("outboxPrefix(currentUid())");
+  const stored = async (id) => { // what the browser tells the other tab
+    const key = `${prefix}food_entries:${id}`;
+    await b.windowEvent("storage", { key, newValue: device.storage.getItem(key) });
+  };
+  device.online = false;
+  openEdit(a, "Tofu");
+  type(a, "nf-protein", "33");
+  save(a);
+  await stored(1);
+  a.deleteFood("Rice");
+  await stored(2);
+  a.addFood("Soup");
+  await stored(a.entry("Soup").id);
+  await a.settle();
+  assert.deepEqual([b.entry("Tofu").macros.protein, b.foods()], [mine(33), ["Eggs", "Soup", "Tofu"]]);
+  device.online = true;
+  b.editFood("Tofu", { time: "09:30" });
+  await b.windowEvent("online");
+  assert.deepEqual([on(server, "Tofu").macros.protein, on(server, "Tofu").time, server.foods()], [mine(33), "09:30", ["Eggs", "Soup", "Tofu"]]);
+  assert.equal(server.writes.filter((w) => w.rows && w.rows.some((r) => r.food === "Eggs")).length, 0, "nothing else was saved");
 });
 
 test("a tab that hears of another's change keeps what its user does while it looks", async () => {
@@ -779,6 +807,25 @@ test("ask AI again is refused while a number is invalid", async () => {
   await app.settle();
   assert.deepEqual([server.aiCalls, on(server, "Sardines").estimate_status], [[], "done"], "an ordinary save asks nobody");
 });
+
+for (const [answer, foods] of [[true, ["Tofu"]], [false, []]]) {
+  test(`saving an entry that was deleted elsewhere meanwhile asks, and ${answer ? "saves it as a new one" : "lets it go"}`, async () => {
+    const server = serverWith(row(1, "Tofu"));
+    const app = await bootApp({ server, confirm: () => answer });
+    openEdit(app, "Tofu");
+    type(app, "nf-protein", "33");
+    const laptop = await bootApp({ server, device: createDevice() });
+    laptop.deleteFood("Tofu");
+    await laptop.settle();
+    await app.windowEvent("storage", { key: `${app.run("outboxPrefix(currentUid())")}food_entries:1`, newValue: null });
+    assert.deepEqual(app.foods(), []);
+    save(app);
+    await app.settle();
+    assert.match(app.confirms.at(-1), /deleted/);
+    assert.deepEqual([app.isOpen("food-modal"), server.foods()], [false, foods]);
+    if (answer) assert.deepEqual([on(server, "Tofu").macros.protein, on(server, "Tofu").id === 1], [mine(33), false]);
+  });
+}
 
 test("a quantity must be above 0, unless it was like that and is left so", async () => {
   const server = serverWith(row(1, "Sardines"), row(2, "Old", { qty: 0 }));
