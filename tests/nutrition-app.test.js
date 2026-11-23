@@ -212,7 +212,7 @@ test("a retry that failed offline shows as failed after a relaunch, not as waiti
   assert.deepEqual([on(server, "Tofu").estimate_status, again.run("outbox.count()")], ["error", 0]);
 });
 
-test("an answer for an entry deleted elsewhere leaves nothing to do", async () => {
+test("an entry deleted elsewhere goes here too when its answer arrives, and cannot come back", async () => {
   const server = serverWith();
   const phone = await bootApp({ server });
   const release = holdAi(server);
@@ -223,7 +223,83 @@ test("an answer for an entry deleted elsewhere leaves nothing to do", async () =
   await laptop.settle();
   release();
   await phone.settle();
-  assert.deepEqual([server.foods(), phone.run("outbox.count()"), phone.errors], [[], 0, []]);
+  assert.deepEqual([server.foods(), phone.foods(), phone.run("outbox.count()"), phone.errors], [[], [], 0, []]);
+});
+
+test("what the user changes while the answer itself is on its way stands", async () => {
+  // Made, but the app did not hear of it, so it is sent again and then finds nothing.
+  const server = serverWith();
+  const app = await bootApp({ server });
+  const release = holdAi(server);
+  app.addFood("Tofu");
+  await app.settle();
+  server.loseAnswers = true;
+  release();
+  await app.settle();
+  server.loseAnswers = false;
+  assert.equal(on(server, "Tofu").estimate_status, "done");
+  const releaseWrites = server.holdWrites();
+  await app.runTimers(); // sent again, on its way
+  app.run(`editFood(${app.entry("Tofu").id})`);
+  app.el("food-qty").value = "3";
+  type(app, "nf-protein", "33");
+  app.fire("food-form", "submit");
+  await app.settle();
+  releaseWrites();
+  await app.settle();
+  await app.runTimers();
+  assert.deepEqual([app.entry("Tofu").qty, app.entry("Tofu").macros.protein], [3, mine(33)]);
+  assert.deepEqual([on(server, "Tofu").qty, on(server, "Tofu").macros.protein], [3, mine(33)]);
+});
+
+test("an answer that waited behind its retry is not undone here", async () => {
+  const server = serverWith(row(1, "Tofu", { estimate_status: "error", macros: {} }));
+  const app = await bootApp({ server });
+  server.loseAnswers = true; // the retry is made, but the app does not hear of it
+  app.run("retryEstimate(1)");
+  await app.settle();
+  assert.deepEqual([on(server, "Tofu").estimate_status, app.entry("Tofu").estimateStatus], ["pending", "done"]);
+  server.loseAnswers = false;
+  await app.runTimers();
+  assert.deepEqual([on(server, "Tofu").estimate_status, app.entry("Tofu").estimateStatus, app.entry("Tofu").macros], ["done", "done", eight(200)]);
+  assert.deepEqual([server.aiCalls, app.run("outbox.count()")], [["Tofu"], 0]);
+});
+
+test("a tab sees what became of a change another tab sent for it", async () => {
+  const server = serverWith();
+  const device = createDevice();
+  const tab = await bootApp({ server, device });
+  const release = holdAi(server);
+  tab.addFood("Tofu");
+  await tab.settle();
+  await typeElsewhere(server, "Tofu"); // on a second device
+  device.online = false;
+  release();
+  await tab.settle();
+  assert.equal(tab.entry("Tofu").estimateStatus, "done", "the answer is here, unsent");
+  const id = tab.entry("Tofu").id;
+  device.online = true;
+  const other = await bootApp({ server, device }); // another tab of this browser sends it, and is refused
+  await other.settle();
+  const key = device.keys().find((k) => k.includes("_outbox:"));
+  assert.equal(key, undefined);
+  const prefix = tab.run("outboxPrefix(currentUid())");
+  await tab.windowEvent("storage", { key: `${prefix}food_entries:${id}`, newValue: null });
+  assert.deepEqual(tab.entry("Tofu").macros, typedAll);
+  tab.editFood("Tofu", { time: "09:30" });
+  await tab.settle();
+  assert.deepEqual([on(server, "Tofu").macros, on(server, "Tofu").time], [typedAll, "09:30"]);
+});
+
+test("a tab ignores storage events that are nothing to it", async () => {
+  const server = serverWith(row(1, "Tofu"));
+  const app = await bootApp({ server });
+  const prefix = app.run("outboxPrefix(currentUid())");
+  const before = JSON.stringify(app.food());
+  for (const event of [{ key: null, newValue: null }, { key: "nt_theme", newValue: null }, { key: `${prefix}days:2026-11-23`, newValue: null }, { key: `${prefix}food_entries:1`, newValue: "{}" }, { key: `${prefix}food_entries:999`, newValue: null }]) {
+    await app.windowEvent("storage", event);
+  }
+  assert.deepEqual([JSON.stringify(app.food()), app.errors], [before, []]);
 });
 
 test("retrying offline does not save anything over the server's row either", async () => {
@@ -453,9 +529,8 @@ test("a label's numbers are typed as printed and saved as what was eaten, with n
   save(app);
   await app.settle();
   assert.deepEqual(server.aiCalls, []);
-  const saved = on(server, "Tofu");
-  assert.deepEqual([saved.macros.calories, saved.macros.protein, saved.macros.carbs, saved.estimate_status], [mine(142.857), mine(15.7143), mine(0), "manual"]);
-  assert.deepEqual(saved.nutrition.basis, { qty: 56, unit: "g" });
+  const saved = on(server, "Tofu"), basis = { qty: 56, unit: "g" };
+  assert.deepEqual([saved.macros.calories, saved.macros.protein, saved.macros.carbs, saved.estimate_status], [{ ...mine(142.857), basis }, { ...mine(15.7143), basis }, { ...mine(0), basis }, "manual"]);
   assert.equal(saved.pro_low, 15.7143);
 });
 
@@ -504,7 +579,7 @@ test("numbers can be given for another unit of the same food", async () => {
   type(app, "nf-protein", "11");
   save(app);
   await app.settle();
-  assert.deepEqual([on(server, "Sardines").macros.protein, on(server, "Sardines").nutrition.basis], [mine(9.42857), { qty: 56, unit: "g" }]);
+  assert.deepEqual(on(server, "Sardines").macros.protein, { ...mine(9.42857), basis: { qty: 56, unit: "g" } });
 });
 
 test("renaming to a remembered food shows its numbers before saving", async () => {
@@ -665,11 +740,48 @@ test("ask AI again is refused while a number is invalid", async () => {
   assert.deepEqual([server.aiCalls, on(server, "Sardines").estimate_status], [[], "done"], "an ordinary save asks nobody");
 });
 
+test("a quantity must be above 0, unless it was like that and is left so", async () => {
+  const server = serverWith(row(1, "Sardines"), row(2, "Old", { qty: 0 }));
+  const app = await bootApp({ server });
+  for (const bad of ["0", "-2"]) {
+    app.editFood("Sardines", { qty: bad });
+    await app.settle();
+    assert.deepEqual([app.isOpen("food-modal"), on(server, "Sardines").qty], [true, 4], bad);
+    assert.match(app.el("food-qty").validity, /above 0/);
+    type(app, "food-qty", "5");
+    assert.equal(app.el("food-qty").validity, "", "it no longer holds the form back");
+    app.fire("food-cancel", "click");
+  }
+  app.editFood("Old", { time: "19:30" });
+  await app.settle();
+  assert.equal(on(server, "Old").time, "19:30");
+  app.addBatch(["Tofu"]);
+  app.fire("add-food-btn", "click");
+  const rows = app.el("batch-items").children;
+  rows[0].querySelector(".batch-food").value = "Nothing";
+  rows[0].querySelector(".batch-qty").value = "-2";
+  rows[0].querySelector(".batch-unit").value = "pc";
+  app.fire("batch-save", "click");
+  await app.settle();
+  assert.deepEqual(server.foods(), ["Old", "Sardines", "Tofu"]);
+});
+
+test("what stays is shown: a number of the other food while the AI is to be asked after all", async () => {
+  const typed = Object.fromEntries(["calories", "protein", "carbs", "fat", "fiber"].map((id) => [id, mine(1)]));
+  const server = serverWith(row(1, "Sardines", { macros: { ...eight(100, { sodium: range(500) }), ...typed } }));
+  const app = await bootApp({ server });
+  openEdit(app, "Sardines");
+  type(app, "food-name", "Tuna");
+  assert.equal(shown(app, "sodium"), "", "nobody would be asked");
+  type(app, "nf-carbs", "");
+  assert.deepEqual([shown(app, "sodium"), state(app)], ["500", "AI will estimate the other numbers again."]);
+});
+
 test("ask AI again is refused while the form is incomplete", async () => {
   const server = serverWith(row(1, "Sardines"));
   const app = await bootApp({ server });
   openEdit(app, "Sardines");
-  app.el("food-form").reportValidity = () => false; // as with an empty quantity
+  app.el("food-form").reportValidity = () => false; // as with an empty name
   app.fire("nutrition-ask", "click");
   await app.settle();
   assert.deepEqual([app.isOpen("food-modal"), server.aiCalls], [true, []]);

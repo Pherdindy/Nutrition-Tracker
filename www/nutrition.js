@@ -95,7 +95,7 @@
   }
 
   function reuse({ entry, ratio: k }) {
-    const { refresh, stale, ...nutrition } = entry.nutrition || {};
+    const { refresh, stale, was, ...nutrition } = entry.nutrition || {};
     nutrition.at = decidedAt(entry);
     nutrition.from = nutrition.from || { id: entry.id, date: entry.date };
     if (nutrition.grams > 0) nutrition.grams = tidy(nutrition.grams * k);
@@ -115,6 +115,8 @@
     return tracked.every((id) => isMine(macros, id)) ? "manual" : "done";
   }
 
+  const total = ({ basis, ...m }) => m;
+
   // What a changed food or amount means for the numbers: how many times the old amount
   // the new one is (null if that cannot be known), and whether they are another food's
   // or amount's now.
@@ -124,20 +126,20 @@
     return { ratio: k, lookup: k === null || !sameFood(before.food, after.food) };
   }
 
-  // The user's numbers were typed per weight; for something that is counted they then
-  // rest on what it weighs.
-  function restOnWeight({ macros, nutrition: n }) {
-    return mineIds(macros).length > 0 && !!n && !!n.basis && isWeight(n.basis.unit);
-  }
+  // A number typed per a weight (11 g per 56 g) rests, for something that is counted, on
+  // what that weighs.
+  const restsOnWeight = (m) => !!(m && m.mine && m.basis && isWeight(m.basis.unit));
 
   // What a new answer, or only numbers of the user's, leave nothing of.
-  const ANSWERED = ["refresh", "stale", "from", "why", "how", "asked", "photo"];
+  const ANSWERED = ["refresh", "was", "stale", "from", "why", "how", "asked", "photo"];
 
   // The numbers an entry is saved with.
   //   before   the entry as it was, or null when adding
   //   after    { food, qty, unit }
   //   form     { typed: { id: number }, cleared: [id], basis, grams, askAgain } or null;
-  //            typed numbers are for `basis`, or for the entry's own amount without one
+  //            typed numbers are for `basis`, or for the entry's own amount without one.
+  //            Without a form an edit is only a preview: what it would be if nothing is
+  //            typed, and no more than that is decided
   //   entries  all of them, to remember from
   function resolve({ before = null, after, form = null, entries = [], tracked, now }) {
     const { typed = {}, cleared = [], basis = null, grams = null, askAgain = false } = form || {};
@@ -152,18 +154,19 @@
       if (!IDS.some((id) => has(macros, id))) newStatus = true; // nothing to scale: ask for this amount
     }
     if (plan.lookup) {
-      const own = pick(macros, mineIds(macros));
+      const own = Object.fromEntries(mineIds(macros).map((id) => [id, total(macros[id])]));
       const found = askAgain ? null : findRemembered(entries, after.food, after);
       if (found) {
         const got = reuse(found);
         macros = { ...got.macros, ...own };
         n = got.nutrition;
+        if (Object.keys(own).length) n.at -= 1; // never before what it was copied from
       } else {
+        macros = { ...macros, ...own };
         delete n.grams; // the weight of what it was before
         delete n.gramsMine;
         if (theirIds(macros).length) n.refresh = n.stale = true; // what it was before: shown until the answer lands
       }
-      if (Object.keys(own).length) delete n.basis; // they are totals now
       newStatus = true;
     }
     if (isWeight(after.unit)) { // the amount says it
@@ -173,8 +176,8 @@
 
     const weighed = grams > 0 && n.grams > 0;
     if (weighed) {
-      const moved = restOnWeight({ macros, nutrition: n }) ? macros : pick(macros, theirIds(macros));
-      macros = { ...macros, ...scale(moved, grams / n.grams) };
+      const moved = IDS.filter((id) => has(macros, id) && (!macros[id].mine || restsOnWeight(macros[id])));
+      macros = { ...macros, ...scale(pick(macros, moved), grams / n.grams) };
       n.grams = grams;
       n.gramsMine = true;
     }
@@ -182,24 +185,20 @@
     const typedIds = Object.keys(typed);
     const per = (basis && ratio(after, basis, n.grams)) || 1; // how many times the entry the basis is
     for (const id of typedIds) {
-      const total = tidy(typed[id] / per);
-      macros[id] = { low: total, high: total, mine: true };
+      const all = tidy(typed[id] / per);
+      macros[id] = { low: all, high: all, mine: true, ...(per !== 1 && { basis: { qty: basis.qty, unit: basis.unit } }) };
     }
     for (const id of cleared) delete macros[id];
-    if (typedIds.length) {
-      if (per !== 1) n.basis = { qty: basis.qty, unit: basis.unit };
-      else delete n.basis;
-    }
     if (typedIds.length || cleared.length || weighed) { n.at = now; delete n.from; }
     if (typedIds.length || cleared.length) newStatus = true;
 
-    if (askAgain) { n.refresh = true; newStatus = true; }
-    else if (tracked.every((id) => isMine(macros, id))) { // nobody will be asked
-      if (n.stale) {
-        macros = pick(macros, mineIds(macros));
-        for (const field of ANSWERED) delete n[field];
-      }
-      delete n.refresh;
+    if (askAgain) {
+      n.refresh = true;
+      if (before.estimateStatus !== "pending") n.was = before.estimateStatus; // should there be no credit
+      newStatus = true;
+    } else if (form && tracked.every((id) => isMine(macros, id))) { // nobody will be asked
+      if (n.stale) macros = pick(macros, mineIds(macros));
+      for (const field of n.stale ? ANSWERED : ["refresh", "was"]) delete n[field];
     }
 
     return { macros, nutrition: orNone(n), estimateStatus: newStatus ? statusFor(macros, tracked, n) : before.estimateStatus };
@@ -222,7 +221,8 @@
   // What it weighs, for the AI to go by: the user said so, or typed numbers rest on it.
   function knownWeight(entry) {
     const n = entry.nutrition || {};
-    return n.grams > 0 && !isWeight(entry.unit) && (n.gramsMine || restOnWeight(entry)) ? n.grams : undefined;
+    const rests = IDS.some((id) => restsOnWeight((entry.macros || {})[id]));
+    return n.grams > 0 && !isWeight(entry.unit) && (n.gramsMine || rests) ? n.grams : undefined;
   }
 
   function assumedGrams(basis) {
@@ -243,8 +243,11 @@
     if (!answer || !answer.macros) {
       // Asking again is then taken back; but a renamed entry has another food's numbers.
       if (!noCredit || n.stale) return { macros: before, nutrition: entry.nutrition, estimateStatus: "error" };
+      const { was } = n;
       delete n.refresh;
-      return done(before);
+      delete n.was;
+      const back = done(before);
+      return was === undefined ? back : { ...back, estimateStatus: was };
     }
 
     const macros = n.refresh ? pick(before, mineIds(before)) : { ...before };
@@ -283,7 +286,7 @@
   // entry's own amount until the user sets one. What is typed is the user's, and stays
   // as typed, for whatever amount is shown.
   function createForm() {
-    let saved = {}, savedGrams = null, amount = {}, allMove = false, what = null;
+    let saved = {}, savedGrams = null, amount = {}, what = null;
     let basis = null;    // { qty, unit }, once set
     let badBasis = null; // what its field says while that is not an amount
     let weightText = "";
@@ -296,7 +299,7 @@
 
     function savedText(id) {
       if (!has(saved, id)) return "";
-      const byWeight = savedGrams && weight() && (allMove || !isMine(saved, id)) ? weight() / savedGrams : 1;
+      const byWeight = savedGrams && weight() && (!isMine(saved, id) || restsOnWeight(saved[id])) ? weight() / savedGrams : 1;
       return show(((saved[id].low + saved[id].high) / 2) * byWeight * (times() || 1));
     }
 
@@ -305,7 +308,6 @@
         saved = entry.macros || {};
         savedGrams = (entry.nutrition && entry.nutrition.grams) || null;
         amount = { qty: entry.qty, unit: entry.unit };
-        allMove = restOnWeight(entry); // with the weight
         const now = JSON.stringify([entry.food, entry.qty, entry.unit]);
         if (now !== what || !savedGrams) weightText = ""; // it was typed for something else
         what = now;
@@ -400,10 +402,10 @@
       lines.push("The AI works from what it knows about food. It does not look values up.");
     }
 
-    const per = n.basis ? ratio(entry, n.basis, n.grams) : null;
     for (const id of mineIds(entry.macros)) {
-      const m = Macros.byId(id), total = entry.macros[id].low;
-      lines.push(`${m.label} ${show(per ? total * per : total)} ${m.unit}${per ? ` per ${sayAmount(n.basis)}` : ""} is your number`);
+      const { low, basis } = entry.macros[id], m = Macros.byId(id);
+      const per = basis ? ratio(entry, basis, n.grams) : null;
+      lines.push(`${m.label} ${show(per ? low * per : low)} ${m.unit}${per ? ` per ${sayAmount(basis)}` : ""} is your number`);
     }
     if (n.from) lines.push(`Numbers ${tag(entry, today)}`);
     if (n.photo) lines.push("Estimated from your photo");

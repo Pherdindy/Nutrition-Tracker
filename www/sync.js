@@ -107,9 +107,9 @@
   //                               single { key, row, match }, and count is how many
   //                               rows it changed. Must be sent as that account or
   //                               not at all
-  //   missed(uid, table, key)     an update changed no row: it is no longer what this
-  //                               device thought. -> false if that cannot be dealt
-  //                               with now; the update is then sent again later
+  //   missed(uid, table, key)     an update changed no row (or that is not known): it may
+  //                               be no longer what this device thought. -> false if that
+  //                               cannot be dealt with now; it is then sent again later
   //   lock(uid, fn)               runs fn while no other tab is sending
   //   schedule(fn, ms), cancel(handle), log(...)
   function createOutbox({ owner, list, set, remove, send, missed, lock, schedule, cancel, log }) {
@@ -172,7 +172,7 @@
       const res = await send(uid, table, kind, entries.map(([key, op]) =>
         (kind === "delete" ? key : kind === "update" ? { key, row: op.row, match: op.match } : op.row)));
       if (!res.error) {
-        if (kind === "update" && res.count === 0 && !(await missed(uid, table, entries[0][0]))) return false;
+        if (kind === "update" && !(res.count > 0) && !(await missed(uid, table, entries[0][0]))) return false;
         settle(uid, table, entries);
         return true;
       }

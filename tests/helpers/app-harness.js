@@ -58,6 +58,7 @@ function createFakeServer({ food = [], days = [], profile = null, readCap = READ
     reject: null, // (table, row) => true: the database refuses this row
     afterSelect: null, // async (table, device): runs after a read was answered, before the app gets it
     unreadable: false, // reads fail, as when the connection drops
+    loseAnswers: false, // writes are made, but the app never hears of it
     aiCalls: [],
     ai: () => ({ data: { macros: { calories: { low: 100, high: 110 }, protein: { low: 10, high: 11 }, carbs: { low: 5, high: 6 }, fat: { low: 2, high: 3 }, fiber: { low: 1, high: 2 }, sugar: { low: 1, high: 2 }, saturatedFat: { low: 0, high: 1 }, sodium: { low: 50, high: 60 } } }, error: null }),
     usage: { pct_used: 0, plan: "owner", exhausted: false },
@@ -161,6 +162,7 @@ function createFakeServer({ food = [], days = [], profile = null, readCap = READ
       await tick();
       if (!device.online || (server.unreadable && q.op === "select")) return fail(0, "", "TypeError: Failed to fetch");
       const result = execute(await identity(device, bootUid, q), q);
+      if (server.loseAnswers && q.op !== "select") return fail(0, "", "TypeError: Failed to fetch");
       if (q.op === "select" && server.afterSelect) {
         running--; // the answer is on its way: the server itself is idle
         try { await server.afterSelect(q.table, device); } finally { running++; }
@@ -311,7 +313,8 @@ class FakeElement {
   contains() { return false; }
   remove() {}
   focus() {}
-  reportValidity() { return true; }
+  reportValidity() { return !this.validity; }
+  setCustomValidity(message) { this.validity = message; }
   scrollIntoView() {}
 }
 
@@ -423,9 +426,9 @@ async function bootApp({ server = createFakeServer(), device = createDevice(), u
       due.forEach((t) => t.fn());
       await settle();
     },
-    async windowEvent(type) {
-      (windowListeners[type] || []).forEach((fn) => fn({ type }));
-      (documentListeners[type] || []).forEach((fn) => fn({ type }));
+    async windowEvent(type, event = {}) {
+      (windowListeners[type] || []).forEach((fn) => fn({ type, ...event }));
+      (documentListeners[type] || []).forEach((fn) => fn({ type, ...event }));
       await settle();
     },
 

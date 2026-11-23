@@ -93,6 +93,7 @@ const full = (kcal = 100, over = {}) => ({
 });
 const three = (kcal) => ({ calories: { low: kcal, high: kcal }, protein: { low: 10, high: 10 }, carbs: { low: 1, high: 1 } });
 const mine = (n) => ({ low: n, high: n, mine: true });
+const per56 = (n) => ({ ...mine(n), basis: { qty: 56, unit: "g" } }); // typed as so much per 56 g
 const TRACKED = ["calories", "protein", "carbs"];
 const NOW = 1795500000000;
 const entry = (over = {}) => ({ id: 1, date: "2026-11-20", time: "08:00", food: "Sardines", qty: 4, unit: "pcs", macros: full(), estimateStatus: "done", ...over });
@@ -138,11 +139,11 @@ test("the most recently decided entry wins, then the newest id", () => {
 });
 
 test("reusing scales everything and names where the numbers came from", () => {
-  const e = entry({ id: 7, macros: full(100, { protein: mine(22) }), nutrition: { at: 500, grams: 48, why: [{ ref: "x" }], asked: amount(4, "pcs"), refresh: true, stale: true, basis: amount(56, "g") } });
+  const e = entry({ id: 7, macros: full(100, { protein: per56(22) }), nutrition: { at: 500, grams: 48, why: [{ ref: "x" }], asked: amount(4, "pcs"), refresh: true, stale: true } });
   const got = N.reuse({ entry: e, ratio: 1.5 });
   assert.deepEqual(got.macros.calories, { low: 150, high: 150 });
-  assert.deepEqual(got.macros.protein, mine(33));
-  assert.deepEqual(got.nutrition, { at: 500, grams: 72, why: [{ ref: "x" }], asked: amount(4, "pcs"), basis: amount(56, "g"), from: { id: 7, date: "2026-11-20" } });
+  assert.deepEqual(got.macros.protein, per56(33));
+  assert.deepEqual(got.nutrition, { at: 500, grams: 72, why: [{ ref: "x" }], asked: amount(4, "pcs"), from: { id: 7, date: "2026-11-20" } });
 });
 
 test("a copy of a copy names the original and keeps its time", () => {
@@ -208,8 +209,8 @@ test("typing some numbers leaves the rest to the remembered entry, and is decide
 
 test("a label's numbers are scaled to what was eaten", () => {
   const got = add({ after: { food: "Sardines", qty: 80, unit: "g" }, form: { typed: { protein: 11 }, basis: amount(56, "g") } });
-  assert.deepEqual(got.macros, { protein: mine(15.7143) });
-  assert.deepEqual(got.nutrition, { basis: amount(56, "g"), at: NOW });
+  assert.deepEqual(got.macros, { protein: per56(15.7143) });
+  assert.deepEqual(got.nutrition, { at: NOW });
   assert.equal(got.estimateStatus, "pending");
 });
 
@@ -270,29 +271,28 @@ test("a new name, or an amount that does not convert, asks again and keeps the o
 
 test("a new name or unit forgets the weight of what it was before, and what typed numbers were per", () => {
   for (const after of [{ food: "Tuna" }, { qty: 2, unit: "cups" }]) {
-    const e = entry({ macros: full(100, { protein: mine(9.429) }), nutrition: { at: 5, grams: 48, gramsMine: true, basis: amount(56, "g") } });
+    const e = entry({ macros: full(100, { protein: per56(9.429) }), nutrition: { at: 5, grams: 48, gramsMine: true } });
     const got = edit(e, after);
     assert.deepEqual([got.macros.protein, got.nutrition], [mine(9.429), { at: 5, refresh: true, stale: true }], "typed numbers stay as totals");
   }
 });
 
 test("a typed number carried over to a remembered food is a total there", () => {
-  const tuna = entry({ id: 5, food: "Tuna", macros: full(300, { fat: mine(3) }), nutrition: { at: 700, grams: 60, basis: amount(56, "g") } });
-  const rename = (macros) => N.resolve({ before: entry({ macros }), after: { food: "Tuna", qty: 4, unit: "pcs" }, entries: [tuna], tracked: TRACKED, now: NOW });
-  assert.equal(rename(full(100, { protein: mine(22) })).nutrition.basis, undefined);
-  assert.deepEqual(rename(full(100)).nutrition.basis, amount(56, "g"));
+  const tuna = entry({ id: 5, food: "Tuna", macros: full(300, { fat: per56(3) }), nutrition: { at: 700, grams: 60 } });
+  const got = N.resolve({ before: entry({ macros: full(100, { protein: per56(22) }) }), after: { food: "Tuna", qty: 4, unit: "pcs" }, entries: [tuna], tracked: TRACKED, now: NOW });
+  assert.deepEqual([got.macros.protein, got.macros.fat], [mine(22), per56(3)]);
 });
 
 test("a new name that is remembered takes those numbers, but never over a typed one", () => {
   const tuna = entry({ id: 5, food: "Tuna", macros: full(300), nutrition: { at: 700 } });
   const got = N.resolve({ before: entry({ macros: full(100, { protein: mine(22) }) }), after: { food: "Tuna", qty: 4, unit: "pcs" }, entries: [tuna], tracked: TRACKED, now: NOW });
   assert.deepEqual([got.macros.calories.low, got.macros.protein, got.estimateStatus], [300, mine(22), "done"]);
-  assert.deepEqual(got.nutrition, { at: 700, from: { id: 5, date: "2026-11-20" } });
+  assert.deepEqual(got.nutrition, { at: 699, from: { id: 5, date: "2026-11-20" } }, "just before what it was copied from: it has a number of its own");
 });
 
 test("a rename where everything tracked is typed asks nobody, and leaves nothing of the other food", () => {
   const typed = { calories: mine(1), protein: mine(2), carbs: mine(3) };
-  const before = edit(entry({ macros: full(100, typed) }), { food: "Tuna" });
+  const before = edit(entry({ macros: full(100, typed) }), { food: "Tuna" }, {});
   assert.deepEqual([before.macros, before.estimateStatus, before.nutrition], [typed, "manual", undefined]);
   const now = edit(entry(), { food: "Tuna" }, { typed: { calories: 1, protein: 2, carbs: 3 } });
   assert.deepEqual([now.macros, now.estimateStatus, now.nutrition], [typed, "manual", { at: NOW }]);
@@ -307,6 +307,8 @@ test("a renamed entry with a typed number does not take over the other food's me
   const renamed = { ...entry({ id: 9, food: "Tuna" }), ...N.resolve({ before: entry({ macros: full(100, { protein: mine(22) }) }), after: { food: "Tuna", qty: 4, unit: "pcs" }, entries: [tuna], tracked: TRACKED, now: NOW }) };
   assert.deepEqual(renamed.macros.protein, mine(22));
   assert.equal(N.findRemembered([tuna, renamed], "Tuna", amount(4, "pcs")).entry.id, 5);
+  const { fiber, ...gap } = tuna.macros; // also once its gap is filled in the renamed one
+  assert.equal(N.findRemembered([{ ...tuna, macros: gap }, renamed], "Tuna", amount(4, "pcs")).entry.id, 5);
 });
 
 test("typing a number makes it mine and the entry the one to remember", () => {
@@ -322,14 +324,16 @@ test("typing on a failed entry asks for the rest, or for nothing if that was all
   assert.equal(edit(failed, {}, { typed: { calories: 1, protein: 22, carbs: 0 } }).estimateStatus, "manual");
 });
 
-test("typing numbers for the entry's own amount drops an older label amount", () => {
-  assert.deepEqual(edit(entry({ nutrition: { at: 5, basis: amount(56, "g") } }), {}, { typed: { protein: 22 } }).nutrition, { at: NOW });
+test("each typed number keeps what it was typed per", () => {
+  const e = entry({ macros: full(100, { protein: per56(15.7143), fat: per56(6) }), nutrition: { at: 5, grams: 48 } });
+  const got = edit(e, {}, { typed: { protein: 22 } });
+  assert.deepEqual([got.macros.protein, got.macros.fat], [mine(22), per56(6)]);
 });
 
 test("a label amount on pieces goes through their weight", () => {
   const got = edit(entry({ nutrition: { at: 5, grams: 48 } }), {}, { typed: { protein: 11 }, basis: amount(56, "g") });
   near(got.macros.protein.low, 11 * 48 / 56);
-  assert.deepEqual(got.nutrition.basis, amount(56, "g"));
+  assert.deepEqual(got.macros.protein.basis, amount(56, "g"));
 });
 
 test("clearing a number makes the entry the one to remember", () => {
@@ -353,12 +357,13 @@ test("correcting the weight rescales the AI's numbers, not the typed ones", () =
 });
 
 test("numbers typed per weight rest on the weight: correcting it moves them too", () => {
-  const e = entry({ macros: full(100, { protein: mine(9.429) }), nutrition: { at: 5, grams: 48, basis: amount(56, "g") } }); // 11 g per 56 g
+  // 11 g of protein per 56 g; 22 g of fat for these four; 3 g of fiber per 2 pieces
+  const perTwo = { ...mine(6), basis: amount(2, "pcs") };
+  const e = entry({ macros: full(100, { protein: per56(9.429), fat: mine(22), fiber: perTwo }), nutrition: { at: 5, grams: 48 } });
   const got = edit(e, {}, { grams: 96 });
-  assert.deepEqual([got.macros.protein, got.macros.calories.low], [mine(18.858), 200]);
-  assert.ok(N.explain({ ...e, ...got }, "2026-11-23").lines.includes("Protein 11 g per 56 g is your number"));
-  const typedPerPiece = edit(entry({ macros: full(100, { protein: mine(9) }), nutrition: { at: 5, grams: 48, basis: amount(2, "pcs") } }), {}, { grams: 96 });
-  assert.deepEqual(typedPerPiece.macros.protein, mine(9));
+  assert.deepEqual([got.macros.protein, got.macros.fat, got.macros.fiber, got.macros.calories.low], [per56(18.858), mine(22), perTwo, 200]);
+  const { lines } = N.explain({ ...e, ...got }, "2026-11-23");
+  for (const line of ["Protein 11 g per 56 g is your number", "Fat 22 g is your number", "Fiber 3 g per 2 pcs is your number"]) assert.ok(lines.includes(line), line);
 });
 
 test("a weight that is typed is the user's, also if it is the one assumed", () => {
@@ -379,7 +384,7 @@ test("weight, amount and a typed number in one save", () => {
   const e = entry({ nutrition: { at: 5, grams: 48 } });
   const got = edit(e, { qty: 8 }, { grams: 192, typed: { protein: 11 }, basis: amount(96, "g") });
   assert.equal(got.macros.calories.low, 400); // x2 for the amount, x2 for the weight
-  assert.deepEqual(got.macros.protein, mine(22)); // 11 per 96 g, 192 g eaten
+  assert.deepEqual(got.macros.protein, { ...mine(22), basis: amount(96, "g") }); // 11 per 96 g, 192 g eaten
 });
 
 test("typing every tracked number ends the wait for an answer", () => {
@@ -398,7 +403,7 @@ test("ask again does not look at remembered foods, even under a new name", () =>
   const tuna = entry({ id: 5, food: "Tuna", macros: full(300, { protein: mine(30) }), nutrition: { at: 700 } });
   const e = entry();
   const got = N.resolve({ before: e, after: { food: "Tuna", qty: 4, unit: "pcs" }, form: { askAgain: true }, entries: [tuna], tracked: TRACKED, now: NOW });
-  assert.deepEqual([got.macros, got.estimateStatus, got.nutrition], [e.macros, "pending", { refresh: true, stale: true }]);
+  assert.deepEqual([got.macros, got.estimateStatus, got.nutrition], [e.macros, "pending", { refresh: true, stale: true, was: "done" }]);
 });
 
 // ---- the AI's answer -------------------------------------------------------------
@@ -485,6 +490,14 @@ test("filling gaps does not make older numbers newer", () => {
 
 test("without credit, asking again is taken back; a renamed entry still waits", () => {
   const broke = (e) => N.applyAnswer(e, null, { tracked: TRACKED, now: NOW, noCredit: true });
+  for (const status of ["done", "error", null]) { // whatever it was, blanks or not
+    const before = entry({ estimateStatus: status, macros: { calories: { low: 1, high: 1 } } });
+    const asked = { ...before, ...edit(before, {}, { askAgain: true }) };
+    assert.equal(asked.estimateStatus, "pending");
+    assert.deepEqual(broke(asked), { macros: before.macros, nutrition: undefined, estimateStatus: status });
+    const twice = { ...asked, ...edit(asked, {}, { askAgain: true }) };
+    assert.equal(broke(twice).estimateStatus, status, "asked twice");
+  }
   const asked = entry({ estimateStatus: "pending", nutrition: { at: 5, refresh: true, from: { id: 9, date: "2026-11-01" } } });
   assert.deepEqual(broke(asked), { macros: asked.macros, nutrition: { at: 5, from: { id: 9, date: "2026-11-01" } }, estimateStatus: "done" });
   const renamed = entry({ estimateStatus: "pending", nutrition: { refresh: true, stale: true } });
@@ -494,11 +507,12 @@ test("without credit, asking again is taken back; a renamed entry still waits", 
 });
 
 test("numbers typed per weight keep the weight they rest on when the AI answers again", () => {
-  const perWeight = { at: 5, grams: 48, basis: amount(56, "g"), refresh: true };
+  const perWeight = { at: 5, grams: 48, refresh: true };
   const heavier = answer(100, { basis: [{ ref: "r", grams: 60 }] });
-  const got = apply(entry({ macros: full(100, { protein: mine(9.429) }), nutrition: perWeight }), heavier);
-  assert.equal(N.knownWeight(entry({ macros: full(100, { protein: mine(9.429) }), nutrition: perWeight })), 48, "the AI is told it");
-  assert.deepEqual([got.macros.protein, got.macros.calories.low, got.nutrition.grams], [mine(9.429), 100, 48]);
+  const got = apply(entry({ macros: full(100, { protein: per56(9.429) }), nutrition: perWeight }), heavier);
+  assert.equal(N.knownWeight(entry({ macros: full(100, { protein: per56(9.429) }), nutrition: perWeight })), 48, "the AI is told it");
+  assert.equal(N.knownWeight(entry({ macros: full(100, { protein: { ...mine(9), basis: amount(2, "pcs") } }), nutrition: perWeight })), undefined);
+  assert.deepEqual([got.macros.protein, got.macros.calories.low, got.nutrition.grams], [per56(9.429), 100, 48]);
   assert.ok(N.explain({ ...entry(), ...got }, "2026-11-23").lines.includes("Protein 11 g per 56 g is your number"));
   const noneTyped = apply(entry({ nutrition: perWeight }), heavier);
   assert.deepEqual([noneTyped.macros.calories.low, noneTyped.nutrition.grams], [100, 60], "nothing rests on it any more");
@@ -588,8 +602,7 @@ test("a label is typed as printed, before or after saying what it is for", () =>
     if (!numbersFirst) f.type("protein", "11");
     assert.deepEqual([f.text("protein"), f.text("calories")], ["11", "112"]);
     const saved = N.resolve({ before: entry({ ...eaten, macros: full(160) }), after: eaten, form: f.result(), tracked: TRACKED, now: NOW });
-    assert.deepEqual([saved.macros.protein, saved.macros.calories], [mine(15.7143), { low: 160, high: 160 }]);
-    assert.deepEqual(saved.nutrition.basis, amount(56, "g"));
+    assert.deepEqual([saved.macros.protein, saved.macros.calories], [per56(15.7143), { low: 160, high: 160 }]);
   }
 });
 
@@ -710,9 +723,9 @@ test("a typed weight stays while an answer lands", () => {
 });
 
 test("correcting the weight shows its effect on numbers typed per weight too", () => {
-  const f = form({ nutrition: { grams: 48, basis: amount(56, "g") } });
+  const f = form({ macros: { calories: { low: 100, high: 106 }, protein: per56(22), fat: mine(7) } });
   f.setWeight("96");
-  assert.deepEqual([f.text("calories"), f.text("protein")], ["206", "44"]);
+  assert.deepEqual([f.text("calories"), f.text("protein"), f.text("fat")], ["206", "44", "7"]);
 });
 
 test("numbers that arrive while the form is open appear, without touching what was typed", () => {
@@ -786,14 +799,14 @@ test("amounts and small weights are said as they are", () => {
   const says = (over, nutrition) => explained(over, { why, how: "average", ...nutrition });
   assert.ok(says({ qty: 1, unit: "cup" }, { asked: amount(0.25, "cup") }).lines.includes("For 0.25 cup, scaled to 1 cup"));
   assert.ok(says({ qty: 100, unit: "g" }, { asked: amount(87.84, "g") }).lines.includes("For 87.84 g, scaled to 100 g"));
-  const macros = { protein: mine(11) };
-  assert.ok(explained({ qty: 0.056, unit: "kg", macros }, { basis: amount(0.056, "kg") }).lines.includes("Protein 11 g per 0.056 kg is your number"));
+  const macros = { protein: { ...mine(11), basis: amount(0.056, "kg") } };
+  assert.ok(explained({ qty: 0.056, unit: "kg", macros }, {}).lines.includes("Protein 11 g per 0.056 kg is your number"));
   assert.equal(explained({ qty: 2, unit: "pinch" }, { grams: 0.5, why: [{ grams: 0.4 }, { grams: 0.6 }] }).weight, "Assumed weight 0.4–0.6 g, using 0.5 g");
 });
 
 test("typed numbers, per the label's amount if there was one", () => {
-  const macros = full(100, { protein: mine(15.714), sodium: mine(300) });
-  assert.deepEqual(explained({ qty: 80, unit: "g", macros }, { basis: amount(56, "g") }).lines, ["Protein 11 g per 56 g is your number", "Sodium 210 mg per 56 g is your number"]);
+  const macros = full(100, { protein: per56(15.714), sodium: mine(300) });
+  assert.deepEqual(explained({ qty: 80, unit: "g", macros }, {}).lines, ["Protein 11 g per 56 g is your number", "Sodium 300 mg is your number"]);
   assert.deepEqual(explained({ macros: full(100, { protein: mine(22) }) }, {}).lines, ["Protein 22 g is your number"]);
 });
 

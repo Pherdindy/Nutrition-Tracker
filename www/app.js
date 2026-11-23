@@ -258,23 +258,36 @@ function saveEstimates(entries, answered, was = "pending") {
   saveFoodEntries(entries);
 }
 
-// Such a change found the row no longer as this device has it. Take over the server's,
-// or the next edit here would put the old one over it - unless the entry has been
-// changed here since. An entry that is gone there stays here until the next start.
+// Such a change found the row no longer as this device has it, or another tab has sent
+// something of it. Take over the server's row, or that it is gone; the next edit here
+// would put the old one over it, or bring it back. Not if the entry has been changed here
+// since: by the user (that is unsent now), or by an answer (which is sent next).
 async function takeOver(uid, table, key) {
   const known = FOOD_SYNC.known.get(key);
   const session = await sessionFor(uid);
   if (!session) return false;
   const { data, error, status } = await asAccount(session, sb.from(table).select("*").eq("id", key).maybeSingle());
   if (error) return Sync.isRefusal(status);
+  const unsent = outbox.pending(table)[key];
   const entries = loadFoodEntries(), i = entries.findIndex((e) => FOOD_SYNC.keyOf(e) === key);
-  if (data && i !== -1 && currentUid() === uid && FOOD_SYNC.known.get(key) === known) {
-    entries[i] = foodRowToJs(data);
+  if (currentUid() !== uid || i === -1 || (unsent && !unsent.match) || FOOD_SYNC.known.get(key) !== known) return true;
+  if (data) {
+    entries[i] = unsent ? applyEstimate(foodRowToJs(data), unsent) : foodRowToJs(data);
     FOOD_SYNC.known.set(key, FOOD_SYNC.signature(entries[i]));
-    saveFoodEntries(entries);
-    renderFoodTable(); renderCalorieTracker(); renderNutrition();
+  } else {
+    entries.splice(i, 1);
+    FOOD_SYNC.known.delete(key);
   }
+  saveFoodEntries(entries);
+  renderFoodTable(); renderCalorieTracker(); renderNutrition();
   return true;
+}
+// Another tab of this browser sent a change to an entry (and cleared it from the outbox).
+function sentElsewhere({ key, newValue }) {
+  const uid = currentUid(), prefix = uid && `${outboxPrefix(uid)}${FOOD_SYNC.table}:`;
+  if (prefix && key && newValue === null && key.startsWith(prefix)) {
+    takeOver(uid, FOOD_SYNC.table, key.slice(prefix.length)).catch((err) => console.error("[Sync]", err));
+  }
 }
 // What an estimate is for. An entry's macros are replaced, never changed in place.
 const askedOf = ({ food, qty, unit, macros }) => ({ food, qty, unit, macros: macros || {} });
@@ -808,6 +821,8 @@ function initNutrition() {
   document.getElementById("nutrition-ask").addEventListener("click", askAgain);
   document.getElementById("nutrition").addEventListener("focusout", renderNutrition);
   for (const id of ["food-name", "food-qty", "food-unit"]) document.getElementById(id).addEventListener("input", renderNutrition);
+  const amount = document.getElementById("food-qty");
+  amount.addEventListener("input", () => amount.setCustomValidity(""));
   onNutrition("nutrition-basis-qty", "input", (form, text) => form.setBasis(text));
   onNutrition("nutrition-basis-unit", "change", (form, unit) => form.setBasisUnit(unit));
   onNutrition("nutrition-weight", "input", (form, text) => form.setWeight(text));
@@ -837,6 +852,7 @@ function openFoodModal(entry) {
   document.getElementById("food-qty").value = entry ? entry.qty : "";
   document.getElementById("food-unit").value = entry ? entry.unit : "";
   _autofilled = "";
+  document.getElementById("food-qty").setCustomValidity("");
   populateFoodSuggestions();
   const tabs = document.getElementById("food-modal-tabs");
   if (entry) {
@@ -888,6 +904,10 @@ function submitFood(again = false) {
   const before = editedEntry();
   if (id && !before) { console.warn("saveFood: entry not found for id", id); return; }
   const base = { date: document.getElementById("food-date").value, time: document.getElementById("food-time").value, ...formFood() };
+  const qty = document.getElementById("food-qty");
+  const fine = base.qty > 0 || (before && before.qty === base.qty);
+  qty.setCustomValidity(fine ? "" : "Enter a quantity above 0");
+  if (!fine) { qty.reportValidity(); return; }
   const form = _nutritionForm && { ..._nutritionForm.result(), askAgain: again };
   const saved = { ...(before || { id: newId() }), ...base, ...numbersFor(before, base, form) };
   const entries = loadFoodEntries();
@@ -2438,7 +2458,7 @@ function saveBatchFoods() {
     const food = row.querySelector(".batch-food").value.trim();
     const qty = row.querySelector(".batch-qty").value;
     const unit = row.querySelector(".batch-unit").value.trim();
-    if (!food || !qty || !unit) return;
+    if (!food || !(parseFloat(qty) > 0) || !unit) return;
     const base = { date, time, food, qty: parseFloat(qty), unit };
     const entry = { id: newId(), ...base, ...numbersFor(null, base) };
     entries.push(entry); created.push(entry);
@@ -2832,6 +2852,7 @@ async function startApp() {
   // connection or the app comes back.
   outbox.flush();
   window.addEventListener("online", () => outbox.flush());
+  window.addEventListener("storage", sentElsewhere);
   document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") outbox.flush(); });
 
   maybeShowOnboarding();

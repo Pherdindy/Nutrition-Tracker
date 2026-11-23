@@ -356,13 +356,13 @@ test("if that cannot be dealt with now, the update stays for later", async () =>
   assert.deepEqual([r.misses.length, r.box.count()], [2, 0]);
 });
 
-test("an update that found its row is not reported, nor one whose count is unknown", async () => {
-  for (const count of [1, null, undefined]) {
+test("an update that found its row is not reported; one that may not have is", async () => {
+  for (const [count, misses] of [[1, 0], [null, 1], [undefined, 1]]) {
     const r = rig();
     r.answer = () => ({ error: null, status: 204, count });
     r.box.update("food", "2", { kcal: 5 }, WAITING);
     await r.box.flush();
-    assert.deepEqual([r.misses, r.box.count()], [[], 0], String(count));
+    assert.deepEqual([r.misses.length, r.box.count()], [misses, 0], String(count));
   }
 });
 
