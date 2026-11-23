@@ -358,8 +358,8 @@ test("a tab follows what another tab stores, so that it cannot put its old copy 
   a.deleteFood("Rice");
   await stored(2);
   a.addFood("Soup");
+  await a.settle(); // its estimate fails
   await stored(a.entry("Soup").id);
-  await a.settle();
   assert.deepEqual([b.entry("Tofu").macros.protein, b.foods()], [mine(33), ["Eggs", "Soup", "Tofu"]]);
   assert.deepEqual(["Tofu", "Soup", "Rice", ">33<"].map((text) => foodTable(b).includes(text)), [true, true, false, true], "and shows them");
   device.online = true;
