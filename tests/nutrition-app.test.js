@@ -360,6 +360,29 @@ test("a tab follows what another tab stores, so that it cannot put its old copy 
   assert.equal(server.writes.filter((w) => w.rows && w.rows.some((r) => r.food === "Eggs")).length, 0, "nothing else was saved");
 });
 
+test("what another tab changes while this one is loading is not missed", async () => {
+  for (const change of ["edit", "delete"]) {
+    const server = serverWith(row(1, "Tofu"));
+    const device = createDevice();
+    const a = await bootApp({ server, device });
+    const key = `${a.run("outboxPrefix(currentUid())")}food_entries:1`;
+    let tell;
+    // b's reading is answered; then a changes the entry, and it is sent before b has loaded
+    server.afterSelect = async (table) => {
+      if (table !== "food_entries") return;
+      server.afterSelect = null;
+      if (change === "edit") a.editFood("Tofu", { time: "19:30" }); else a.deleteFood("Tofu");
+      const newValue = device.storage.getItem(key);
+      await a.settle();
+      tell("storage", { key, newValue });
+      tell("storage", { key, newValue: null });
+    };
+    const b = await bootApp({ server, device, loading: (fn) => { tell = fn; } });
+    await b.settle();
+    assert.deepEqual(b.food().map((e) => e.time), change === "edit" ? ["19:30"] : [], change);
+  }
+});
+
 test("a tab that sends another's answer takes it over, whatever its own was", async () => {
   // Both asked; this one's failed, the other's arrived later and replaced it in the outbox.
   const server = serverWith(row(1, "Tofu", { estimate_status: "error", macros: {} }));

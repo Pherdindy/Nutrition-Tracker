@@ -288,16 +288,21 @@ async function takeOver(uid, table, key) {
 }
 // Another tab of this browser stored a change to an entry: it counts here too. Or it sent
 // one, and cleared it: see what the entry is now.
+const _heardWhileLoading = new Set();
 function changedElsewhere({ key, newValue }) {
   const uid = currentUid(), prefix = uid && `${outboxPrefix(uid)}${FOOD_SYNC.table}:`;
   if (!prefix || !key || !key.startsWith(prefix)) return;
   const id = key.slice(prefix.length);
+  if (_cache.ready) follow(uid, id, newValue);
+  else _heardWhileLoading.add(id);
+}
+function follow(uid, id, newValue) {
   const unsent = outbox.pending(FOOD_SYNC.table)[id];
   if (!unsent) {
     takeOver(uid, FOOD_SYNC.table, id).catch((err) => console.error("[Sync]", err));
     return;
   }
-  if (JSON.stringify(unsent) !== newValue) return; // changed again since
+  if (newValue !== undefined && JSON.stringify(unsent) !== newValue) return; // changed again since
   const entries = Sync.overlay(loadFoodEntries(), { [id]: unsent }, FOOD_SYNC.keyOf, foodRowToJs, applyEstimate);
   const entry = entries.find((e) => FOOD_SYNC.keyOf(e) === id);
   if (entry) FOOD_SYNC.known.set(id, FOOD_SYNC.signature(entry));
@@ -2856,6 +2861,7 @@ async function startApp() {
   if (_appStarted) return;
   _appStarted = true;
   document.body.classList.add('loading');
+  window.addEventListener("storage", changedElsewhere);
   try {
     await initFromSupabase();
   } catch (err) {
@@ -2867,8 +2873,8 @@ async function startApp() {
   // Send whatever a previous session could not, and again whenever the
   // connection or the app comes back.
   outbox.flush();
+  _heardWhileLoading.forEach((id) => follow(currentUid(), id));
   window.addEventListener("online", () => outbox.flush());
-  window.addEventListener("storage", changedElsewhere);
   document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") outbox.flush(); });
 
   maybeShowOnboarding();

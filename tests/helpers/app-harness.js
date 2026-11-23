@@ -323,7 +323,8 @@ class FakeElement {
 // freezeClock: the app sees one fixed instant and no randomness.
 // now: the app's clock stands still at this instant (an ISO string); the time
 // zone is process.env.TZ.
-async function bootApp({ server = createFakeServer(), device = createDevice(), uid = OWNER, confirm = () => true, freezeClock = false, now = null } = {}) {
+// loading: called with a function that tells the app of a window event, while it starts.
+async function bootApp({ server = createFakeServer(), device = createDevice(), uid = OWNER, confirm = () => true, freezeClock = false, now = null, loading = () => {} } = {}) {
   const byId = new Map();
   const el = (id) => {
     if (!byId.has(id)) byId.set(id, new FakeElement());
@@ -405,6 +406,7 @@ async function bootApp({ server = createFakeServer(), device = createDevice(), u
   }
 
   for (const fn of domReady) fn();
+  loading((type, event = {}) => (windowListeners[type] || []).forEach((fn) => fn({ type, ...event })));
   for (let i = 0; i < 500 && !run("_cache.ready"); i++) await tick();
   if (!run("_cache.ready")) throw new Error("app did not finish starting");
   await settle();
