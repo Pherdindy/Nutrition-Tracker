@@ -309,6 +309,7 @@ class FakeElement {
   contains() { return false; }
   remove() {}
   focus() {}
+  reportValidity() { return true; }
   scrollIntoView() {}
 }
 

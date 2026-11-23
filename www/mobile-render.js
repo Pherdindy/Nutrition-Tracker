@@ -1,7 +1,8 @@
 // Mobile renderers. Loaded after app.js + assessment-view.js; relies on globals:
 //  renderFoodCards:        loadFoodEntries, getDailyFoodTotals, formatDate, formatTime,
 //                          escapeHtml, renderNum, isMobile, editFood, deleteFood,
-//                          retryEstimate, getEnabledMacros, getValueFormat, Macros
+//                          retryEstimate, getEnabledMacros, getValueFormat, localDate,
+//                          Macros, Nutrition
 //  renderDayCards:         loadDayEntries, loadProfile, loadFoodEntries, calcBMR, calcTDEE,
 //                          Targets, getDailyFoodTotals, formatDate, escapeHtml, renderNum,
 //                          isMobile, editDay, deleteDay
@@ -37,12 +38,13 @@ function renderFoodCards() {
         .join("");
       const badge = e.estimateStatus === "pending" ? '<span class="est-badge est-pending" title="Estimating…">…</span>'
         : (e.estimateStatus === "error" ? '<button class="btn-icon est-badge est-error" title="Estimate failed — tap to retry">!</button>' : "");
+      const tag = Nutrition.tag(e, localDate());
       html += `<div class="food-card" data-id="${e.id}">
         <div class="food-card-main">
           <div class="food-card-name">${escapeHtml(e.food)}</div>
           <div class="food-card-cal">${calStr} cal${badge ? " " + badge : ""}</div>
         </div>
-        <div class="food-card-sub">${formatTime(e.time)} · ${e.qty} ${escapeHtml(e.unit)}</div>
+        <div class="food-card-sub">${formatTime(e.time)} · ${e.qty} ${escapeHtml(e.unit)}${tag ? ` · ${escapeHtml(tag)}` : ""}</div>
         ${rows}
         <button class="card-menu-btn" data-id="${e.id}" aria-label="Actions">&#8942;</button>
       </div>`;

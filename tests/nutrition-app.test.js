@@ -219,3 +219,305 @@ test("renaming an entry does not change its amount", async () => {
   type(app, "food-name", "Eggs", "change");
   assert.deepEqual([app.el("food-qty").value, app.el("food-unit").value], [5, "pcs"]);
 });
+
+// ---- the Nutrition section ------------------------------------------------------------
+
+const NOON = "2026-11-23T04:00:00Z"; // the tag leaves out the current year
+function openAdd(app, { food, qty, unit }) {
+  app.fire("add-food-btn", "click");
+  app.el("food-date").value = "2026-11-23";
+  app.el("food-time").value = "08:00";
+  type(app, "food-name", food);
+  type(app, "food-qty", qty);
+  type(app, "food-unit", unit);
+}
+const openEdit = (app, food) => app.run(`editFood(${app.entry(food).id})`);
+const save = (app) => app.fire("food-form", "submit");
+const shown = (app, id) => app.el(`nf-${id}`).value;
+const state = (app) => app.el("nutrition-state").textContent;
+
+test("adding stays closed until asked, and Edit opens the section", async () => {
+  const app = await bootApp({ server: serverWith(row(1, "Sardines")) });
+  openAdd(app, { food: "Tofu", qty: 1, unit: "pc" });
+  assert.deepEqual([app.isOpen("nutrition"), app.isOpen("nutrition-open")], [false, true]);
+  openEdit(app, "Sardines");
+  assert.deepEqual([app.isOpen("nutrition"), app.isOpen("nutrition-open")], [true, false]);
+  assert.deepEqual([shown(app, "calories"), shown(app, "protein"), shown(app, "fiber")], ["100", "10", "2"]);
+});
+
+test("a label's numbers are typed as printed and saved as what was eaten, with no AI call", async () => {
+  const server = serverWith();
+  const app = await bootApp({ server });
+  openAdd(app, { food: "Tofu", qty: 80, unit: "g" });
+  app.fire("nutrition-open", "click");
+  type(app, "nf-calories", 100);
+  type(app, "nutrition-basis-qty", 56);
+  for (const [id, n] of [["protein", 11], ["carbs", 0], ["fat", 6], ["fiber", 0]]) type(app, `nf-${id}`, n);
+  assert.equal(shown(app, "calories"), "100");
+  save(app);
+  await app.settle();
+  assert.deepEqual(server.aiCalls, []);
+  const saved = on(server, "Tofu");
+  assert.deepEqual([saved.macros.calories, saved.macros.protein, saved.macros.carbs, saved.estimate_status], [mine(142.857), mine(15.714), mine(0), "manual"]);
+  assert.deepEqual(saved.nutrition.basis, { qty: 56, unit: "g" });
+  assert.equal(saved.pro_low, 15.714);
+});
+
+test("numbers not typed are asked for, and the AI is told the ones that are", async () => {
+  const server = serverWith();
+  const sent = [];
+  server.ai = (body) => { sent.push(body.payload); return { data: { macros: eight(200) }, error: null }; };
+  const app = await bootApp({ server });
+  openAdd(app, { food: "Tofu", qty: 1, unit: "pc" });
+  app.fire("nutrition-open", "click");
+  assert.match(state(app), /leave blank/);
+  type(app, "nf-protein", 22);
+  save(app);
+  await app.settle();
+  assert.deepEqual(JSON.parse(JSON.stringify(sent)), [{ food: "Tofu", qty: 1, unit: "pc", known: { protein: 22 } }]);
+  assert.deepEqual([on(server, "Tofu").macros.protein, on(server, "Tofu").macros.calories], [mine(22), range(200)]);
+});
+
+test("a remembered food shows its numbers and day before saving", async () => {
+  const app = await bootApp({ server: serverWith(row(1, "Sardines")), now: NOON });
+  openAdd(app, { food: "Sardines", qty: 2, unit: "pcs" });
+  app.fire("nutrition-open", "click");
+  assert.deepEqual([shown(app, "calories"), app.el("nutrition-tag").textContent, state(app)], ["50", "from Nov 20", ""]);
+  type(app, "food-qty", 6);
+  assert.equal(shown(app, "calories"), "150");
+  type(app, "food-name", "Tofu");
+  assert.deepEqual([shown(app, "calories"), app.el("nutrition-tag").textContent], ["", ""]);
+});
+
+test("renaming to a remembered food shows its numbers before saving", async () => {
+  const server = serverWith(row(1, "Sardines", { macros: eight(100, { protein: mine(22) }) }), row(2, "Tuna", { macros: eight(300) }));
+  const app = await bootApp({ server, now: NOON });
+  openEdit(app, "Sardines");
+  type(app, "food-name", "tuna");
+  assert.deepEqual([shown(app, "calories"), shown(app, "protein"), app.el("nutrition-tag").textContent, state(app)], ["300", "22", "from Nov 20", ""]);
+  save(app);
+  await app.settle();
+  assert.deepEqual([server.aiCalls, on(server, "tuna").macros.calories, on(server, "tuna").macros.protein], [[], range(300), mine(22)]);
+});
+
+test("retyping the amount does not disturb the numbers", async () => {
+  const app = await bootApp({ server: serverWith(row(1, "Sardines")) });
+  openEdit(app, "Sardines");
+  type(app, "food-qty", "");
+  assert.deepEqual([shown(app, "calories"), state(app)], ["100", ""]);
+  type(app, "food-qty", "8");
+  assert.equal(shown(app, "calories"), "200");
+});
+
+test("correcting a number makes the entry the one to remember", async () => {
+  const server = serverWith(row(1, "Sardines"), row(2, "Sardines", { date: "2026-11-22", macros: eight(300) }));
+  const app = await bootApp({ server });
+  app.run("editFood(1)");
+  type(app, "nf-protein", "22");
+  assert.equal(app.isOpen("nm-protein"), true);
+  save(app);
+  await app.settle();
+  app.addFood("Sardines", { qty: 8, unit: "pcs" });
+  await app.settle();
+  const added = server.food().find((r) => r.food === "Sardines" && r.qty === 8);
+  assert.deepEqual([added.macros.protein, added.macros.calories], [mine(44), range(200)]);
+  assert.deepEqual(server.aiCalls, []);
+});
+
+test("an invalid number is refused beside its field and everything typed stays", async () => {
+  const server = serverWith(row(1, "Sardines"));
+  const app = await bootApp({ server });
+  openEdit(app, "Sardines");
+  type(app, "nf-protein", "abc");
+  assert.equal(app.isOpen("ne-protein"), false, "not while typing");
+  type(app, "nf-carbs", "5");
+  save(app);
+  await app.settle();
+  assert.equal(app.isOpen("food-modal"), true);
+  assert.match(app.el("ne-protein").textContent, /number/);
+  assert.equal(app.isOpen("ne-protein"), true);
+  assert.deepEqual([shown(app, "protein"), shown(app, "carbs")], ["abc", "5"]);
+  assert.deepEqual(on(server, "Sardines").macros.carbs, range(1), "nothing was saved");
+  type(app, "nf-protein", "22");
+  assert.equal(app.isOpen("ne-protein"), false);
+  save(app);
+  await app.settle();
+  assert.deepEqual([on(server, "Sardines").macros.protein, on(server, "Sardines").macros.carbs], [mine(22), mine(5)]);
+});
+
+test("a label's amount that no longer converts is refused, not read as something else", async () => {
+  const server = serverWith();
+  const app = await bootApp({ server });
+  openAdd(app, { food: "Tofu", qty: 80, unit: "g" });
+  app.fire("nutrition-open", "click");
+  type(app, "nutrition-basis-qty", 56);
+  type(app, "nf-protein", 11);
+  type(app, "food-unit", "plate");
+  type(app, "food-qty", 1);
+  save(app);
+  await app.settle();
+  assert.equal(app.el("ne-basis").textContent, "56 g does not convert to 1 plate");
+  assert.deepEqual([app.isOpen("food-modal"), server.foods()], [true, []]);
+});
+
+test("ask AI again replaces everything that is not typed", async () => {
+  const server = serverWith(row(1, "Sardines", { macros: eight(100, { protein: mine(22) }), nutrition: { at: 5, from: { id: 9, date: "2026-11-01" } } }));
+  const app = await bootApp({ server });
+  const release = holdAi(server);
+  openEdit(app, "Sardines");
+  assert.equal(app.isOpen("nutrition-ask"), true);
+  app.fire("nutrition-ask", "click");
+  await app.settle();
+  assert.equal(app.isOpen("food-modal"), false);
+  assert.deepEqual([app.entry("Sardines").estimateStatus, app.entry("Sardines").macros.calories], ["pending", range(100)], "the old numbers are still shown");
+  release();
+  await app.settle();
+  const saved = on(server, "Sardines");
+  assert.deepEqual([saved.macros.calories, saved.macros.protein, saved.estimate_status], [range(200), mine(22), "done"]);
+  assert.equal(saved.nutrition.from, undefined);
+});
+
+test("ask AI again is refused while a number is invalid", async () => {
+  const server = serverWith(row(1, "Sardines"));
+  const app = await bootApp({ server });
+  openEdit(app, "Sardines");
+  type(app, "nf-protein", "abc");
+  app.fire("nutrition-ask", "click");
+  await app.settle();
+  assert.deepEqual([app.isOpen("food-modal"), server.aiCalls], [true, []]);
+  type(app, "nf-protein", "22");
+  save(app);
+  await app.settle();
+  assert.deepEqual([server.aiCalls, on(server, "Sardines").estimate_status], [[], "done"], "an ordinary save asks nobody");
+});
+
+test("ask AI again without credit opens the paywall and changes nothing", async () => {
+  const server = serverWith(row(1, "Sardines"));
+  server.usage = { pct_used: 100, plan: "free", exhausted: true };
+  const app = await bootApp({ server });
+  const before = on(server, "Sardines");
+  openEdit(app, "Sardines");
+  app.fire("nutrition-ask", "click");
+  await app.settle();
+  assert.equal(app.isOpen("paywall-modal"), true);
+  assert.deepEqual(on(server, "Sardines"), before);
+});
+
+test("typing every tracked number works without credit", async () => {
+  const server = serverWith();
+  server.usage = { pct_used: 100, plan: "free", exhausted: true };
+  const app = await bootApp({ server });
+  openAdd(app, { food: "Tofu", qty: 1, unit: "pc" });
+  app.fire("nutrition-open", "click");
+  for (const id of ["calories", "protein", "carbs", "fat", "fiber"]) type(app, `nf-${id}`, 1);
+  assert.equal(state(app), "");
+  save(app);
+  await app.settle();
+  assert.deepEqual([on(server, "Tofu").estimate_status, app.isOpen("paywall-modal")], ["manual", false]);
+});
+
+test("numbers typed without credit are saved even if others are missing", async () => {
+  const server = serverWith();
+  server.usage = { pct_used: 100, plan: "free", exhausted: true };
+  const app = await bootApp({ server });
+  openAdd(app, { food: "Tofu", qty: 1, unit: "pc" });
+  app.fire("nutrition-open", "click");
+  type(app, "nf-protein", 22);
+  save(app);
+  await app.settle();
+  assert.deepEqual([on(server, "Tofu").estimate_status, on(server, "Tofu").macros, app.isOpen("paywall-modal")], ["error", { protein: mine(22) }, true]);
+});
+
+test("correcting the weight rescales the AI's numbers", async () => {
+  const server = serverWith(row(1, "Sardines", { macros: eight(100, { protein: mine(22) }), nutrition: { at: 5, grams: 48, why: [{ ref: "r", note: "n", grams: 48, kcal: 100 }], how: "one", asked: { qty: 4, unit: "pcs" } } }));
+  const app = await bootApp({ server });
+  openEdit(app, "Sardines");
+  assert.equal(app.el("nutrition-weight-text").textContent, "Assumed weight 48 g (12 g each)");
+  assert.equal(app.isOpen("nutrition-weight-row"), false);
+  app.fire("nutrition-weight-change", "click");
+  assert.equal(app.isOpen("nutrition-weight-row"), true);
+  type(app, "nutrition-weight", "96");
+  assert.equal(shown(app, "calories"), "200");
+  save(app);
+  await app.settle();
+  const saved = on(server, "Sardines");
+  assert.deepEqual([saved.macros.calories, saved.macros.protein, saved.nutrition.grams, saved.nutrition.gramsMine], [range(200), mine(22), 96, true]);
+  assert.deepEqual(server.aiCalls, []);
+});
+
+test("the explanation is shown as text, whatever the AI wrote", async () => {
+  const server = serverWith(row(1, "Sardines", { nutrition: { at: 5, why: [{ ref: "<img src=x onerror=alert(1)>", note: "a & b", grams: null, kcal: 100 }], how: "one", asked: { qty: 4, unit: "pcs" } } }));
+  const app = await bootApp({ server });
+  openEdit(app, "Sardines");
+  const html = app.el("nutrition-why-lines").innerHTML;
+  assert.ok(html.includes("&lt;img") && !html.includes("<img"), html);
+  assert.ok(html.includes("a &amp; b"));
+  assert.equal(app.isOpen("nutrition-why"), true);
+});
+
+test("the form says when saving will ask the AI, and when an estimate failed", async () => {
+  const server = serverWith(row(1, "Sardines"), row(2, "Tuna", { estimate_status: "error", macros: {} }));
+  const app = await bootApp({ server });
+  openEdit(app, "Sardines");
+  assert.equal(state(app), "");
+  type(app, "food-name", "Mackerel");
+  assert.equal(state(app), "AI will estimate the other numbers again.");
+  type(app, "food-name", "Sardines");
+  type(app, "nf-carbs", "");
+  assert.equal(state(app), "AI will estimate the numbers you leave blank.");
+  openEdit(app, "Tuna");
+  assert.equal(state(app), "The estimate didn't come back. Ask again or type your own numbers.");
+  assert.equal(app.isOpen("nutrition-ask"), true);
+});
+
+test("numbers that arrive while the entry is open appear in the form", async () => {
+  const server = serverWith();
+  const app = await bootApp({ server });
+  const release = holdAi(server);
+  app.addFood("Tofu");
+  await app.settle();
+  openEdit(app, "Tofu");
+  assert.equal(state(app), "Estimating… You can type your own numbers meanwhile.");
+  type(app, "nf-fat", "9");
+  release();
+  await app.settle();
+  assert.deepEqual([shown(app, "calories"), shown(app, "fat"), state(app)], ["200", "9", ""]);
+  save(app);
+  await app.settle();
+  assert.deepEqual([on(server, "Tofu").macros.calories, on(server, "Tofu").macros.fat], [range(200), mine(9)]);
+  assert.deepEqual(server.aiCalls, ["Tofu"]);
+});
+
+test("numbers typed and saved while the AI works survive its answer", async () => {
+  const server = serverWith();
+  const app = await bootApp({ server });
+  const release = holdAi(server);
+  app.addFood("Tofu");
+  await app.settle();
+  openEdit(app, "Tofu");
+  type(app, "nf-protein", "22");
+  save(app);
+  await app.settle();
+  release();
+  await app.settle();
+  assert.deepEqual([on(server, "Tofu").macros.protein, on(server, "Tofu").macros.calories, on(server, "Tofu").estimate_status], [mine(22), range(200), "done"]);
+});
+
+test("reused entries carry their day in the table and on cards", async () => {
+  const nutrition = { at: 5, from: { id: 9, date: "2026-11-20" } };
+  const app = await bootApp({ server: serverWith(row(1, "Sardines", { nutrition }), row(2, "Tofu")), now: NOON });
+  const html = app.run("renderFoodTable(); document.querySelector('#food-eaten-table tbody').innerHTML");
+  assert.equal(html.split("from Nov 20").length, 2);
+  app.run("MOBILE_MQ.matches = true; renderFoodCards()");
+  assert.equal(app.el("food-cards").innerHTML.split("from Nov 20").length, 2);
+});
+
+test("closing the form forgets what was typed in it", async () => {
+  const app = await bootApp({ server: serverWith(row(1, "Sardines")) });
+  openEdit(app, "Sardines");
+  type(app, "nf-protein", "99");
+  app.fire("food-cancel", "click");
+  app.addFood("Tofu");
+  await app.settle();
+  assert.deepEqual(app.entry("Tofu").macros.protein, range(10));
+});

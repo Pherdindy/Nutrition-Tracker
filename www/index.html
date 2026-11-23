@@ -209,9 +209,42 @@
           <div class="form-row"><label for="food-name">Food</label><input type="text" id="food-name" required autocomplete="off" list="food-suggestions"><datalist id="food-suggestions"></datalist></div>
           <div class="form-row"><label for="food-qty">Quantity</label><input type="number" id="food-qty" step="any" required></div>
           <div class="form-row"><label for="food-unit">Unit of measure</label><input type="text" id="food-unit" required autocomplete="off" list="unit-suggestions"><datalist id="unit-suggestions"></datalist></div>
+          <button type="button" id="nutrition-open" class="link-btn">Enter numbers yourself</button>
+          <div id="nutrition" class="nutrition hidden">
+            <div class="nutrition-head">
+              <h3>Nutrition</h3>
+              <span id="nutrition-tag" class="from-tag hidden"></span>
+              <button type="button" id="nutrition-ask" class="btn btn-secondary btn-sm hidden">Ask AI again</button>
+            </div>
+            <p id="nutrition-state" class="nutrition-note hidden" role="status"></p>
+            <div id="nutrition-basis" class="nutrition-basis">
+              <label for="nutrition-basis-qty">These numbers are for</label>
+              <input type="text" inputmode="decimal" id="nutrition-basis-qty" autocomplete="off" aria-describedby="ne-basis">
+              <select id="nutrition-basis-unit" aria-label="Unit these numbers are for"></select>
+              <p id="ne-basis" class="field-error hidden" role="alert"></p>
+            </div>
+            <div id="nutrition-fields" class="nutrition-fields"></div>
+            <details id="nutrition-more" class="nutrition-more">
+              <summary>More nutrients</summary>
+              <div id="nutrition-more-fields" class="nutrition-fields"></div>
+            </details>
+            <details id="nutrition-why" class="nutrition-more hidden">
+              <summary>How was this worked out?</summary>
+              <div id="nutrition-weight-line" class="nutrition-weight hidden">
+                <span id="nutrition-weight-text"></span>
+                <button type="button" id="nutrition-weight-change" class="link-btn">Change</button>
+              </div>
+              <div id="nutrition-weight-row" class="nutrition-weight hidden">
+                <label for="nutrition-weight">Actual weight (g)</label>
+                <input type="text" inputmode="decimal" id="nutrition-weight" autocomplete="off" aria-describedby="ne-weight">
+                <p id="ne-weight" class="field-error hidden" role="alert"></p>
+              </div>
+              <ul id="nutrition-why-lines"></ul>
+            </details>
+          </div>
           <div class="modal-actions">
             <button type="button" class="btn btn-secondary" id="food-cancel">Cancel</button>
-            <button type="submit" class="btn btn-primary">Save</button>
+            <button type="submit" class="btn btn-primary">Save entry</button>
           </div>
         </form>
         <div class="modal-pane hidden" data-pane="batch">

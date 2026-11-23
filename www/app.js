@@ -531,7 +531,7 @@ function renderFoodTable() {
       html += `<tr>
         <td>${formatDate(entry.date)}</td>
         <td>${formatTime(entry.time)}</td>
-        <td>${escapeHtml(entry.food)}</td>
+        <td>${escapeHtml(entry.food)}${fromTagHtml(entry)}</td>
         <td class="num">${entry.qty}</td>
         <td>${escapeHtml(entry.unit)}</td>`
         + enabled.map((id) => `<td class="num">${Macros.formatMacro(Macros.getMacro(entry, id), fmt)}</td>`).join("")
@@ -655,6 +655,139 @@ function numbersFor(before, after, form = null) {
   return Nutrition.resolve({ before, after, form, others, tracked: getEnabledMacros(), now: Date.now() });
 }
 
+// ---- Nutrition section of the food form ----
+
+let _nutritionForm = null;    // Nutrition.createForm() while the section is open
+let _nutritionErrors = false; // saving was refused: say what is wrong
+
+const showIf = (id, on) => document.getElementById(id).classList.toggle("hidden", !on);
+
+function openNutrition() {
+  _nutritionForm = Nutrition.createForm();
+  _nutritionErrors = false;
+  buildNutritionFields();
+  for (const id of ["nutrition-more", "nutrition-why"]) document.getElementById(id).open = false;
+  document.getElementById("nutrition-weight").value = "";
+  showIf("nutrition-weight-row", false);
+  showIf("nutrition-open", false);
+  showIf("nutrition", true);
+  renderNutrition();
+}
+
+function closeNutrition() {
+  _nutritionForm = null;
+  showIf("nutrition", false);
+  showIf("nutrition-open", true);
+}
+
+// Passes what is typed into a field of the section on to the form.
+function onNutrition(id, type, fn) {
+  const input = document.getElementById(id);
+  input.addEventListener(type, () => { if (_nutritionForm) { fn(_nutritionForm, input.value); renderNutrition(); } });
+}
+
+// The nutrients being tracked, then the others under "More nutrients".
+function buildNutritionFields() {
+  const tracked = getEnabledMacros();
+  const others = Macros.CATALOG.filter((m) => !tracked.includes(m.id));
+  const fields = (list) => list.map((m) => `<div class="nutrition-field">
+    <label for="nf-${m.id}">${escapeHtml(m.label)} (${escapeHtml(m.unit)})</label>
+    <div class="nutrition-input"><input type="text" inputmode="decimal" id="nf-${m.id}" autocomplete="off" aria-describedby="ne-${m.id}"><span id="nm-${m.id}" class="mine-mark hidden">yours</span></div>
+    <p id="ne-${m.id}" class="field-error hidden" role="alert"></p>
+  </div>`).join("");
+  document.getElementById("nutrition-fields").innerHTML = fields(Macros.CATALOG.filter((m) => tracked.includes(m.id)));
+  document.getElementById("nutrition-more-fields").innerHTML = fields(others);
+  showIf("nutrition-more", others.length > 0);
+  for (const { id } of Macros.CATALOG) onNutrition(`nf-${id}`, "input", (form, text) => form.type(id, text));
+}
+
+// Shows what the entry would be saved with. Runs whenever anything in the form, or the
+// entry's own numbers, changed.
+function renderNutrition() {
+  const form = _nutritionForm;
+  if (!form) return;
+  const before = editedEntry(), after = formFood();
+  if (before && !(after.qty > 0)) after.qty = before.qty; // its field is being retyped
+  form.rebase({ ...after, ...numbersFor(before, after) });
+  const willBe = { ...after, ...numbersFor(before, after, form.result()) };
+
+  const errors = _nutritionErrors ? form.errors() : {};
+  const setText = (id, text) => { document.getElementById(id).textContent = text; showIf(id, text !== ""); };
+  const setValue = (id, value) => {
+    const input = document.getElementById(id);
+    if (input !== document.activeElement) input.value = value; // never under the cursor
+  };
+  for (const { id } of Macros.CATALOG) {
+    setValue(`nf-${id}`, form.text(id));
+    showIf(`nm-${id}`, form.isMine(id));
+    setText(`ne-${id}`, errors[id] || "");
+  }
+
+  const basis = form.basis(), units = form.units(), unitSelect = document.getElementById("nutrition-basis-unit");
+  unitSelect.innerHTML = units.map((u) => `<option value="${escapeHtml(u)}">${escapeHtml(u)}</option>`).join("");
+  unitSelect.value = units.find((u) => Nutrition.unit(u) === Nutrition.unit(basis.unit));
+  setValue("nutrition-basis-qty", basis.text);
+  setText("ne-basis", errors.basis || "");
+  showIf("nutrition-basis", after.qty > 0 && after.unit.trim() !== "");
+
+  setText("nutrition-tag", Nutrition.tag(willBe, localDate()));
+  setText("nutrition-state", nutritionState(before, willBe));
+  showIf("nutrition-ask", !!before && (Nutrition.hasTheirs(before) || before.estimateStatus === "error"));
+
+  const why = Nutrition.explain(willBe);
+  document.getElementById("nutrition-weight-text").textContent = why.weight || "";
+  showIf("nutrition-weight-line", !!why.weight);
+  if (!why.weight) showIf("nutrition-weight-row", false);
+  setText("ne-weight", errors.weight || "");
+  document.getElementById("nutrition-why-lines").innerHTML = why.lines.map((line) => `<li>${escapeHtml(line)}</li>`).join("");
+  showIf("nutrition-why", !!why.weight || why.lines.length > 0);
+}
+
+function nutritionState(before, willBe) {
+  if (willBe.estimateStatus === "error") return "The estimate didn't come back. Ask again or type your own numbers.";
+  if (willBe.estimateStatus !== "pending") return "";
+  if (before && before.estimateStatus === "pending") return "Estimating… You can type your own numbers meanwhile.";
+  if (willBe.nutrition && willBe.nutrition.refresh) return "AI will estimate the other numbers again.";
+  return "AI will estimate the numbers you leave blank.";
+}
+
+// Says what is wrong with the typed numbers, beside their fields. True if nothing is.
+function checkNutrition() {
+  const wrong = _nutritionForm ? Object.keys(_nutritionForm.errors()) : [];
+  if (!wrong.length) return true;
+  _nutritionErrors = true;
+  renderNutrition();
+  const field = document.getElementById({ basis: "nutrition-basis-qty", weight: "nutrition-weight" }[wrong[0]] || `nf-${wrong[0]}`);
+  const folded = field.closest("details");
+  if (folded) folded.open = true;
+  field.focus();
+  return false;
+}
+
+function askAgain() {
+  if (_aiExhausted) { openPaywall(); return; }
+  if (document.getElementById("food-form").reportValidity()) submitFood(true);
+}
+
+function initNutrition() {
+  document.getElementById("nutrition-open").addEventListener("click", () => { openNutrition(); document.getElementById("nf-calories").focus(); });
+  document.getElementById("nutrition-ask").addEventListener("click", askAgain);
+  document.getElementById("nutrition").addEventListener("focusout", renderNutrition);
+  for (const id of ["food-name", "food-qty", "food-unit"]) document.getElementById(id).addEventListener("input", renderNutrition);
+  onNutrition("nutrition-basis-qty", "input", (form, text) => form.setBasis(text));
+  onNutrition("nutrition-basis-unit", "change", (form, unit) => form.setBasisUnit(unit));
+  onNutrition("nutrition-weight", "input", (form, text) => form.setWeight(text));
+  document.getElementById("nutrition-weight-change").addEventListener("click", () => {
+    showIf("nutrition-weight-row", true);
+    document.getElementById("nutrition-weight").focus();
+  });
+}
+
+function fromTagHtml(entry) {
+  const tag = Nutrition.tag(entry, localDate());
+  return tag ? `<div class="from-tag">${escapeHtml(tag)}</div>` : "";
+}
+
 function showFoodPane(name) {
   document.querySelectorAll("#food-modal-tabs .modal-tab").forEach((t) => t.classList.toggle("active", t.dataset.pane === name));
   document.querySelectorAll("#food-modal .modal-pane").forEach((p) => p.classList.toggle("hidden", p.dataset.pane !== name));
@@ -681,6 +814,8 @@ function openFoodModal(entry) {
     for (let i = 0; i < 3; i++) addBatchRow();
     populateBatchSuggestions();
   }
+  if (entry) openNutrition();
+  else closeNutrition();
   showFoodPane("single");
   modal.classList.remove("hidden");
 }
@@ -694,6 +829,7 @@ function populateFoodSuggestions() {
 }
 
 function closeFoodModal() {
+  closeNutrition();
   document.getElementById("food-modal").classList.add("hidden");
 }
 
@@ -709,11 +845,17 @@ function ensureDayExists(date) {
 
 function saveFood(e) {
   e.preventDefault();
+  submitFood();
+}
+
+function submitFood(again = false) {
+  if (!checkNutrition()) return;
   const id = document.getElementById("food-id").value;
   const before = editedEntry();
   if (id && !before) { console.warn("saveFood: entry not found for id", id); return; }
   const base = { date: document.getElementById("food-date").value, time: document.getElementById("food-time").value, ...formFood() };
-  const saved = { ...(before || { id: newId() }), ...base, ...numbersFor(before, base) };
+  const form = _nutritionForm && { ..._nutritionForm.result(), askAgain: again };
+  const saved = { ...(before || { id: newId() }), ...base, ...numbersFor(before, base, form) };
   const entries = loadFoodEntries();
   if (before) entries[entries.findIndex((x) => x.id === before.id)] = saved;
   else entries.push(saved);
@@ -793,7 +935,7 @@ async function runEstimateQueue() {
       }
       if (answered.length) {
         saveEstimates(fresh, answered);
-        renderFoodTable(); renderCalorieTracker();
+        renderFoodTable(); renderCalorieTracker(); renderNutrition();
       }
       if (errStatus === 402) openPaywall();
     }
@@ -2661,6 +2803,7 @@ async function startApp() {
   document.getElementById("food-cancel").addEventListener("click", closeFoodModal);
   document.querySelector("#food-modal .modal-overlay").addEventListener("click", closeFoodModal);
   document.getElementById("food-form").addEventListener("submit", saveFood);
+  initNutrition();
 
   // Day modal
   document.getElementById("day-cancel").addEventListener("click", closeDayModal);
@@ -2759,6 +2902,7 @@ async function startApp() {
     if (match) {
       document.getElementById("food-unit").value = match.unit;
       document.getElementById("food-qty").value = match.qty;
+      renderNutrition();
     }
   });
 

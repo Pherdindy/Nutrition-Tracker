@@ -1906,3 +1906,34 @@ tr.day-summary.day-incomplete td:first-child { opacity: 1; }
 @media (max-width: 720px) {
   #tut-back, #tut-skip, #tut-next { min-height: 44px; }
 }
+
+/* ---- Nutrition section of the food form (theme vars only; sizes follow content) ---- */
+.link-btn { background: none; border: none; padding: 4px 0; color: var(--primary); font-family: var(--font); font-size: 0.88rem; cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
+.from-tag { color: var(--text-dim); font-size: 0.78rem; }
+.nutrition { border-top: 1px solid var(--border); margin-top: 14px; padding-top: 14px; }
+.nutrition-head { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; margin-bottom: 10px; }
+.nutrition-head h3 { font-size: 0.98rem; margin: 0; }
+.nutrition-head .btn { margin-left: auto; }
+.nutrition-note { color: var(--text-dim); font-size: 0.85rem; margin: 0 0 10px; }
+.nutrition-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(8.5rem, 100%), 1fr)); gap: 10px 12px; }
+.nutrition-field label, .nutrition-basis label, .nutrition-weight label { font-size: 0.82rem; color: var(--text-dim); font-weight: 500; }
+.nutrition-field label { display: block; margin-bottom: 4px; }
+.nutrition-input { display: flex; align-items: center; gap: 6px; }
+.nutrition-input input { flex: 1 1 0; min-width: 0; }
+.mine-mark { color: var(--primary); font-size: 0.75rem; white-space: nowrap; }
+.field-error { color: var(--red); font-size: 0.8rem; margin: 4px 0 0; }
+.nutrition-basis, .nutrition-weight { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; margin: 0 0 12px; }
+.nutrition-basis input, .nutrition-weight input { flex: 0 1 6rem; min-width: 4.5rem; }
+.nutrition-basis select { flex: 0 1 8rem; min-width: 5rem; }
+.nutrition-basis .field-error, .nutrition-weight .field-error { flex-basis: 100%; }
+.nutrition-more { margin-top: 10px; }
+.nutrition-more > summary { cursor: pointer; padding: 6px 0; font-size: 0.88rem; font-weight: 600; }
+.nutrition-weight { font-size: 0.88rem; margin: 8px 0; }
+#nutrition-why-lines { margin: 4px 0 0; padding-left: 18px; color: var(--text-dim); font-size: 0.85rem; overflow-wrap: anywhere; }
+/* Save and Cancel stay in reach while a long form scrolls. The negative margins undo
+   .modal-content's 28px padding so nothing shows through beneath the bar. */
+#food-form .modal-actions { position: sticky; bottom: -28px; margin: 20px -28px -28px; padding: 12px 28px 28px; background: var(--surface); }
+@media (max-width: 720px) {
+  .nutrition input, .nutrition select { min-height: 44px; font-size: 16px; }
+  .nutrition .btn, .nutrition .link-btn, #nutrition-open { min-height: 44px; }
+}
