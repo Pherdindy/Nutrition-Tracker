@@ -66,8 +66,7 @@ primary key (user_id, id); RLS per_user_all; no access for anon
 
 `effort`: `{ at, met: { low, high }, minutes, why: [{ ref, note, met, minutes }], how,
 from: { id, date }, refresh, was }`, all optional. `met` is how many times resting energy
-(gross). `minutes` only if the user gave none. No column of the conditional updates is
-null, so every one of them can be matched in a URL.
+(gross). `minutes` only if the user gave none.
 
 In the app a workout is `{ id, date, what, minutes, kcal, effort, estimateStatus }`.
 
@@ -117,7 +116,7 @@ Deleting a day deletes its workouts; the question says how many.
   zone 2 · 90 min · 612–735 kcal" ("yours", "from Nov 23", "estimating…", or "not
   estimated" to tap for another try). TDEE, target and what follows include them.
 - Assessments: the day's activity reads "Sat all day + Stationary bike, zone 2, 90 min
-  (673 kcal)", and its TDEE includes it. No proxy change for that.
+  (674 kcal)", and its TDEE includes it. No proxy change for that.
 - Explanation: what it is based on, both efforts and how they were combined, the sum
   ("6–6.8 times resting, for 90 min at 81.6 kg, less what you burn anyway"), that the AI
   does not look values up.
@@ -128,7 +127,8 @@ Workouts use the food path: outbox, conditional AI answers, `takeOver`, tabs. Th
 (`takeOver`, `follow`, `agrees`, `applyEstimate`, `saveEstimates`, the estimate queue) is
 made to work for a *spec* (table, mappers, list, what to show) instead of for food only.
 An answer is applied only while the row is as it was when asked (`what`, `minutes`,
-`effort`, status). One queue for food and workouts: one AI call at a time, and "no
+status: none of them is ever null then, so all can be matched in a URL; `effort` would
+make it long, and an answer is as good for the same words and minutes). One queue for food and workouts: one AI call at a time, and "no
 credit" stops both.
 
 Cache key `workouts` per user; wiped at sign-out.

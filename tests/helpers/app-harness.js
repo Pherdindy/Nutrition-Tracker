@@ -36,17 +36,23 @@ const SCHEMA = {
     key: ["id"], unique: [["id"], ["date"]], defaults: { incomplete: false },
     required: ["id", "date", "age", "weight", "activity", "deficit", "protein_target_low", "protein_target_high"],
   },
+  workouts: {
+    key: ["id"], unique: [["id"]], defaults: { minutes: 0, effort: {} },
+    required: ["id", "date", "what", "minutes", "effort"],
+    columns: ["id", "date", "what", "minutes", "kcal", "effort", "estimate_status"],
+  },
   profile: { key: [], unique: [[]], defaults: {}, required: [] },
   settings: { key: ["key"], unique: [["key"]], defaults: {}, required: ["key"] },
   assessments: { key: ["timestamp"], unique: [], defaults: {}, required: [] },
 };
 const READ_CAP = 1000;
 
-function createFakeServer({ food = [], days = [], profile = null, readCap = READ_CAP } = {}) {
+function createFakeServer({ food = [], days = [], workouts = [], profile = null, readCap = READ_CAP } = {}) {
   const own = (row) => ({ user_id: OWNER, ...clone(row) });
   const db = {
     food_entries: food.map(own),
     days: days.map(own),
+    workouts: workouts.map(own),
     profile: profile ? [own(profile)] : [],
     settings: [],
     assessments: [],
@@ -205,7 +211,7 @@ function createFakeServer({ food = [], days = [], profile = null, readCap = READ
         invoke: async (_name, { body }) => {
           await tick();
           if (!device.online) return { data: null, error: { message: "Failed to fetch" } };
-          server.aiCalls.push(body.payload.food);
+          server.aiCalls.push(body.payload.food || body.payload.what);
           return server.ai(body);
         },
       },
@@ -229,8 +235,9 @@ function createFakeServer({ food = [], days = [], profile = null, readCap = READ
     writes,
     isIdle: () => running === 0,
     food: () => clone(db.food_entries),
-    rowOf: (table, food) => db[table].find((r) => r.food === food), // live, to change behind the app's back
+    rowOf: (table, name) => db[table].find((r) => (r.food || r.what) === name), // live, to change behind the app's back
     days: () => clone(db.days),
+    workouts: () => clone(db.workouts),
     foods: () => db.food_entries.map((r) => r.food).sort(),
     // Writes wait until the returned function is called.
     holdWrites() {
@@ -418,6 +425,8 @@ async function bootApp({ server = createFakeServer(), device = createDevice(), u
     isOpen: (id) => !el(id).classList.contains("hidden"),
     food: () => JSON.parse(run("JSON.stringify(loadFoodEntries())")),
     days: () => JSON.parse(run("JSON.stringify(loadDayEntries())")),
+    workouts: () => JSON.parse(run("JSON.stringify(loadWorkouts())")),
+    workout: (what) => app.workouts().find((w) => w.what === what),
     foods: () => app.food().map((e) => e.food).sort(),
     entry: (name) => app.food().find((e) => e.food === name),
     timers: () => timers.filter((t) => t.fn),
