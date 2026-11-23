@@ -1199,7 +1199,7 @@ txnCategorySelect.addEventListener('change', populateSubcategories);
 function openAddModal() {
   editingId = null;
   document.getElementById('txn-modal-title').textContent = 'Add Transaction';
-  txnDateInput.value = new Date().toISOString().slice(0, 10);
+  txnDateInput.value = currentDateValue();
   txnTypeSelect.value = 'expense'; populateCategories();
   txnSubcategorySelect.value = ''; txnDescInput.value = ''; txnAmountInput.value = ''; txnNotesInput.value = '';
   txnModal.classList.remove('hidden');

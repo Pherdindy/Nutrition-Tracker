@@ -224,3 +224,19 @@ test("categories: Travel transactions keep their category on a device whose save
   assert.deepEqual(server.rows().map((r) => r.category), ["Travel"]);
   assert.deepEqual(app.transactions().map((r) => r.category), ["Travel"]);
 });
+
+// ---- Dates --------------------------------------------------------------------
+
+// "Today" is the calendar date where the user is, not the UTC date.
+for (const [place, tz, now, today] of [
+  ["Manila, early on the 1st", "Asia/Manila", "2026-11-30T17:04:00Z", "2026-12-01"],
+  ["New York, the evening of the 30th", "America/New_York", "2026-12-01T01:30:00Z", "2026-11-30"],
+]) {
+  test(`${place}: a new transaction is dated today and stays in the month on screen`, async () => {
+    process.env.TZ = tz;
+    const app = await bootFinanceApp({ server: startingServer(), now });
+    app.click("add-txn-btn");
+    assert.equal(app.el("txn-date").value, today);
+    assert.equal(app.el("txn-month-filter").value, today.slice(0, 7));
+  });
+}

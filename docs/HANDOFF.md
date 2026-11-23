@@ -80,9 +80,7 @@ confirmed creating it can reappear (seen once by the fuzzer; needs tombstones).
 qty/unit from the *oldest* match, not the latest (verified: "Eggs" gives 111 g from
 February) — the nutrition-details spec fixes it; (b) if the startup load fails on a
 device with no local profile, onboarding is shown to an existing user and would
-overwrite their cloud profile; (c) the profile form accepts cleared fields; (d) the
-finance app's new-transaction date has the UTC bug described next
-(`finance/app.js`, `txnDateInput.value`).
+overwrite their cloud profile; (c) the profile form accepts cleared fields.
 
 ## Date bug — FIXED 2026-11-23 (on `main`)
 
@@ -91,7 +89,9 @@ finance app's new-transaction date has the UTC bug described next
 tomorrow; assessment periods were off by a day at the same hours. Now
 `localDate()` in `www/app.js`. `tests/local-date.test.js` runs the real app at a
 fixed instant in Manila and New York. The one entry misfiled so far (id 174, the
-01:04 shake of Nov 23, under Nov 22) was left as it is.
+01:04 shake of Nov 23, under Nov 22) was left as it is. The finance app's Add dialog
+had the same bug (early on the 1st, a new transaction landed in last month); it now
+uses its own `currentDateValue()`.
 
 ## In design: macro override, label photo, macro set, AI explanation
 

@@ -178,7 +178,9 @@ const MODALS = ["txn-modal", "delete-modal", "manage-cats-modal", "cat-modal", "
 
 // Loads the app as a page load would and waits for startup to finish.
 // Pass the same `server` and `storage` again to model a reload.
-async function bootFinanceApp({ server = createFakeServer(), storage = createStorage() } = {}) {
+// now: the app's clock stands still at this instant (an ISO string); the time
+// zone is process.env.TZ.
+async function bootFinanceApp({ server = createFakeServer(), storage = createStorage(), now = null } = {}) {
   const byId = new Map();
   const el = (id) => {
     if (!byId.has(id)) byId.set(id, new FakeElement());
@@ -209,6 +211,15 @@ async function bootFinanceApp({ server = createFakeServer(), storage = createSto
   };
   sandbox.window = sandbox;
   const context = vm.createContext(sandbox);
+  if (now) {
+    vm.runInContext(`{
+      const RealDate = Date, at = ${Date.parse(now)};
+      Date = class extends RealDate {
+        constructor(...args) { if (args.length) super(...args); else super(at); }
+        static now() { return at; }
+      };
+    }`, context);
+  }
   for (const { name, code } of SOURCES) vm.runInContext(code, context, { filename: `finance/${name}` });
 
   const run = (code) => vm.runInContext(code, context);
