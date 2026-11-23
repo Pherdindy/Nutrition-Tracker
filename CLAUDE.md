@@ -28,7 +28,7 @@ Update it at the end of each working session.
 - Data reads are synchronous from in-memory `_cache`. Food and day writes go
   cache → localStorage + a persistent per-account outbox (`www/sync.js`) → Supabase,
   row by row; a save never implies a delete (use `removeFoodEntry`/
-  `removeDayEntry`), new ids come from `newId()`, AI results go through
+  `removeDayEntry`/`removeWorkout`), new ids come from `newId()`, AI results go through
   `saveEstimates`. Profile, settings and assessments still use `bgWrite()`
 - An entry's numbers are decided in `www/nutrition.js` (pure) and reach a save only
   through `numbersFor()`. `entry.macros` is always the total eaten; a nutrient with
