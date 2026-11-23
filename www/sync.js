@@ -54,7 +54,15 @@
     }
   }
 
-  const matches = (row, match) => Object.entries(match).every(([field, value]) => row[field] === value);
+  // The same value, objects included, whatever the order of their keys (the database
+  // does not keep it).
+  function same(a, b) {
+    if (a === b) return true;
+    if (!a || !b || typeof a !== "object" || typeof b !== "object") return false;
+    const keys = Object.keys(a);
+    return keys.length === Object.keys(b).length && keys.every((key) => same(a[key], b[key]));
+  }
+  const matches = (row, match) => Object.entries(match).every(([field, value]) => same(row[field], value));
 
   // The list as it should look on this device: what was loaded, with this
   // device's unsent changes applied on top.

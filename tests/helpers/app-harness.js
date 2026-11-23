@@ -19,6 +19,8 @@ const SOURCES = [...fs.readFileSync(path.join(WWW, "index.html"), "utf8").matchA
 
 const OWNER = "owner-uid-0001";
 const clone = (v) => JSON.parse(JSON.stringify(v));
+const sorted = (v) => (v && typeof v === "object" && !Array.isArray(v) ? Object.fromEntries(Object.keys(v).sort().map((k) => [k, sorted(v[k])])) : v);
+const sameJson = (a, b) => JSON.stringify(sorted(a)) === JSON.stringify(sorted(b)); // jsonb equality
 const tick = () => new Promise((resolve) => setImmediate(resolve));
 
 // ---- Fake Supabase ---------------------------------------------------------
@@ -28,6 +30,7 @@ const SCHEMA = {
   food_entries: {
     key: ["id"], unique: [["id"]], defaults: {},
     required: ["id", "date", "time", "food", "qty", "unit"],
+    columns: ["id", "date", "time", "food", "qty", "unit", "cal_low", "cal_high", "pro_low", "pro_high", "ai_thought_process", "macros", "estimate_status", "nutrition"],
   },
   days: {
     key: ["id"], unique: [["id"], ["date"]], defaults: { incomplete: false },
@@ -65,7 +68,7 @@ function createFakeServer({ food = [], days = [], profile = null, readCap = READ
   // Filter values travel as text in the URL; the database converts them.
   function filterFn(filters) {
     return (row) => filters.every(([kind, col, val]) => {
-      if (kind === "eq") return String(row[col]) === String(val);
+      if (kind === "eq") return row[col] && typeof row[col] === "object" ? sameJson(row[col], JSON.parse(val)) : String(row[col]) === String(val);
       if (kind === "gte") return row[col] >= val;
       if (kind === "in") return val.map(String).includes(String(row[col]));
       if (kind === "not.in") return !val.includes(row[col]);
@@ -82,6 +85,8 @@ function createFakeServer({ food = [], days = [], profile = null, readCap = READ
     const next = clone(db[q.table]); // applied only if every row is accepted
     const touched = [];
     for (const payload of incoming) {
+      const unknown = spec.columns && Object.keys(payload).find((c) => !spec.columns.includes(c));
+      if (unknown) return fail(400, "PGRST204", `Could not find the '${unknown}' column of '${q.table}' in the schema cache`);
       const row = { user_id: uid, ...spec.defaults, ...payload };
       const missing = spec.required.find((c) => row[c] === null || row[c] === undefined);
       if (missing) return fail(400, "23502", `null value in column "${missing}" of relation "${q.table}" violates not-null constraint`);

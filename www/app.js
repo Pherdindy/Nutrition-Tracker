@@ -209,7 +209,9 @@ const outbox = Sync.createOutbox({
     if (kind === "update") {
       const [{ key, row, match }] = items;
       let query = sb.from(table).update(row).eq(keyColumn, key);
-      for (const [column, value] of Object.entries(match)) query = query.eq(column, value);
+      for (const [column, value] of Object.entries(match)) {
+        query = query.eq(column, value && typeof value === "object" ? JSON.stringify(value) : value);
+      }
       return asAccount(session, query);
     }
     return asAccount(session, sb.from(table).upsert(items, { onConflict, ignoreDuplicates: kind === "ensure" }));

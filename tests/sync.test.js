@@ -487,3 +487,13 @@ test("unreadable stored data is treated as empty rather than crashing", async ()
   assert.equal(r.box.count(), 0);
   assert.deepEqual(r.box.pending("food"), {});
 });
+
+test("matches compares objects by value, whatever the order of their keys", () => {
+  const row = { macros: { protein: { low: 22, high: 22, mine: true }, fat: { low: 1, high: 2 } } };
+  assert.equal(Sync.matches(row, { macros: { fat: { high: 2, low: 1 }, protein: { mine: true, high: 22, low: 22 } } }), true);
+  assert.equal(Sync.matches(row, { macros: { fat: { low: 1, high: 2 }, protein: { low: 22, high: 22 } } }), false);
+  assert.equal(Sync.matches(row, { macros: { protein: { low: 22, high: 22, mine: true } } }), false);
+  assert.equal(Sync.matches({ macros: {} }, { macros: {} }), true);
+  assert.equal(Sync.matches({ macros: null }, { macros: {} }), false);
+  assert.equal(Sync.matches({ x: 1 }, { x: "1" }), false);
+});
