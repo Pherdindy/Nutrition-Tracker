@@ -83,7 +83,7 @@ function closePaywall() {
   if (modal) modal.classList.add("hidden");
 }
 
-const _cache = { food: null, days: null, profile: null, assessments: null, settings: {}, ready: false };
+const _cache = { food: null, days: null, workouts: null, profile: null, assessments: null, settings: {}, ready: false };
 
 // ---- Mappers: snake_case DB ↔ camelCase JS ----
 
@@ -124,6 +124,13 @@ function dayJsToRow(e) {
     age: orDefault("age"), deficit: Targets.deficitForGoal(p.weightLossGoal),
     protein_target_low: orDefault("proteinLow"), protein_target_high: orDefault("proteinHigh") };
 }
+function workoutRowToJs(r) {
+  return { id: r.id, date: r.date, what: r.what, minutes: Number(r.minutes) || 0,
+    kcal: r.kcal == null ? null : Number(r.kcal), effort: r.effort || {}, estimateStatus: r.estimate_status || null };
+}
+function workoutJsToRow(w) {
+  return { id: w.id, date: w.date, what: w.what, minutes: w.minutes, kcal: w.kcal, effort: w.effort, estimate_status: w.estimateStatus };
+}
 function profileRowToJs(r) {
   return { height: Number(r.height), age: r.age != null ? Number(r.age) : null, proteinLow: Number(r.protein_low), proteinHigh: Number(r.protein_high), weightLossGoal: r.weight_loss_goal || null };
 }
@@ -139,7 +146,7 @@ function bgWrite(fn) {
 }
 
 // ---- Per-user localStorage cache (theme + API keys stay device-global) ----
-const CACHE_BASES = ["food", "days", "profile", "assessments", "version"];
+const CACHE_BASES = ["food", "days", "workouts", "profile", "assessments", "version"];
 function lsGet(base) { return localStorage.getItem(AuthView.nsKey(currentUid(), base)); }
 function lsSet(base, value) {
   // Signed out (e.g. an estimate coming back during sign-out): keep nothing.
@@ -198,8 +205,18 @@ const DAY_SYNC = {
   // profile change is not an edit to every day.
   signature: (d) => JSON.stringify([d.weight, d.activity, !!d.incomplete]),
 };
-const SPECS = Object.fromEntries([FOOD_SYNC, DAY_SYNC].map((spec) => [spec.table, spec]));
-const ESTIMATED = Object.fromEntries([FOOD_SYNC].map((spec) => [spec.table, spec])); // by the AI
+const WORKOUT_SYNC = {
+  table: "workouts", keyColumn: "id", known: new Map(),
+  keyOf: (w) => String(w.id), toRow: workoutJsToRow, fromRow: workoutRowToJs,
+  signature: (w) => JSON.stringify(workoutJsToRow(w)),
+  load: () => loadWorkouts(), save: (workouts) => saveWorkouts(workouts),
+  show: () => { renderCalorieTracker(); },
+  asked: ({ what, minutes }) => ({ what, minutes }),
+  again: (w) => !!w.effort.refresh,
+  answered: ["effort", "estimate_status"],
+};
+const SPECS = Object.fromEntries([FOOD_SYNC, DAY_SYNC, WORKOUT_SYNC].map((spec) => [spec.table, spec]));
+const ESTIMATED = Object.fromEntries([FOOD_SYNC, WORKOUT_SYNC].map((spec) => [spec.table, spec])); // by the AI
 
 const outbox = Sync.createOutbox({
   owner: currentUid,
@@ -407,6 +424,26 @@ function removeDayEntry(date) {
   lsSet("days", JSON.stringify(_cache.days));
 }
 
+function loadWorkouts() {
+  if (_cache.ready && _cache.workouts) return [..._cache.workouts];
+  const saved = lsGet("workouts");
+  return saved ? JSON.parse(saved) : [];
+}
+
+function saveWorkouts(workouts) {
+  _cache.workouts = [...workouts];
+  queueSave(WORKOUT_SYNC, workouts);
+  lsSet("workouts", JSON.stringify(workouts));
+}
+
+function removeWorkout(id) {
+  _cache.workouts = loadWorkouts().filter((w) => w.id !== id);
+  queueDelete(WORKOUT_SYNC, String(id));
+  lsSet("workouts", JSON.stringify(_cache.workouts));
+}
+
+const workoutsOn = (date) => loadWorkouts().filter((w) => w.date === date).sort((a, b) => a.id - b.id);
+
 // ============================================================
 // INITIALIZE DATA — Supabase with localStorage fallback
 // ============================================================
@@ -416,14 +453,15 @@ async function initFromSupabase() {
   if (!session) throw new Error("no session for this account");
   // Unsent as of now counts too: another tab may deliver a change after the
   // server has answered us without it.
-  const unsentBefore = { food_entries: outbox.pending("food_entries"), days: outbox.pending("days") };
+  const unsentBefore = Object.fromEntries(Object.keys(SPECS).map((table) => [table, outbox.pending(table)]));
   const unsent = (table) => ({ ...unsentBefore[table], ...outbox.pending(table) });
   // Every page: the server returns at most 1,000 rows per request by default.
   const loadAll = (table) => Sync.fetchAll((from, to) => asAccount(session,
     sb.from(table).select('*', { count: 'exact' }).order('date', { ascending: false }).order('id').range(from, to)));
-  const [foodRows, dayRows, profileRes, assessRes, settingsRes] = await Promise.all([
+  const [foodRows, dayRows, workoutRows, profileRes, assessRes, settingsRes] = await Promise.all([
     loadAll('food_entries'),
     loadAll('days'),
+    loadAll('workouts'),
     asAccount(session, sb.from('profile').select('*').maybeSingle()),
     asAccount(session, sb.from('assessments').select('*').order('timestamp', { ascending: false })),
     asAccount(session, sb.from('settings').select('*')),
@@ -440,14 +478,18 @@ async function initFromSupabase() {
   const _needSeed = _cache.profile.age == null || _cache.profile.weightLossGoal == null;
   _cache.profile = Targets.migrateProfile(_cache.profile, dayRows.map((r) => ({ age: r.age, deficit: r.deficit })));
   _cache.days = withUnsent(DAY_SYNC, dayRows.map(dayRowToJs), unsent("days"));
+  _cache.workouts = withUnsent(WORKOUT_SYNC, workoutRows.map(workoutRowToJs), unsent("workouts"));
   markKnown(FOOD_SYNC, _cache.food);
   markKnown(DAY_SYNC, _cache.days);
+  markKnown(WORKOUT_SYNC, _cache.workouts);
   // An estimate that is pending only in the cloud is being worked on by the device
   // that logged it. If that device never finishes, this one resumes it at its next
   // start, having cached it as pending now.
-  let cachedFood = [];
-  try { cachedFood = JSON.parse(lsGet("food")) || []; } catch (e) { /* unreadable: nothing to resume */ }
-  markResumable(FOOD_SYNC, [...cachedFood, ...Object.values(unsent("food_entries")).filter((op) => op.row && !op.match).map((op) => foodRowToJs(op.row))]);
+  for (const [spec, base] of [[FOOD_SYNC, "food"], [WORKOUT_SYNC, "workouts"]]) {
+    let cached = [];
+    try { cached = JSON.parse(lsGet(base)) || []; } catch (e) { /* unreadable: nothing to resume */ }
+    markResumable(spec, [...cached, ...Object.values(unsent(spec.table)).filter((op) => op.row && !op.match).map((op) => spec.fromRow(op.row))]);
+  }
   _cache.assessments = (assessRes.data || []).map(r => r.data);
 
   // Settings (key-value pairs)
@@ -463,6 +505,7 @@ async function initFromSupabase() {
   // DEFAULT_PROFILE placeholder and skip onboarding.
   lsSet("food", JSON.stringify(_cache.food));
   lsSet("days", JSON.stringify(_cache.days));
+  lsSet("workouts", JSON.stringify(_cache.workouts));
   if (hasProfileData) lsSet("profile", JSON.stringify(_cache.profile));
   else localStorage.removeItem(AuthView.nsKey(currentUid(), "profile"));
   lsSet("assessments", JSON.stringify(_cache.assessments));
@@ -484,9 +527,13 @@ function initFromLocalStorage() {
   const _needSeed = _cache.profile.age == null || _cache.profile.weightLossGoal == null;
   _cache.profile = Targets.migrateProfile(_cache.profile, parsedDays);
   _cache.days = withUnsent(DAY_SYNC, parsedDays.map(Targets.migrateDay), outbox.pending("days"));
+  const savedWorkouts = lsGet("workouts");
+  _cache.workouts = withUnsent(WORKOUT_SYNC, savedWorkouts ? JSON.parse(savedWorkouts) : [], outbox.pending("workouts"));
   markKnown(FOOD_SYNC, _cache.food);
   markKnown(DAY_SYNC, _cache.days);
+  markKnown(WORKOUT_SYNC, _cache.workouts);
   markResumable(FOOD_SYNC, _cache.food);
+  markResumable(WORKOUT_SYNC, _cache.workouts);
   const savedAssessments = lsGet("assessments");
   _cache.assessments = savedAssessments ? JSON.parse(savedAssessments) : [];
 
