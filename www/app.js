@@ -352,14 +352,6 @@ function markKnown(spec, entries) {
 
 // ---- Constants ----
 
-const ACTIVITY_TYPES = [
-  { label: "\u{1FA91} Sat all day (no exercise)", multiplier: 1.2 },
-  { label: "\u{1F6B6} Light activity (walked / errands)", multiplier: 1.375 },
-  { label: "\u{1F3CB}\uFE0F Gym day (moderate workout)", multiplier: 1.55 },
-  { label: "\u{1F4AA} Hard gym session (intense)", multiplier: 1.725 },
-  { label: "\u{1F3C3} Very active day (sports + gym)", multiplier: 1.9 },
-];
-
 const WEIGHT_LOSS_GOALS = [
   { goal: "0.25 kg/week", daily: 275, weekly: 1925 },
   { goal: "0.50 kg/week", daily: 550, weekly: 3850 },
@@ -442,7 +434,13 @@ function removeWorkout(id) {
   lsSet("workouts", JSON.stringify(_cache.workouts));
 }
 
-const workoutsOn = (date) => loadWorkouts().filter((w) => w.date === date).sort((a, b) => a.id - b.id);
+// date -> its workouts, the first added first
+function workoutsByDate() {
+  const by = new Map();
+  for (const w of loadWorkouts().sort((a, b) => a.id - b.id)) by.set(w.date, [...(by.get(w.date) || []), w]);
+  return (date) => by.get(date) || [];
+}
+const workoutsOn = (date) => workoutsByDate()(date);
 
 // ============================================================
 // INITIALIZE DATA — Supabase with localStorage fallback
@@ -552,13 +550,10 @@ function calcBMR(weightLbs, heightCm, age) {
   return 10 * (weightLbs / 2.20462) + 6.25 * heightCm - 5 * age + 5;
 }
 
-function getActivityMultiplier(activityLabel) {
-  const found = ACTIVITY_TYPES.find((a) => a.label === activityLabel);
-  return found ? found.multiplier : 1.2;
-}
-
-function calcTDEE(bmr, activityLabel) {
-  return bmr * getActivityMultiplier(activityLabel);
+// What a day burns: { bmr, rest, tdee, ... } (see Workouts.total).
+function dayEnergy(day, profile, workouts) {
+  const bmr = calcBMR(day.weight, profile.height, profile.age);
+  return { bmr, ...Workouts.total(bmr, day, workouts) };
 }
 
 function getDailyFoodTotals(date, foodEntries) {
@@ -690,11 +685,11 @@ function renderCalorieTracker() {
   // Sort by date desc
   days.sort((a, b) => (a.date < b.date ? 1 : -1));
 
-  const deficit = getDeficit();
+  const deficit = getDeficit(), workoutsOf = workoutsByDate();
   let html = "";
   for (const day of days) {
-    const bmr = calcBMR(day.weight, profile.height, profile.age);
-    const tdee = calcTDEE(bmr, day.activity);
+    const workouts = workoutsOf(day.date);
+    const { bmr, tdee } = dayEnergy(day, profile, workouts);
     const target = tdee - deficit;
     const totals = getDailyFoodTotals(day.date, food);
     const surpLow = totals.calLow - target, surpHigh = totals.calHigh - target;
@@ -704,7 +699,7 @@ function renderCalorieTracker() {
       <td>${formatDate(day.date)}${incPill}</td>
       <td class="num">${day.weight}</td>
       <td class="num">${renderNum(bmr, 1)}</td>
-      <td>${escapeHtml(day.activity)}</td>
+      <td>${activityHtml(day, workouts)}</td>
       <td class="num">${renderNum(tdee, 1)}</td>
       <td class="num">${renderNum(target, 0)}</td>
       <td class="num">${renderNum(totals.calLow, 1)}</td>
@@ -730,12 +725,27 @@ function renderCalorieTracker() {
   if (typeof renderDayCards === "function") renderDayCards();
 }
 
+// A day's activity and, a line each, its workouts.
+function activityHtml(day, workouts) {
+  if (!workouts.length) return escapeHtml(day.activity);
+  const { rest } = Workouts.total(0, day, workouts);
+  return escapeHtml(Workouts.nameOf(rest)) + workouts.map((w) => `<div class="workout-line">${workoutHtml(w, day.weight)}</div>`).join("");
+}
+function workoutHtml(w, lbs) {
+  const { what, minutes, kcal } = Workouts.line(w, lbs);
+  const waiting = w.estimateStatus === "pending" ? "estimating…" : "";
+  const text = [escapeHtml(what), minutes, kcal, waiting].filter(Boolean).join(" · ");
+  const tag = w.kcal != null ? "yours" : Workouts.tag(w, localDate());
+  const retry = w.estimateStatus === "error" ? ` <button type="button" class="link-btn" onclick="retryWorkout(${w.id})" title="Ask the AI again">${kcal ? "try again" : "not estimated"}</button>` : "";
+  return text + (tag ? ` <span class="from-tag">${tag}</span>` : "") + retry;
+}
+
 // ---- Calorie Target Tables ----
 
 function renderCalorieTarget() {
   // Activity table
   const actTbody = document.querySelector("#activity-table tbody");
-  actTbody.innerHTML = ACTIVITY_TYPES.map(
+  actTbody.innerHTML = Workouts.ACTIVITIES.map(
     (a) => `<tr><td>${a.label}</td><td class="num">${a.multiplier.toFixed(3)}</td></tr>`
   ).join("");
 
@@ -964,7 +974,7 @@ function ensureDayExists(date) {
   if (days.some((d) => d.date === date)) return;
   const sorted = [...days].sort((a, b) => (a.date < b.date ? 1 : -1));
   const prev = sorted[0];
-  days.push({ id: newId(), date, weight: prev ? prev.weight : 168, activity: prev ? prev.activity : ACTIVITY_TYPES[0].label });
+  days.push({ id: newId(), date, weight: prev ? prev.weight : 168, activity: Workouts.lastRest(days, date) });
   saveDayEntries(days, { autoCreated: [date] });
 }
 
@@ -1120,7 +1130,7 @@ window.deleteFood = function (id) {
 
 function populateActivitySelect() {
   const select = document.getElementById("day-activity");
-  select.innerHTML = ACTIVITY_TYPES.map(
+  select.innerHTML = Workouts.ACTIVITIES.map(
     (a) => `<option value="${escapeHtml(a.label)}">${a.label}</option>`
   ).join("");
 }
@@ -1486,13 +1496,13 @@ function buildRangeData(foodEntries, dayEntries, profile, startDate, endDate) {
   let avgProTargetLow = null, avgProTargetHigh = null;
   if (filteredDays.length > 0) {
     let totalProTLow = 0, totalProTHigh = 0;
-    const deficit = getDeficit();
+    const deficit = getDeficit(), workoutsOf = workoutsByDate();
     filteredDays.forEach(day => {
-      const bmr = calcBMR(day.weight, profile.height, profile.age);
-      const tdee = calcTDEE(bmr, day.activity);
+      const workouts = workoutsOf(day.date);
+      const { tdee } = dayEnergy(day, profile, workouts);
       const target = tdee - deficit;
       dailyContext[day.date] = {
-        activity: day.activity,
+        activity: Workouts.dayText(day, workouts),
         tdee: Math.round(tdee),
         deficit: deficit,
         calorieTarget: Math.round(target),
@@ -2888,7 +2898,7 @@ function maybeShowOnboarding() {
   const ob = document.getElementById("onboarding-view");
   // Populate the selects (same options as the Targets tab).
   const act = document.getElementById("ob-activity");
-  act.innerHTML = ACTIVITY_TYPES.map((a) => `<option value="${escapeHtml(a.label)}">${escapeHtml(a.label)}</option>`).join("");
+  act.innerHTML = Workouts.ACTIVITIES.map((a) => `<option value="${escapeHtml(a.label)}">${escapeHtml(a.label)}</option>`).join("");
   const goal = document.getElementById("ob-goal");
   goal.innerHTML = Targets.GOALS.map((g) => `<option value="${escapeHtml(g.goal)}">${escapeHtml(g.goal)}</option>`).join("");
   goal.value = DEFAULT_PROFILE.weightLossGoal;

@@ -3,9 +3,9 @@
 //                          escapeHtml, renderNum, isMobile, editFood, deleteFood,
 //                          retryEstimate, getEnabledMacros, getValueFormat, localDate,
 //                          Macros, Nutrition
-//  renderDayCards:         loadDayEntries, loadProfile, loadFoodEntries, calcBMR, calcTDEE,
-//                          Targets, getDailyFoodTotals, formatDate, escapeHtml, renderNum,
-//                          isMobile, editDay, deleteDay
+//  renderDayCards:         loadDayEntries, loadProfile, loadFoodEntries, workoutsByDate,
+//                          dayEnergy, activityHtml, Targets, getDailyFoodTotals, formatDate,
+//                          escapeHtml, renderNum, isMobile, editDay, deleteDay
 //  renderAssessmentScorecard: window.AssessmentView, renderActionPlan, escapeHtml
 
 function renderFoodCards() {
@@ -84,10 +84,11 @@ function renderDayCards() {
   const food = loadFoodEntries();
   const days = loadDayEntries().slice().sort((a, b) => (a.date < b.date ? 1 : -1));
 
+  const workoutsOf = workoutsByDate();
   let html = "";
   for (const day of days) {
-    const bmr = calcBMR(day.weight, profile.height, profile.age);
-    const tdee = calcTDEE(bmr, day.activity);
+    const workouts = workoutsOf(day.date);
+    const { bmr, tdee } = dayEnergy(day, profile, workouts);
     const target = tdee - deficit;
     const t = getDailyFoodTotals(day.date, food);
     const overLow = t.calLow - target, overHigh = t.calHigh - target;
@@ -102,7 +103,7 @@ function renderDayCards() {
       <div class="day-card-body">
         <div class="food-card-row"><span>Weight</span><b>${day.weight} lb</b></div>
         <div class="food-card-row"><span>BMR / TDEE</span><b>${renderNum(bmr,0)} / ${renderNum(tdee,0)}</b></div>
-        <div class="food-card-row"><span>Activity</span><b>${escapeHtml(day.activity)}</b></div>
+        <div class="food-card-row"><span>Activity</span><b>${activityHtml(day, workouts)}</b></div>
         <div class="food-card-row"><span>Cal +/-</span><b class="tone-${calDisp.tone}">${calDisp.text ? escapeHtml(calDisp.text) : `${renderNum(overLow,0)} … ${renderNum(overHigh,0)}`}</b></div>
         <div class="food-card-row"><span>Protein</span><b class="tone-${proDisp.tone}">${proDisp.text ? escapeHtml((proDisp.icon + " " + proDisp.text).trim()) : `${renderNum(t.proLow,0)}–${renderNum(t.proHigh,0)} g (target ${profile.proteinLow}–${profile.proteinHigh})`}</b></div>
         <div class="day-card-actions">
