@@ -1360,11 +1360,9 @@ test("an estimate that finds its numbers already there asks nobody", async () =>
 <!-- edit www/app.js @T5 -->
 ```js
     macros: e.macros || {}, estimate_status: e.estimateStatus || null,
-    cal_low:
 ```
 ```js
     macros: e.macros || {}, estimate_status: e.estimateStatus || null, nutrition: e.nutrition || null,
-    cal_low:
 ```
 
 <!-- edit www/app.js @T5 -->

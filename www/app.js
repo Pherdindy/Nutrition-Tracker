@@ -90,6 +90,7 @@ const _cache = { food: null, days: null, profile: null, assessments: null, setti
 function foodRowToJs(r) {
   const base = { id: r.id, date: r.date, time: r.time, food: r.food, qty: Number(r.qty), unit: r.unit,
     estimateStatus: r.estimate_status || null };
+  if (r.nutrition) base.nutrition = r.nutrition;
   if (r.macros) { base.macros = r.macros; return base; }
   // legacy fallback: build macros from cal/pro columns
   base.calLow = Number(r.cal_low); base.calHigh = Number(r.cal_high);
@@ -100,7 +101,7 @@ function foodJsToRow(e) {
   const cal = Macros.getMacro(e, "calories") || { low: null, high: null };
   const pro = Macros.getMacro(e, "protein") || { low: null, high: null };
   return { id: e.id, date: e.date, time: e.time, food: e.food, qty: e.qty, unit: e.unit,
-    macros: e.macros || {}, estimate_status: e.estimateStatus || null,
+    macros: e.macros || {}, estimate_status: e.estimateStatus || null, nutrition: e.nutrition || null,
     cal_low: cal.low, cal_high: cal.high, pro_low: pro.low, pro_high: pro.high,
     ai_thought_process: null };
 }
@@ -237,18 +238,21 @@ function queueDelete(spec, key) {
 }
 
 // The AI's answer to each entry (or that there is none): not the user's change, so it
-// only fills in a row that is still waiting for this food and amount. It must not
-// bring back an entry deleted on another device, or undo an edit made there.
+// only fills in a row that is still waiting, for this food and amount, with the numbers
+// it had when the AI was asked. It must not bring back an entry deleted on another
+// device, undo an edit made there, or replace a number someone typed meanwhile.
 function saveEstimates(entries, answered) {
   for (const { entry, asked } of answered) {
-    const { macros, estimate_status, cal_low, cal_high, pro_low, pro_high } = foodJsToRow(entry);
+    const { macros, estimate_status, nutrition, cal_low, cal_high, pro_low, pro_high } = foodJsToRow(entry);
     outbox.update(FOOD_SYNC.table, FOOD_SYNC.keyOf(entry),
-      { macros, estimate_status, cal_low, cal_high, pro_low, pro_high }, { ...asked, estimate_status: "pending" });
+      { macros, estimate_status, nutrition, cal_low, cal_high, pro_low, pro_high }, { ...asked, estimate_status: "pending" });
     FOOD_SYNC.known.set(FOOD_SYNC.keyOf(entry), FOOD_SYNC.signature(entry));
   }
   saveFoodEntries(entries);
 }
-const askedOf = ({ food, qty, unit }) => ({ food, qty, unit });
+// What an estimate is for; the numbers are copied, since entries are edited in place.
+const askedOf = ({ food, qty, unit, macros }) => ({ food, qty, unit, macros: JSON.parse(JSON.stringify(macros || {})) });
+const stillAsked = (entry, asked) => entry.estimateStatus === "pending" && Sync.matches(askedOf(entry), asked);
 function applyEstimate(entry, op) {
   const row = foodJsToRow(entry);
   return Sync.matches(row, op.match) ? foodRowToJs({ ...row, ...op.row }) : entry;
@@ -748,18 +752,18 @@ async function runEstimateQueue() {
       const snapshot = loadFoodEntries();
       const entry = snapshot.find((e) => e.id === id);
       if (!entry || entry.estimateStatus !== "pending") continue;
-      const ids = Macros.blankEnabled(entry, getEnabledMacros());
-      if (!ids.length) {
-        const fresh = loadFoodEntries();
-        const t = fresh.find((e) => e.id === id);
-        if (t) { t.estimateStatus = "manual"; saveEstimates(fresh, [{ entry: t, asked: askedOf(t) }]); }
+      const tracked = getEnabledMacros();
+      const asked = askedOf(entry);
+      if (!Nutrition.needsAnswer(entry, tracked)) {
+        entry.estimateStatus = Nutrition.statusFor(entry.macros, tracked, entry.nutrition);
+        saveEstimates(snapshot, [{ entry, asked }]);
+        renderFoodTable(); renderCalorieTracker();
         continue;
       }
-      let filled = null, errStatus = null;
-      const asked = askedOf(entry);
+      let answer = null, errStatus = null;
+      const { food, qty, unit } = asked, known = Nutrition.known(entry);
       try {
-        const est = await callAi("estimate", asked);
-        filled = est && est.macros ? est.macros : null;
+        answer = await callAi("estimate", known ? { food, qty, unit, known } : { food, qty, unit });
       } catch (err) {
         errStatus = err && err.status;
         console.error("[AI] estimate failed:", err);
@@ -767,9 +771,10 @@ async function runEstimateQueue() {
       // Reload fresh AFTER the await so a concurrent user edit isn't overwritten.
       const fresh = loadFoodEntries();
       const found = fresh.find((e) => e.id === id);
-      // Changed while this ran: the answer is for something else, and saving that
-      // change has queued a new estimate.
-      const t = found && !Macros.needsReestimate(asked, found) ? found : null;
+      // Changed while this ran (food, amount, or a number typed): the answer is for
+      // something else, and saving that change has queued a new estimate if one is
+      // still needed.
+      const t = found && stillAsked(found, asked) ? found : null;
       // Quota exhausted (402): every remaining attempt would fail the same way —
       // fail the rest of the queue without burning proxy calls, then show the
       // paywall once. 429 is transient, so it does NOT drain: remaining entries
@@ -781,13 +786,7 @@ async function runEstimateQueue() {
         if (q && q.estimateStatus === "pending") { q.estimateStatus = "error"; answered.push({ entry: q, asked: askedOf(q) }); }
       }
       if (t) { // the entry may have been deleted or changed while the estimate was in flight
-        if (filled) {
-          if (!t.macros) t.macros = {};
-          for (const mid of ids) if (filled[mid]) t.macros[mid] = filled[mid];
-          t.estimateStatus = ids.every((mid) => filled[mid]) ? "done" : "error";
-        } else {
-          t.estimateStatus = "error";
-        }
+        Object.assign(t, Nutrition.applyAnswer(t, answer, { tracked, now: Date.now() }));
         answered.push({ entry: t, asked });
       }
       if (answered.length) {

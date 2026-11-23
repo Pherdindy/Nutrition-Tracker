@@ -225,6 +225,7 @@ function createFakeServer({ food = [], days = [], profile = null, readCap = READ
     writes,
     isIdle: () => running === 0,
     food: () => clone(db.food_entries),
+    rowOf: (table, food) => db[table].find((r) => r.food === food), // live, to change behind the app's back
     days: () => clone(db.days),
     foods: () => db.food_entries.map((r) => r.food).sort(),
     // Writes wait until the returned function is called.
