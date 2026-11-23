@@ -7,7 +7,7 @@ it at the end of each working session.**
 
 **Any tab, phone or emulator still running an older build keeps deleting rows it
 does not know about: reload every open tab, pull on the laptop, reinstall every
-device.** (Pixel_7 emulator: `main` as of `829279f` installed 2026-11-23;
+device.** (Pixel_7 emulator: the nutrition details build installed 2026-11-23;
 `android/` assets are git-ignored, so run `npx cap sync android` after pulling.)
 
 1. **Rejected saves.** `food_entries.cal_low/cal_high/pro_low/pro_high` were NOT
@@ -73,14 +73,14 @@ lost at the next online start, and the sign-out prompt does not count them); a
 permanently refused row is only logged in the console; on Android a change is on
 disk within ~2 s, or at once when the app goes to the background, so a hard kill
 inside that window loses it (WebView localStorage; measured); two open tabs do not
-refresh each other's lists (food entries: they do since `feat/nutrition-details`); an
+refresh each other's lists (food entries: they do since nutrition details); an
 entry deleted on one device while another has not yet
 confirmed creating it can reappear (seen once by the fuzzer; needs tombstones).
 
 **Noticed, not fixed:** (a) if the startup load fails on a
 device with no local profile, onboarding is shown to an existing user and would
 overwrite their cloud profile; (b) the profile form accepts cleared fields. (Autofill
-from the oldest match is fixed on `feat/nutrition-details`.)
+from the oldest match was fixed with nutrition details.)
 
 ## Date bug — FIXED 2026-11-23 (on `main`)
 
@@ -93,7 +93,7 @@ fixed instant in Manila and New York. The one entry misfiled so far (id 174, the
 had the same bug (early on the 1st, a new transaction landed in last month); it now
 uses its own `currentDateValue()`.
 
-## Nutrition details — BUILT 2026-11-23 on `feat/nutrition-details`, NOT on `main`
+## Nutrition details — LIVE since 2026-11-23
 
 User request 2026-11-23: correct the AI's numbers, photograph a label, which
 nutrients, how the numbers were worked out. **User chose option C** (corrections and
@@ -104,15 +104,28 @@ Spec `docs/superpowers/specs/2026-11-23-nutrition-details-design.md` (describes 
 final behaviour), plan `docs/superpowers/plans/2026-11-23-nutrition-details.md` (the
 first version of the code; see its "After the plan"). Label photo is a later spec.
 
-**Waiting for the user's explicit yes, in this order (plan, Task 11):**
+**Deployed 2026-11-23 on the user's "Yes to all"**, in this order:
 1. Migration `food_nutrition_01` (`docs/sql/2026-11-23-food-nutrition-01.sql`): one
-   nullable column, `food_entries.nutrition jsonb`.
-2. Merge to `main` and push; `npx cap sync android`, reinstall; reload every open tab.
-   **Never before step 1**: `main` is the folder the user serves, and PostgREST refuses
-   a save that names a column it does not know. (Such saves wait on the device and
-   arrive once the column exists; checked in a browser.)
-3. Deploy ai-proxy v12 (a few cents of smoke test on both providers). Until then
-   everything works except the weight and explanation lines, which do not appear.
+   nullable column, `food_entries.nutrition jsonb`. All 176 rows identical before and
+   after; RLS, policies and grants unchanged.
+2. `feat/nutrition-details` merged into `main` (fast-forward) and pushed; Pixel_7
+   emulator reinstalled. With the owner's session: for all 176 entries what the app would
+   save equals the row on the server; one entry saved as it is (POST 200, conditional
+   PATCH 204 with count 1) left every row identical.
+3. `ai-proxy` **v13** (v12, then references cut at a word instead of in one; deployed
+   with the Supabase CLI, `--use-api`; equal to the repo). Four estimates on the owner's
+   plan, $0.116 in all: both models answer with a reference, a weight and eight nutrients;
+   `known` totals are kept exactly, a known weight is used.
+
+**Still to do (user):** reload every open tab, pull on the laptop, reinstall on the phone
+BEFORE typing numbers: an older build that changes an amount drops them.
+**Still to see:** a real new entry of the owner. Expect POST 201 then PATCH 204 in the
+edge log, no 400, and no row from:
+`select id from food_entries where nutrition ? 'of' and (nutrition->'of'->>'food' is
+distinct from food or (nutrition->'of'->>'qty')::numeric is distinct from qty::numeric or
+nutrition->'of'->>'unit' is distinct from unit);`
+**Rollback:** `supabase functions deploy ai-proxy` from `829279f` (= v11 but for line
+ends); revert the merge; leave the column (older builds do not touch it).
 
 **What it does:** Edit (and Add, behind "Enter numbers yourself") has a Nutrition
 section: one field per nutrient, "These numbers are for 56 g" for labels, "Ask AI
@@ -139,7 +152,7 @@ would put over another device's typed numbers. Two conditional changes to a row 
 in order (`op.then`). A tab follows what another tab of the browser stores, and looks up
 what it sent if it has something else itself.
 
-**Verified:** 499 unit and app tests; about 390 mutations of the final code, all noticed by
+**Verified before that:** 500 unit and app tests; about 390 mutations of the final code, all noticed by
 a test but two that change nothing; an independent reviewer in three rounds (each finding
 reproduced, then fixed with a test or listed below; the last ones two-tab corner cases);
 random sessions with late, lost, partial and failing answers (not in the repo), on the
@@ -153,8 +166,7 @@ differ). On the real server (read-only or no-op, all
 rows' fingerprint unchanged): `macros=eq.<json>` matches exactly, an update reports count
 0 or 1, a missing row reads as null. On the emulator with the owner's 176 entries, look
 only: saving unchanged changes nothing, doubling doubles every number, and 73 of the past
-logs (41%) would have been reused had they been complete. **Not yet seen:** a new entry
-on production.
+logs (41%) would have been reused had they been complete.
 
 **Known limits:** two devices changing the same entry is last-write-wins, as before (a
 device or tab left open for long shows old rows until it is reloaded); a device still on
