@@ -1144,7 +1144,8 @@ window.deleteFood = function (id) {
 // The day form. What is typed about its workouts is kept here until Save:
 //   known    the day's workouts when it was opened
 //   changes  id -> { what, minutes, kcal, askAgain }, or null = removed
-//   open     the id of the workout whose fields are shown, and what they said at first
+//   open     the id of the workout whose fields are shown; what they said at first, and
+//            whether its estimate had failed (Save then asks for it again)
 //   chosen   the day's activity; rest: what the user chose instead, for a day with workouts
 let _dayForm = null;
 
@@ -1229,7 +1230,7 @@ function renderOpenWorkout(lbs) {
 // What is typed about the open workout becomes one of the form's changes. False if it
 // cannot be meant.
 function takeOpenWorkout() {
-  const { open, opened, again, known, changes } = _dayForm;
+  const { open, opened, failed, again, known, changes } = _dayForm;
   if (open === null) return true;
   const { values, errors, blank } = typedWorkout();
   if (blank && !known.has(open)) changes.delete(open);
@@ -1237,7 +1238,7 @@ function takeOpenWorkout() {
     workoutErrors(errors);
     const wrong = WORKOUT_FIELDS.find((field) => errors[field]);
     if (wrong) { workoutField(wrong).reportValidity(); return false; }
-    if (again || !Sync.matches(values, opened)) changes.set(open, { ...values, askAgain: again });
+    if (again || failed || !Sync.matches(values, opened)) changes.set(open, { ...values, askAgain: again });
   }
   _dayForm.open = null;
   return true;
@@ -1246,7 +1247,7 @@ function takeOpenWorkout() {
 window.openWorkout = function (id) {
   if (!takeOpenWorkout()) return;
   const w = _dayForm.changes.get(id) || loadWorkouts().find((x) => x.id === id) || { what: "", minutes: 0, kcal: null };
-  Object.assign(_dayForm, { open: id, opened: { what: w.what.trim(), minutes: w.minutes, kcal: w.kcal }, again: !!w.askAgain, filled: "" });
+  Object.assign(_dayForm, { open: id, opened: { what: w.what.trim(), minutes: w.minutes, kcal: w.kcal }, failed: w.estimateStatus === "error", again: !!w.askAgain, filled: "" });
   workoutField("what").value = w.what;
   workoutField("minutes").value = w.minutes ? String(w.minutes) : "";
   workoutField("kcal").value = w.kcal === null ? "" : String(w.kcal);
@@ -1294,7 +1295,7 @@ function storeWorkouts(date, typed) {
 
 function saveDay(e) {
   e.preventDefault();
-  if (!takeOpenWorkout()) return;
+  if (!_dayForm || !takeOpenWorkout()) return;
   const { date, known, changes } = _dayForm, typed = [];
   for (const [id, after] of changes) {
     if (!after) { removeWorkout(id); continue; }
@@ -2049,7 +2050,7 @@ function renderAssessmentDataSummary(data) {
 
       html += `<tr>
         <td>${formatDate(date)}</td>
-        <td>${escapeHtml(ctx.activity)}</td>
+        <td class="activity-cell">${escapeHtml(ctx.activity)}</td>
         <td class="num">${ctx.tdee}</td>
         <td class="num">${ctx.calorieTarget}</td>
         <td class="num">${eatLow === eatHigh ? eatLow : eatLow + '-' + eatHigh}</td>

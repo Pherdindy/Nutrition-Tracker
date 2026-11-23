@@ -1957,6 +1957,7 @@ tr.day-summary.day-incomplete td:first-child { opacity: 1; }
 .workout-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .workout-line { color: var(--text-dim); font-size: 0.82rem; white-space: normal; min-width: 14rem; max-width: 22rem; overflow-wrap: anywhere; }
 .workout-line::before { content: "+ "; }
+.activity-cell { white-space: normal; min-width: 10rem; overflow-wrap: anywhere; } /* names the workouts */
 @media (max-width: 720px) {
   .workouts input { min-height: 44px; font-size: 16px; }
   .workouts .btn, .workouts .btn-icon { min-height: 44px; min-width: 44px; }

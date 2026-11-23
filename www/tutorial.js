@@ -24,7 +24,7 @@
     {
       id: "days",
       title: "Days & activity",
-      caption: "Each day logs your weight and activity level. Your activity sets your calorie burn — and your daily target.",
+      caption: "Each day logs your weight and activity. Pick what the day was like, or add your workouts: they set your calorie burn — and your daily target.",
       art: "days",
     },
     {

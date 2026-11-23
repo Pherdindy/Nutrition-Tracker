@@ -243,6 +243,8 @@ test("the list on the Calorie Target tab and at the start has every choice", asy
   const app = await bootApp({ server: serverWith() });
   app.run("renderCalorieTarget()");
   const html = app.run("document.querySelector('#activity-table tbody').innerHTML");
+  app.run("_cache.profileMissing = true; maybeShowOnboarding()");
+  assert.equal(app.el("ob-activity").innerHTML.split("<option").length - 1, 8);
   for (const part of ["Zone 2 cardio, about 45 min", "1.400", "Zone 2 cardio, 90 min or more", "1.600", "Hard cardio (run, intervals), about 45 min", "1.500", "Gym day (moderate workout)", "1.550"]) assert.ok(html.includes(part), part);
 });
 
@@ -703,6 +705,29 @@ test("saving one that failed asks for it again", async () => {
   saveForm(app);
   await app.settle();
   assert.deepEqual([server.aiCalls, on(server, "Swim").estimate_status], [["Swim"], "done"]);
+});
+
+test("saving one that failed asks for it again, also if nothing is changed", async () => {
+  for (const past of [[], [row(9, "swim", { date: "2026-11-20" })]]) { // or takes what is known by now
+    const server = serverWith({ workouts: [row(3, "Swim", { effort: {}, estimate_status: "error" }), ...past] });
+    const app = await bootApp({ server });
+    openDay(app);
+    app.run("openWorkout(3)");
+    saveForm(app);
+    await app.settle();
+    assert.deepEqual([server.aiCalls, on(server, "Swim").estimate_status], [past.length ? [] : ["Swim"], "done"]);
+  }
+});
+
+test("a Save that comes twice saves once", async () => {
+  const server = serverWith();
+  const app = await bootApp({ server });
+  openDay(app);
+  addIn(app, { what: "Bike", minutes: 90 });
+  saveForm(app);
+  saveForm(app);
+  await app.settle();
+  assert.deepEqual([stored(server).length, app.errors], [1, []]);
 });
 
 test("the state says what will be saved, for the weight in the form", async () => {
