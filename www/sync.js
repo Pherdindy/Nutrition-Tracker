@@ -140,13 +140,13 @@
       const uid = owner();
       if (!uid) return;
       const unsent = (load(uid)[table] || {})[key];
-      if (unsent && unsent.match) {
+      if (unsent && unsent.match && !refusedTokens.has(unsent.t)) {
         // That one may be on its way, so it is left as it is and this one follows it -
         // unless this one is not for what that one leaves.
         const then = unsent.then || { row: {}, match };
         const follows = matches({ ...unsent.match, ...unsent.row, ...then.row }, match);
         set(uid, table, key, follows ? { ...unsent, then: { row: { ...then.row, ...fields }, match: then.match } } : { t: newToken(), row: fields, match });
-      } else if (!unsent) {
+      } else if (!unsent || unsent.match) {
         set(uid, table, key, { t: newToken(), row: fields, match });
       } else if (unsent.row !== null && matches(unsent.row, match)) {
         set(uid, table, key, { ...unsent, t: newToken(), row: { ...unsent.row, ...fields } });

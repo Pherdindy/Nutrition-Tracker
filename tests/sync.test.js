@@ -447,6 +447,19 @@ test("also after a restart, and if the first one finds nothing any more", async 
   assert.deepEqual([second.misses.length, second.box.count()], [1, 0]);
 });
 
+test("an update takes the place of one the server refused", async () => {
+  const r = rig();
+  r.answer = () => ({ error: { code: "22P05" }, status: 400 });
+  r.box.update("food", "1", { status: "error", bad: true }, WAITING);
+  await r.box.flush();
+  assert.equal(r.box.count(), 1);
+  r.answer = () => ({ error: null, status: 204, count: 1 });
+  r.sent.length = 0;
+  r.box.update("food", "1", { status: "pending" }, FAILED);
+  await r.box.flush();
+  assert.deepEqual([sentUpdates(r), r.box.count()], [[["update", { status: "pending" }, FAILED]], 0]);
+});
+
 test("the user's own change replaces all of them", async () => {
   const r = rig();
   r.box.update("food", "1", { status: "pending" }, FAILED);
