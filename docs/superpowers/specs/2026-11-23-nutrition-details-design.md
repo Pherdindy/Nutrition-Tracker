@@ -80,7 +80,7 @@ Every field is optional; entries from before this feature have none.
 
 `grams` is the mean of the weights in `why`, to a whole gram, or to one decimal below
 10 g; an entry measured by weight has none. `ref` is cut to 120 characters and `note` to
-200. Numbers are stored to six significant digits. `foodRowToJs` and `foodJsToRow` carry
+200, at a word and with "…". Numbers are stored to six significant digits. `foodRowToJs` and `foodJsToRow` carry
 the object, so it takes part in the sync signature.
 
 A build without this feature leaves the column alone (PostgREST only writes the columns
@@ -428,4 +428,6 @@ weight told to the AI instead of its answer being rescaled, autofill over a type
 402, and the display of small numbers. After its second round: what taking over the
 server's row must leave alone, other tabs, `basis` per number, `was`, quantities. After
 its third: a tab that sends another tab's change, a label for just what the entry weighs,
-an entry deleted while its form is open.
+an entry deleted while its form is open. After the first real answers: they were cut in
+the middle of a word, so the cut is at a word now and the prompt asks for a reference of
+at most 15 words.

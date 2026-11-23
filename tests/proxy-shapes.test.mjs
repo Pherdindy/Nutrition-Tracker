@@ -175,11 +175,23 @@ test("extractBasis does without what a model left out or got wrong", () => {
   for (const bad of [undefined, null, 7, {}, ["x"]]) assert.deepEqual([told({ reference: bad }).ref, told({ reasoning: bad }).note], ["", ""]);
 });
 
-test("extractBasis cuts long text without splitting a character", () => {
-  assert.equal(told({ reference: "a".repeat(300) }).ref.length, 120);
-  assert.equal(told({ reasoning: "a".repeat(300) }).note.length, 200);
-  const cut = told({ reference: "a".repeat(119) + "🐟🐟" }).ref;
-  assert.equal(cut, "a".repeat(119) + "🐟");
+test("extractBasis cuts long text without splitting a character, and says so", () => {
+  assert.equal(told({ reference: "a".repeat(300) }).ref, "a".repeat(119) + "…");
+  assert.equal(told({ reasoning: "a".repeat(300) }).note, "a".repeat(199) + "…");
+  assert.equal(told({ reference: "a".repeat(118) + "🐟🐟🐟" }).ref, "a".repeat(118) + "🐟…");
+  const fits = "a".repeat(119) + "🐟";
+  assert.equal(told({ reference: fits }).ref, fits);
+});
+
+test("extractBasis cuts long text at a word", () => {
+  const ref = (reference) => told({ reference }).ref;
+  assert.equal( // a real answer
+    ref("Egg, whole, cooked, hard-boiled (large, shell removed), USDA FoodData Central SR Legacy #173424: per 100 g about 155 kcal, 12.6 g protein"),
+    "Egg, whole, cooked, hard-boiled (large, shell removed), USDA FoodData Central SR Legacy #173424: per 100 g about 155…");
+  assert.equal(ref("a".repeat(100) + " (" + "b".repeat(100)), "a".repeat(100) + "…");
+  assert.equal(ref("a".repeat(100) + ", " + "b".repeat(100)), "a".repeat(100) + "…");
+  assert.equal(ref("a".repeat(117) + ", b " + "c".repeat(20)), "a".repeat(117) + "…", "nothing before the mark but the words");
+  assert.equal(ref("ab " + "c".repeat(200)), "ab " + "c".repeat(116) + "…", "but not most of it");
 });
 
 test("extractBasis yields text a jsonb column accepts", () => {
@@ -211,6 +223,7 @@ test("the estimate prompt asks for a reference and a weight, in JSON a model can
   assert.equal(userOpenAI, userAnthropic);
   assert.ok(userOpenAI.includes("Food: Sardines\nQuantity: 4 pcs\n"));
   assert.ok(!userOpenAI.includes("already known"));
+  assert.match(system, /"reference": "<[^"]*, in at most 15 words>"/);
   assert.equal(tokens, 650);
 });
 

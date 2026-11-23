@@ -28,11 +28,12 @@ export function extractEstimateFields(o) {
 }
 
 // One line of text that a jsonb column accepts (no control characters, no half of a
-// character), at most max characters long.
+// character), at most max characters long and then cut at a word.
 function line(text, max) {
   if (typeof text !== "string") return "";
   const chars = [...text.replace(/[\u0000-\u001f\u007f]+/g, " ").trim()].filter((c) => !/^[\ud800-\udfff]$/.test(c));
-  return chars.slice(0, max).join("");
+  if (chars.length <= max) return chars.join("");
+  return chars.slice(0, max - 1).join("").replace(/[\s,;:(]+\S{0,30}$/, "") + "…";
 }
 
 // What one model says its estimate is based on.
