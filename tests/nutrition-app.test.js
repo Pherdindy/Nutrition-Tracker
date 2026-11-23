@@ -139,6 +139,7 @@ for (const [answers, answer] of [["fails", { data: null, error: { context: { sta
 // ---- a device whose copy is behind ------------------------------------------------------
 
 const ALL = { calories: 90, protein: 22, carbs: 1, fat: 2, fiber: 0 };
+const foodTable = (app) => app.run("document.querySelector('#food-eaten-table tbody').innerHTML");
 const typedAll = Object.fromEntries(Object.entries(ALL).map(([id, n]) => [id, mine(n)]));
 async function typeElsewhere(server, food) { // on another device, started just now
   const laptop = await bootApp({ server, device: createDevice() });
@@ -313,6 +314,7 @@ test("a tab sees what became of a change another tab sent for it", async () => {
   const prefix = tab.run("outboxPrefix(currentUid())");
   await tab.windowEvent("storage", { key: `${prefix}food_entries:${id}`, newValue: null });
   assert.deepEqual(tab.entry("Tofu").macros, typedAll);
+  assert.ok(foodTable(tab).includes(`>${typedAll.calories.low}<`), "and shows it");
   tab.editFood("Tofu", { time: "09:30" });
   await tab.settle();
   assert.deepEqual([on(server, "Tofu").macros, on(server, "Tofu").time], [typedAll, "09:30"]);
@@ -353,6 +355,7 @@ test("a tab follows what another tab stores, so that it cannot put its old copy 
   await stored(a.entry("Soup").id);
   await a.settle();
   assert.deepEqual([b.entry("Tofu").macros.protein, b.foods()], [mine(33), ["Eggs", "Soup", "Tofu"]]);
+  assert.deepEqual(["Tofu", "Soup", "Rice", ">33<"].map((text) => foodTable(b).includes(text)), [true, true, false, true], "and shows them");
   device.online = true;
   b.editFood("Tofu", { time: "09:30" });
   await b.windowEvent("online");
