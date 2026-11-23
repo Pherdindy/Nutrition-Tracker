@@ -7,7 +7,7 @@ it at the end of each working session.**
 
 **Any tab, phone or emulator still running an older build keeps deleting rows it
 does not know about: reload every open tab, pull on the laptop, reinstall every
-device.** (Pixel_7 emulator: the nutrition details build installed 2026-11-23;
+device.** (Pixel_7 emulator: the workouts build installed 2026-11-24;
 `android/` assets are git-ignored, so run `npx cap sync android` after pulling.)
 
 1. **Rejected saves.** `food_entries.cal_low/cal_high/pro_low/pro_high` were NOT
@@ -119,8 +119,8 @@ first version of the code; see its "After the plan"). Label photo is a later spe
 
 **Still to do (user):** reload every open tab, pull on the laptop, reinstall on the phone
 BEFORE typing numbers: an older build that changes an amount drops them.
-**Still to see:** a real new entry of the owner. Expect POST 201 then PATCH 204 in the
-edge log, no 400, and no row from:
+**Seen 2026-11-24:** the owner's first real entries (3 new, 2 asked again): POST 201 or 200,
+PATCH 204, no 4xx, eight nutrients, whole references, and no row from:
 `select id from food_entries where nutrition ? 'of' and (nutrition->'of'->>'food' is
 distinct from food or (nutrition->'of'->>'qty')::numeric is distinct from qty::numeric or
 nutrition->'of'->>'unit' is distinct from unit);`
@@ -184,7 +184,7 @@ Headers of number columns were left-aligned over right-aligned values in six tab
 screenshot of Diet Assessment). `th.num`; `tests/table-headers.test.js` compares every
 table’s header with its cells.
 
-## Workouts — BUILT 2026-11-23 on `feat/workouts`, NOT on `main`
+## Workouts — LIVE since 2026-11-24
 
 User: no place in the activity list for 90 minutes of zone 2 cardio. They chose a mix of
 one-tap choices and logged workouts whose calories the AI works out, approved the design
@@ -192,14 +192,22 @@ and said "Build straight through it like last time". Spec
 `docs/superpowers/specs/2026-11-23-workouts-design.md`, plan
 `docs/superpowers/plans/2026-11-23-workouts.md`.
 
-**Waiting for the user's explicit yes, in this order:**
-1. Table: `docs/sql/2026-11-23-workouts-01.sql` (migration `workouts_01`). Additive.
-2. Proxy: deploy `ai-proxy` v14 (new feature `workout`; the other features send and answer
-   exactly what v13 did, checked by running both handlers). Smoke: a few cents.
-3. Client: merge, push, `npx cap sync android`, reinstall. **Never before step 1**: the
-   build reads the table at every start and would fall back to the offline copy.
-   Update every device before using it: older builds count the new list choices as
-   "Sat all day" and ignore workouts.
+**Deployed 2026-11-24 on the user's "Yes to all"**, in this order:
+1. Table `workouts` (migration `workouts_01`, `docs/sql/2026-11-23-workouts-01.sql`). Row
+   security checked in a rolled-back transaction: the owner saves and reads, another account
+   sees and changes nothing, signed out is refused.
+2. `ai-proxy` **v14** (feature `workout`; deployed from the branch, equal to the repo). Both
+   models answer: 90 min zone 2 bike 5–6.9 METs, "Yoga" without minutes 60 min, 10,000
+   steps 98 min. A food estimate as before. About $0.015–0.02 per workout.
+3. `feat/workouts` merged into `main` (fast-forward) and pushed; Pixel_7 reinstalled. With the
+   owner's session: the same total for all 18 days as before, 179 of 179 entries would be
+   saved as they are, one test workout on a date without an entry POST 201, PATCH 204 (one
+   row), DELETE 204. All other data identical before and after; $0.09 in all.
+
+**Still to do (user):** reload every open tab, pull on the laptop, reinstall on the phone
+BEFORE using it: older builds count the new list choices as "Sat all day" and ignore
+workouts.
+**Rollback:** proxy from `ae8476e` (= v13); revert the merge; leave the table.
 
 **What it does:** Calorie Tracker has "+ Add Workout"; Edit Day lists the day's workouts
 (what, minutes as 90 / 1:30 / 1h30, calories optional). The AI says how hard it is in METs,
@@ -223,7 +231,7 @@ on the final code without a failure (two tabs and a second device, lost and late
 kills), for workouts and again for food; 18 scenarios in headless Chrome with real clicks,
 keys and two real tabs, plus the 22 of food and the 13 of sync; layout at 320–1280 px, 125%
 and 150%, large text, both themes; the proxy handler against v13 (20 scenarios identical, 18
-for workouts). **Not seen yet:** a real AI answer about a workout, the table itself.
+for workouts). **Not seen yet:** a workout of the owner's own.
 
 **Known limits:** two devices changing the same workout or day is last-write-wins; a day's
 row is not followed between tabs (food entries and workouts are); typed calories are not
