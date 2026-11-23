@@ -2,8 +2,8 @@
 // Prompts are ported VERBATIM from the pre-B client (www/app.js, www/photo.js,
 // www/macros.js) — do not rewrite the prompt text; it's the tested product voice.
 import { createClient } from "npm:@supabase/supabase-js@2";
-import { computeCost, quotaState, mergeEstimates, rateLimited } from "../_shared/metering.mjs";
-import { MACRO_IDS, extractEstimateFields, toNestedMacros, mergePhotoItems } from "../_shared/proxy-shapes.mjs";
+import { computeCost, quotaState, mergeEstimates, mergedHow, rateLimited } from "../_shared/metering.mjs";
+import { MACRO_IDS, extractEstimateFields, extractBasis, knownTotals, toNestedMacros, mergePhotoItems } from "../_shared/proxy-shapes.mjs";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -41,24 +41,30 @@ function promptFields(ids: string[]) {
 // ============================================================
 // Prompt builders — ported verbatim from the client.
 // Each returns { system, userOpenAI, userAnthropic, tokens }.
-// tokens = the per-feature budget the old adapters used
-// (estimate 500, photo/vision 1500, assessment 8000).
+// tokens = the per-feature budget the old adapters used (photo/vision 1500,
+// assessment 8000), except the estimate's 500, now 650 for a longer answer.
 // ============================================================
 
-// Ported verbatim from www/app.js buildSystemPromptEstimate()
+// Ported from www/app.js buildSystemPromptEstimate(); "reference" and "total_grams" added
 function buildSystemPromptEstimate(ids: string[]) {
   return `You are a precise nutrition database assistant. You base estimates on USDA FoodData Central, nutrition labels, and established food composition databases. Be consistent and deterministic.
 
 Respond with ONLY a JSON object (no markdown fences) in this exact format:
 {
   "reasoning": "<one short sentence naming the reference food and serving you scaled from>",
+  "reference": "<the food these values are for and where they come from, e.g. canned sardines in oil, drained (USDA)>",
+  "total_grams": <weight in grams of the whole quantity, or null if it cannot be judged>,
 ${promptFields(ids)}
 }
 Units: calories in kcal, sodium in mg, all other macros in grams.`;
 }
 
-// Ported verbatim from www/app.js buildEstimatePrompt()
-function buildEstimatePromptText(food: string, qty: unknown, unit: string) {
+// Ported from www/app.js buildEstimatePrompt(); the known totals added
+function buildEstimatePromptText(food: string, qty: unknown, unit: string, known: unknown) {
+  const totals = knownTotals(known);
+  const facts = totals
+    ? `\n\nThese totals for this quantity are already known. Treat them as facts and make the other values consistent with them: ${totals}.`
+    : "";
   return `Estimate the nutritional content of this food:
 
 Food: ${food}
@@ -69,16 +75,16 @@ Instructions:
 2. Reference USDA FoodData Central or manufacturer nutrition data where possible
 3. Calculate per-unit nutritional values, then scale to the given quantity
 4. For well-known items with nutrition labels, use tight ranges (lower ≈ upper)
-5. For variable items (restaurant food, home-cooked), widen ranges but stay evidence-based`;
+5. For variable items (restaurant food, home-cooked), widen ranges but stay evidence-based${facts}`;
 }
 
 function buildEstimatePrompt(payload: any) {
-  const user = buildEstimatePromptText(payload.food, payload.qty, payload.unit);
+  const user = buildEstimatePromptText(payload.food, payload.qty, payload.unit, payload.known);
   return {
     system: buildSystemPromptEstimate(MACRO_IDS),
     userOpenAI: user,
     userAnthropic: user,
-    tokens: 500,
+    tokens: 650,
     timeoutMs: 30_000,
   };
 }
@@ -481,7 +487,8 @@ function parseEstimate(text: string) {
   const cleaned = stripFencesApp(text);
   let parsed: any;
   try { parsed = JSON.parse(cleaned); } catch { return null; }
-  return extractEstimateFields(parsed);
+  const fields = extractEstimateFields(parsed);
+  return fields && { ...fields, basis: extractBasis(parsed) };
 }
 
 // Ported from www/photo.js parseVisionResponse() item extraction. Returns the
@@ -806,6 +813,10 @@ Deno.serve(async (req) => {
       pro_low: merged.pro_low, pro_high: merged.pro_high,
       // Nested { id: { low, high } } — the shape www/app.js stores on entries.
       macros: toNestedMacros(merged),
+      // What each model that answered says its estimate is based on, and how the
+      // answers were combined. Shown to the user: no model names.
+      basis: [estA, estB].flatMap((est) => (est ? [est.basis] : [])),
+      how: mergedHow(estA, estB, widenThreshold),
       ai_thought_process: { a: okA?.text ?? null, b: okB?.text ?? null },
     });
   }

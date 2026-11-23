@@ -1,10 +1,11 @@
 import test from "node:test";
 import assert from "node:assert";
+import fs from "node:fs";
 import { createRequire } from "node:module";
 import {
   MACRO_IDS,
   extractEstimateFields, toNestedMacros, partialNestedMacros,
-  mergeItemPair, mergePhotoItems, foodsAlign,
+  mergeItemPair, mergePhotoItems, foodsAlign, extractBasis, knownTotals,
 } from "../supabase/functions/_shared/proxy-shapes.mjs";
 
 const require = createRequire(import.meta.url);
@@ -158,4 +159,62 @@ test("mergePhotoItems: null/degraded arms use the surviving side, normalized", (
   assert.equal(fromA[0].food, "egg");
   const emptyA = mergePhotoItems([], [flatItem("egg")], 0.4);
   assert.equal(emptyA[0].food, "egg");
+});
+
+// ---- what an estimate was based on ----
+
+const told = (over) => extractBasis({ calories_lower: 95, calories_upper: 104, reference: "canned sardines", reasoning: "From USDA.", total_grams: 48, ...over });
+
+test("extractBasis keeps the reference, the note, the weight and the middle of the calories", () => {
+  assert.deepEqual(told(), { ref: "canned sardines", note: "From USDA.", grams: 48, kcal: 100 });
+  assert.equal(told({ total_grams: "48.26" }).grams, 48.3);
+});
+
+test("extractBasis does without what a model left out or got wrong", () => {
+  for (const bad of [undefined, null, 0, -5, "about 50 g", "Infinity", {}, true]) assert.equal(told({ total_grams: bad }).grams, null, String(bad));
+  for (const bad of [undefined, null, 7, {}, ["x"]]) assert.deepEqual([told({ reference: bad }).ref, told({ reasoning: bad }).note], ["", ""]);
+});
+
+test("extractBasis cuts long text without splitting a character", () => {
+  assert.equal(told({ reference: "a".repeat(300) }).ref.length, 120);
+  assert.equal(told({ reasoning: "a".repeat(300) }).note.length, 200);
+  const cut = told({ reference: "a".repeat(119) + "🐟🐟" }).ref;
+  assert.equal(cut, "a".repeat(119) + "🐟");
+});
+
+test("extractBasis yields text a jsonb column accepts", () => {
+  assert.deepEqual(told({ reference: " a\u0000b\n\tc ", reasoning: "x\ud83dy" }), { ref: "a b c", note: "xy", grams: 48, kcal: 100 });
+});
+
+test("knownTotals lists usable totals in the catalog's order, with units", () => {
+  assert.equal(knownTotals({ sodium: 300, protein: 15.71, saturatedFat: 0, calories: 103 }), "calories 103 kcal, protein 15.71 g, saturated fat 0 g, sodium 300 mg");
+});
+
+test("knownTotals ignores anything else", () => {
+  for (const none of [undefined, null, "protein", 5, [], {}, { vitaminC: 5 }, { protein: -1 }, { protein: NaN }, { protein: Infinity }, { protein: "22" }, { protein: null }]) {
+    assert.equal(knownTotals(none), "", JSON.stringify(none));
+  }
+});
+
+// The proxy's own source, for the prompt it sends.
+const estimatePrompt = (() => {
+  const source = fs.readFileSync(new URL("../supabase/functions/ai-proxy/index.ts", import.meta.url), "utf8").replace(/\r\n/g, "\n");
+  const functions = ["promptFields", "buildSystemPromptEstimate", "buildEstimatePromptText", "buildEstimatePrompt"].map((name) => source.match(new RegExp(`function ${name}\\([\\s\\S]*?\\n}\\n\\n`))[0]);
+  const js = functions.join("").replace(/: (any|unknown|string\[\]|string)(?=[,)])/g, "");
+  return new Function("MACRO_IDS", "knownTotals", `${js}return buildEstimatePrompt;`)(MACRO_IDS, knownTotals);
+})();
+
+test("the estimate prompt asks for a reference and a weight, in JSON a model can copy", () => {
+  const { system, userOpenAI, userAnthropic, tokens } = estimatePrompt({ food: "Sardines", qty: 4, unit: "pcs" });
+  const example = JSON.parse(system.slice(system.indexOf("{"), system.lastIndexOf("}") + 1).replace(/: </g, ': "<').replace(/>(,?)\n/g, '>"$1\n').replace(/""</g, '"<').replace(/>""/g, '>"'));
+  assert.deepEqual(Object.keys(example), ["reasoning", "reference", "total_grams", ...MACRO_IDS.flatMap((id) => [`${id}_lower`, `${id}_upper`])]);
+  assert.equal(userOpenAI, userAnthropic);
+  assert.ok(userOpenAI.includes("Food: Sardines\nQuantity: 4 pcs\n"));
+  assert.ok(!userOpenAI.includes("already known"));
+  assert.equal(tokens, 650);
+});
+
+test("totals the user already knows are passed on as facts", () => {
+  const { userOpenAI } = estimatePrompt({ food: "Sardines", qty: 80, unit: "g", known: { protein: 15.71 } });
+  assert.ok(userOpenAI.endsWith("These totals for this quantity are already known. Treat them as facts and make the other values consistent with them: protein 15.71 g."), userOpenAI);
 });

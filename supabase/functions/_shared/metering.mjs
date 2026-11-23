@@ -36,11 +36,25 @@ function diverges(midA, midB, widenThreshold) {
   return Math.abs(midA - midB) / Math.max(midA, midB, 1) > widenThreshold;
 }
 
+function divergence(a, b, widenThreshold) {
+  return {
+    calDiverged: diverges(avg(a.cal_low, a.cal_high), avg(b.cal_low, b.cal_high), widenThreshold),
+    proDiverged: diverges(avg(a.pro_low, a.pro_high), avg(b.pro_low, b.pro_high), widenThreshold),
+  };
+}
+
+// What mergeEstimates makes of two answers: "one" (there is only one), "both" (they
+// disagree, so a range covers both) or "average".
+export function mergedHow(a, b, widenThreshold) {
+  if (!a || !b) return "one";
+  const { calDiverged, proDiverged } = divergence(a, b, widenThreshold);
+  return calDiverged || proDiverged ? "both" : "average";
+}
+
 export function mergeEstimates(a, b, widenThreshold) {
   if (!b) return a;
   if (!a) return b;
-  const calDiverged = diverges(avg(a.cal_low, a.cal_high), avg(b.cal_low, b.cal_high), widenThreshold);
-  const proDiverged = diverges(avg(a.pro_low, a.pro_high), avg(b.pro_low, b.pro_high), widenThreshold);
+  const { calDiverged, proDiverged } = divergence(a, b, widenThreshold);
   const macros = {};
   for (const k of new Set([...Object.keys(a.macros || {}), ...Object.keys(b.macros || {})])) {
     const av = (a.macros || {})[k], bv = (b.macros || {})[k];

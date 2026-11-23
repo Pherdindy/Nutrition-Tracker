@@ -27,6 +27,35 @@ export function extractEstimateFields(o) {
   return { cal_low, cal_high, pro_low, pro_high, macros };
 }
 
+// One line of text that a jsonb column accepts (no control characters, no half of a
+// character), at most max characters long.
+function line(text, max) {
+  if (typeof text !== "string") return "";
+  const chars = [...text.replace(/[\u0000-\u001f\u007f]+/g, " ").trim()].filter((c) => !/^[\ud800-\udfff]$/.test(c));
+  return chars.slice(0, max).join("");
+}
+
+// What one model says its estimate is based on.
+export function extractBasis(o) {
+  const grams = typeof o.total_grams === "number" || typeof o.total_grams === "string" ? Number(o.total_grams) : NaN;
+  return {
+    ref: line(o.reference, 120),
+    note: line(o.reasoning, 200),
+    grams: Number.isFinite(grams) && grams > 0 ? Math.round(grams * 10) / 10 : null,
+    kcal: Math.round((Number(o.calories_lower) + Number(o.calories_upper)) / 2),
+  };
+}
+
+// The totals a client says it already has, for the prompt: "protein 22 g, sodium 300 mg".
+const MACRO_NAMES = { saturatedFat: "saturated fat" };
+const MACRO_UNITS = { calories: "kcal", sodium: "mg" };
+export function knownTotals(known) {
+  return MACRO_IDS
+    .filter((id) => known && typeof known === "object" && Number.isFinite(known[id]) && known[id] >= 0)
+    .map((id) => `${MACRO_NAMES[id] ?? id} ${known[id]} ${MACRO_UNITS[id] ?? "g"}`)
+    .join(", ");
+}
+
 // Convert a merged/parsed estimate (flat macros) into the nested
 // { id: { low, high } } shape the client stores (Macros.parseMacros shape).
 export function toNestedMacros(est) {

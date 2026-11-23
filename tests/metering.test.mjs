@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert";
-import { computeCost, quotaState, mergeEstimates, rateLimited } from "../supabase/functions/_shared/metering.mjs";
+import { computeCost, quotaState, mergeEstimates, mergedHow, rateLimited } from "../supabase/functions/_shared/metering.mjs";
 
 const PRICES = {
   "model-a": { in_per_mtok: 1.0, out_per_mtok: 5.0 },
@@ -160,4 +160,21 @@ test("mergeEstimates macros: a value used when only a has the key, and vice vers
 
 test("rateLimited: zero recent count is never limited", () => {
   assert.equal(rateLimited(0, 10), false);
+});
+
+test("mergedHow says what mergeEstimates did", () => {
+  const est = (kcal, protein) => ({ cal_low: kcal, cal_high: kcal, pro_low: protein, pro_high: protein, macros: {} });
+  const cases = [
+    [est(100, 10), null, "one"], [null, est(100, 10), "one"],
+    [est(100, 10), est(110, 11), "average"],
+    [est(100, 10), est(300, 10), "both"], [est(100, 10), est(100, 30), "both"],
+    [est(60, 10), est(100, 10), "average"], // exactly at the threshold
+    [est(0, 0), est(0, 0), "average"],
+  ];
+  for (const [a, b, how] of cases) {
+    assert.equal(mergedHow(a, b, 0.4), how, JSON.stringify([a, b]));
+    if (!a || !b) continue;
+    const m = mergeEstimates(a, b, 0.4);
+    assert.equal(how === "both", m.cal_low !== m.cal_high || m.pro_low !== m.pro_high, "agrees with the merge");
+  }
 });

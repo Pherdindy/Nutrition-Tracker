@@ -2810,7 +2810,7 @@ test("knownTotals ignores anything else", () => {
 // The proxy's own source, for the prompt it sends.
 const estimatePrompt = (() => {
   const source = fs.readFileSync(new URL("../supabase/functions/ai-proxy/index.ts", import.meta.url), "utf8").replace(/\r\n/g, "\n");
-  const functions = ["promptFields", "buildSystemPromptEstimate", "buildEstimatePromptText", "buildEstimatePrompt"].map((name) => source.match(new RegExp(`function ${name}\\([\\s\\S]*?\\n}\\n`))[0]);
+  const functions = ["promptFields", "buildSystemPromptEstimate", "buildEstimatePromptText", "buildEstimatePrompt"].map((name) => source.match(new RegExp(`function ${name}\\([\\s\\S]*?\\n}\\n\\n`))[0]);
   const js = functions.join("").replace(/: (any|unknown|string\[\]|string)(?=[,)])/g, "");
   return new Function("MACRO_IDS", "knownTotals", `${js}return buildEstimatePrompt;`)(MACRO_IDS, knownTotals);
 })();
