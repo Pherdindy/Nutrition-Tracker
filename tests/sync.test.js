@@ -134,7 +134,7 @@ test("overlay converts stored rows and tolerates no ops", () => {
 
 // A fake connection: answers every send with r.answer (default: accepted).
 function rig({ uid = "u1", store = {} } = {}) {
-  const r = { uid, store, sent: [], sentAs: [], stored: [], timers: [], logged: [], misses: [], answer: () => ({ error: null, status: 201 }), dealWith: async () => true };
+  const r = { uid, store, sent: [], sentAs: [], stored: [], timers: [], logged: [], misses: [], answer: () => ({ error: null, status: 201 }), dealWith: async () => true, agrees: () => true };
   r.box = Sync.createOutbox({
     owner: () => r.uid,
     list: (id) => JSON.parse(JSON.stringify(r.store[id] || {})),
@@ -142,6 +142,7 @@ function rig({ uid = "u1", store = {} } = {}) {
     remove: (id, table, key) => { delete r.store[id][table][key]; r.stored.push(["remove", table, key]); },
     send: async (id, table, kind, items) => { r.sent.push([table, kind, items]); r.sentAs.push(id); return r.answer(table, kind, items); },
     missed: (...args) => { r.misses.push(args); return r.dealWith(); },
+    agrees: (...args) => r.agrees(...args),
     lock: (_uid, fn) => fn(),
     schedule: (fn, ms) => { r.timers.push({ fn, ms }); return r.timers.length - 1; },
     cancel: (i) => { r.timers[i] = null; },
@@ -364,6 +365,16 @@ test("an update that found its row is not reported; one that may not have is", a
     await r.box.flush();
     assert.deepEqual([r.misses.length, r.box.count()], [misses, 0], String(count));
   }
+});
+
+test("an update that leaves something else than this tab has is reported too", async () => {
+  const r = rig();
+  r.answer = () => ({ error: null, status: 204, count: 1 });
+  const asked = [];
+  r.agrees = (table, key, row) => { asked.push([table, key, row]); return false; };
+  r.box.update("food", "2", { kcal: 5 }, WAITING);
+  await r.box.flush();
+  assert.deepEqual([asked, r.misses, r.box.count()], [[["food", "2", { kcal: 5 }]], [["u1", "food", "2"]], 0]);
 });
 
 test("an update joins the unsent row it belongs to", async () => {

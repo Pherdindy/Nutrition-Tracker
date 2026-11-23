@@ -223,6 +223,10 @@ const outbox = Sync.createOutbox({
     return asAccount(session, sb.from(table).upsert(items, { onConflict, ignoreDuplicates: kind === "ensure" }));
   },
   missed: takeOver,
+  agrees: (table, key, row) => {
+    const entry = loadFoodEntries().find((e) => FOOD_SYNC.keyOf(e) === key);
+    return !entry || Sync.matches(foodJsToRow(entry), row);
+  },
   lock: (uid, fn) => (navigator.locks ? navigator.locks.request(`nt-sync-${uid}`, fn) : fn()),
   schedule: (fn, ms) => setTimeout(fn, ms),
   cancel: (handle) => clearTimeout(handle),
@@ -288,12 +292,12 @@ function changedElsewhere({ key, newValue }) {
   const uid = currentUid(), prefix = uid && `${outboxPrefix(uid)}${FOOD_SYNC.table}:`;
   if (!prefix || !key || !key.startsWith(prefix)) return;
   const id = key.slice(prefix.length);
-  if (newValue === null) {
+  const unsent = outbox.pending(FOOD_SYNC.table)[id];
+  if (!unsent) {
     takeOver(uid, FOOD_SYNC.table, id).catch((err) => console.error("[Sync]", err));
     return;
   }
-  const unsent = outbox.pending(FOOD_SYNC.table)[id];
-  if (!unsent || JSON.stringify(unsent) !== newValue) return; // not any more
+  if (JSON.stringify(unsent) !== newValue) return; // changed again since
   const entries = Sync.overlay(loadFoodEntries(), { [id]: unsent }, FOOD_SYNC.keyOf, foodRowToJs, applyEstimate);
   const entry = entries.find((e) => FOOD_SYNC.keyOf(e) === id);
   if (entry) FOOD_SYNC.known.set(id, FOOD_SYNC.signature(entry));

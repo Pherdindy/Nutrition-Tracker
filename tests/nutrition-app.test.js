@@ -322,7 +322,6 @@ test("a tab ignores storage events that are nothing to it", async () => {
   const server = serverWith(row(1, "Tofu"));
   const app = await bootApp({ server });
   const prefix = app.run("outboxPrefix(currentUid())");
-  const before = JSON.stringify(app.food());
   server.rowOf("food_entries", "Tofu").time = "23:00";
   let reads = 0;
   server.afterSelect = async () => { reads++; };
@@ -330,7 +329,8 @@ test("a tab ignores storage events that are nothing to it", async () => {
   for (const event of [{ key: null, newValue: null }, { key: "nt_theme", newValue: null }, { key: `${prefix}days:2026-11-23`, newValue: null }, { key: `${prefix}food_entries:1`, newValue: op }, { key: `${prefix}food_entries:999`, newValue: null }]) {
     await app.windowEvent("storage", event);
   }
-  assert.deepEqual([JSON.stringify(app.food()), app.errors, reads], [before, [], 1], "only the last one is an entry's, and that is not here");
+  assert.deepEqual([app.errors, reads], [[], 2], "two are an entry's that is looked up, one of them not here");
+  assert.equal(app.entry("Tofu").time, "23:00");
 });
 
 test("a tab follows what another tab stores, so that it cannot put its old copy over it", async () => {
@@ -358,6 +358,39 @@ test("a tab follows what another tab stores, so that it cannot put its old copy 
   await b.windowEvent("online");
   assert.deepEqual([on(server, "Tofu").macros.protein, on(server, "Tofu").time, server.foods()], [mine(33), "09:30", ["Eggs", "Soup", "Tofu"]]);
   assert.equal(server.writes.filter((w) => w.rows && w.rows.some((r) => r.food === "Eggs")).length, 0, "nothing else was saved");
+});
+
+test("a tab that sends another's answer takes it over, whatever its own was", async () => {
+  // Both asked; this one's failed, the other's arrived later and replaced it in the outbox.
+  const server = serverWith(row(1, "Tofu", { estimate_status: "error", macros: {} }));
+  const device = createDevice();
+  const a = await bootApp({ server, device }), b = await bootApp({ server, device });
+  const prefix = a.run("outboxPrefix(currentUid())"), key = `${prefix}food_entries:1`;
+  server.rowOf("food_entries", "Tofu").estimate_status = "pending";
+  for (const tab of [a, b]) tab.run("{ const e = _cache.food[0]; e.estimateStatus = 'pending'; FOOD_SYNC.known.set('1', FOOD_SYNC.signature(e)); }");
+  device.online = false;
+  b.run("{ const entries = loadFoodEntries(), e = entries[0]; saveEstimates(entries, [{ entry: Object.assign(e, { estimateStatus: 'error' }), asked: askedOf(e) }]); }");
+  a.run(`{ const entries = loadFoodEntries(), e = entries[0], asked = askedOf(e); saveEstimates(entries, [{ entry: Object.assign(e, { estimateStatus: "done", macros: ${JSON.stringify(eight(200))} }), asked }]); }`);
+  await b.windowEvent("storage", { key, newValue: device.storage.getItem(key) });
+  assert.equal(b.entry("Tofu").estimateStatus, "error");
+  device.online = true;
+  await b.windowEvent("online"); // b sends it
+  assert.deepEqual([on(server, "Tofu").estimate_status, b.entry("Tofu").estimateStatus, b.entry("Tofu").macros], ["done", "done", eight(200)]);
+});
+
+test("a tab that had sent another's change before hearing of it looks it up", async () => {
+  const server = serverWith(row(1, "Tofu"));
+  const device = createDevice();
+  const a = await bootApp({ server, device }), b = await bootApp({ server, device });
+  const key = `${a.run("outboxPrefix(currentUid())")}food_entries:1`;
+  device.online = false;
+  a.editFood("Tofu", { time: "19:30" });
+  const newValue = device.storage.getItem(key);
+  device.online = true;
+  await b.windowEvent("online"); // sends it
+  assert.deepEqual([on(server, "Tofu").time, b.entry("Tofu").time], ["19:30", "08:00"]);
+  await b.windowEvent("storage", { key, newValue }); // and only then hears of it
+  assert.equal(b.entry("Tofu").time, "19:30");
 });
 
 test("a tab that hears of another's change keeps what its user does while it looks", async () => {
