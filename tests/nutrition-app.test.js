@@ -295,9 +295,9 @@ test("a label's numbers are typed as printed and saved as what was eaten, with n
   await app.settle();
   assert.deepEqual(server.aiCalls, []);
   const saved = on(server, "Tofu");
-  assert.deepEqual([saved.macros.calories, saved.macros.protein, saved.macros.carbs, saved.estimate_status], [mine(142.857), mine(15.714), mine(0), "manual"]);
+  assert.deepEqual([saved.macros.calories, saved.macros.protein, saved.macros.carbs, saved.estimate_status], [mine(142.857), mine(15.7143), mine(0), "manual"]);
   assert.deepEqual(saved.nutrition.basis, { qty: 56, unit: "g" });
-  assert.equal(saved.pro_low, 15.714);
+  assert.equal(saved.pro_low, 15.7143);
 });
 
 test("numbers not typed are asked for, and the AI is told the ones that are", async () => {
@@ -345,7 +345,7 @@ test("numbers can be given for another unit of the same food", async () => {
   type(app, "nf-protein", "11");
   save(app);
   await app.settle();
-  assert.deepEqual([on(server, "Sardines").macros.protein, on(server, "Sardines").nutrition.basis], [mine(9.429), { qty: 56, unit: "g" }]);
+  assert.deepEqual([on(server, "Sardines").macros.protein, on(server, "Sardines").nutrition.basis], [mine(9.42857), { qty: 56, unit: "g" }]);
 });
 
 test("renaming to a remembered food shows its numbers before saving", async () => {

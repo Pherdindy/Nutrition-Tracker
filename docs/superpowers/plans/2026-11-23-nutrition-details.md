@@ -221,11 +221,18 @@ test("the units on offer are only those that convert, the entry's own first", ()
   assert.deepEqual(N.unitsFor({ unit: "cups" }, 158).slice(-4), ["g", "kg", "oz", "lb"]);
 });
 
-test("scaling keeps ranges and marks, to three decimals", () => {
+test("scaling keeps ranges and marks, to six digits", () => {
   const macros = { calories: { low: 100, high: 110 }, protein: { low: 11, high: 11, mine: true } };
-  assert.deepEqual(N.scale(macros, 80 / 56), { calories: { low: 142.857, high: 157.143 }, protein: { low: 15.714, high: 15.714, mine: true } });
+  assert.deepEqual(N.scale(macros, 80 / 56), { calories: { low: 142.857, high: 157.143 }, protein: { low: 15.7143, high: 15.7143, mine: true } });
   assert.deepEqual(macros.calories, { low: 100, high: 110 }, "the original is untouched");
   assert.deepEqual(N.scale(undefined, 2), {});
+});
+
+test("an amount saved wrong and corrected later loses next to nothing", () => {
+  for (const was of [0.5, 0.04, 1234.5]) for (const k of [1000, 3, 37854.1]) {
+    const back = N.scale(N.scale({ fiber: { low: was, high: was } }, 1 / k), k).fiber.low;
+    assert.ok(Math.abs(back - was) / was < 1e-5, `${was} / ${k} x ${k} = ${back}`);
+  }
 });
 
 test("food names match regardless of case and spacing", () => {
@@ -260,6 +267,7 @@ test("food names match regardless of case and spacing", () => {
   const complete = (macros) => IDS.every((id) => has(macros, id));
   const pick = (macros, ids) => Object.fromEntries(ids.map((id) => [id, macros[id]]));
   const round = (n, places) => Math.round(n * 10 ** places) / 10 ** places;
+  const tidy = (n) => Number(n.toPrecision(6)); // as stored: no noise, and scaling back loses nothing
   const show = (n) => String(round(n, 1));
 
   // ---- Units and amounts ------------------------------------------------------
@@ -303,7 +311,7 @@ test("food names match regardless of case and spacing", () => {
   function scale(macros, k) {
     return Object.fromEntries(Object.entries(macros || {})
       .filter(([, m]) => m && m.low != null && m.high != null)
-      .map(([id, m]) => [id, { ...m, low: round(m.low * k, 3), high: round(m.high * k, 3) }]));
+      .map(([id, m]) => [id, { ...m, low: tidy(m.low * k), high: tidy(m.high * k) }]));
   }
 
   const nameOf = (s) => String(s == null ? "" : s).trim().toLowerCase().replace(/\s+/g, " ");
@@ -398,6 +406,8 @@ test("the weight of a light food does not drift from copy to copy", () => {
   assert.equal(N.reuse({ entry: quarter, ratio: 4 }).nutrition.grams, 3);
   const scaled = (e, qty) => ({ ...e, qty, ...N.resolve({ before: e, after: { food: e.food, qty, unit: "clove" }, tracked: TRACKED, now: NOW }) });
   assert.equal(scaled(scaled(clove, 0.25), 1).nutrition.grams, 3);
+  assert.equal(scaled(scaled(clove, 0.0001), 1).nutrition.grams, 3, "nor does it vanish");
+  assert.ok(N.reuse({ entry: clove, ratio: 0.0001 }).nutrition.grams > 0);
 });
 
 test("an entry with no recorded time is remembered as of when it was eaten", () => {
@@ -447,7 +457,7 @@ test("typing some numbers leaves the rest to the remembered entry, and is decide
 
 test("a label's numbers are scaled to what was eaten", () => {
   const got = add({ after: { food: "Sardines", qty: 80, unit: "g" }, form: { typed: { protein: 11 }, basis: amount(56, "g") } });
-  assert.deepEqual(got.macros, { protein: mine(15.714) });
+  assert.deepEqual(got.macros, { protein: mine(15.7143) });
   assert.deepEqual(got.nutrition, { basis: amount(56, "g"), at: NOW });
   assert.equal(got.estimateStatus, "pending");
 });
@@ -536,7 +546,7 @@ test("typing numbers for the entry's own amount drops an older label amount", ()
 
 test("a label amount on pieces goes through their weight", () => {
   const got = edit(entry({ nutrition: { at: 5, grams: 48 } }), {}, { typed: { protein: 11 }, basis: amount(56, "g") });
-  near(got.macros.protein.low, 9.429); // 11 x 48/56
+  near(got.macros.protein.low, 11 * 48 / 56);
   assert.deepEqual(got.nutrition.basis, amount(56, "g"));
 });
 
@@ -712,7 +722,7 @@ test("numbers are stored without floating-point noise", () => {
     const { refresh, ...nutrition } = entry.nutrition || {};
     nutrition.at = decidedAt(entry);
     nutrition.from = nutrition.from || { id: entry.id, date: entry.date };
-    if (nutrition.grams > 0) nutrition.grams = round(nutrition.grams * k, 3);
+    if (nutrition.grams > 0) nutrition.grams = tidy(nutrition.grams * k);
     return { macros: scale(entry.macros, k), nutrition };
   }
 
@@ -758,7 +768,7 @@ test("numbers are stored without floating-point noise", () => {
     const plan = before ? editPlan(before, after) : { kind: "lookup" };
     if (plan.kind === "scale") {
       macros = scale(macros, plan.ratio);
-      if (n.grams > 0) n.grams = round(n.grams * plan.ratio, 3);
+      if (n.grams > 0) n.grams = tidy(n.grams * plan.ratio);
     } else if (plan.kind === "lookup") {
       const own = pick(macros, mineIds(macros));
       const found = findRemembered(entries, after.food, after);
@@ -786,7 +796,7 @@ test("numbers are stored without floating-point noise", () => {
     const typedIds = Object.keys(typed);
     const per = (basis && ratio(after, basis, n.grams)) || 1; // how many times the entry the basis is
     for (const id of typedIds) {
-      const total = round(typed[id] / per, 3);
+      const total = tidy(typed[id] / per);
       macros[id] = { low: total, high: total, mine: true };
     }
     for (const id of cleared) delete macros[id];
@@ -841,7 +851,7 @@ test("numbers are stored without floating-point noise", () => {
     for (const id of IDS) {
       const m = Macros.getMacro(answer, id);
       if (!m || isMine(before, id) || (has(before, id) && !n.refresh)) continue;
-      macros[id] = { low: round(m.low * k, 3), high: round(m.high * k, 3) };
+      macros[id] = { low: tidy(m.low * k), high: tidy(m.high * k) };
     }
 
     if (n.refresh) {
@@ -946,7 +956,7 @@ test("a label is typed as printed, before or after saying what it is for", () =>
     if (!numbersFirst) f.type("protein", "11");
     assert.deepEqual([f.text("protein"), f.text("calories")], ["11", "112"]);
     const saved = N.resolve({ before: entry({ ...eaten, macros: full(160) }), after: eaten, form: f.result(), tracked: TRACKED, now: NOW });
-    assert.deepEqual([saved.macros.protein, saved.macros.calories], [mine(15.714), { low: 160, high: 160 }]);
+    assert.deepEqual([saved.macros.protein, saved.macros.calories], [mine(15.7143), { low: 160, high: 160 }]);
     assert.deepEqual(saved.nutrition.basis, amount(56, "g"));
   }
 });
@@ -1983,9 +1993,9 @@ test("a label's numbers are typed as printed and saved as what was eaten, with n
   await app.settle();
   assert.deepEqual(server.aiCalls, []);
   const saved = on(server, "Tofu");
-  assert.deepEqual([saved.macros.calories, saved.macros.protein, saved.macros.carbs, saved.estimate_status], [mine(142.857), mine(15.714), mine(0), "manual"]);
+  assert.deepEqual([saved.macros.calories, saved.macros.protein, saved.macros.carbs, saved.estimate_status], [mine(142.857), mine(15.7143), mine(0), "manual"]);
   assert.deepEqual(saved.nutrition.basis, { qty: 56, unit: "g" });
-  assert.equal(saved.pro_low, 15.714);
+  assert.equal(saved.pro_low, 15.7143);
 });
 
 test("numbers not typed are asked for, and the AI is told the ones that are", async () => {
@@ -2033,7 +2043,7 @@ test("numbers can be given for another unit of the same food", async () => {
   type(app, "nf-protein", "11");
   save(app);
   await app.settle();
-  assert.deepEqual([on(server, "Sardines").macros.protein, on(server, "Sardines").nutrition.basis], [mine(9.429), { qty: 56, unit: "g" }]);
+  assert.deepEqual([on(server, "Sardines").macros.protein, on(server, "Sardines").nutrition.basis], [mine(9.42857), { qty: 56, unit: "g" }]);
 });
 
 test("renaming to a remembered food shows its numbers before saving", async () => {

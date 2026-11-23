@@ -18,6 +18,7 @@
   const complete = (macros) => IDS.every((id) => has(macros, id));
   const pick = (macros, ids) => Object.fromEntries(ids.map((id) => [id, macros[id]]));
   const round = (n, places) => Math.round(n * 10 ** places) / 10 ** places;
+  const tidy = (n) => Number(n.toPrecision(6)); // as stored: no noise, and scaling back loses nothing
   const show = (n) => String(round(n, 1));
 
   // ---- Units and amounts ------------------------------------------------------
@@ -61,7 +62,7 @@
   function scale(macros, k) {
     return Object.fromEntries(Object.entries(macros || {})
       .filter(([, m]) => m && m.low != null && m.high != null)
-      .map(([id, m]) => [id, { ...m, low: round(m.low * k, 3), high: round(m.high * k, 3) }]));
+      .map(([id, m]) => [id, { ...m, low: tidy(m.low * k), high: tidy(m.high * k) }]));
   }
 
   const nameOf = (s) => String(s == null ? "" : s).trim().toLowerCase().replace(/\s+/g, " ");
@@ -91,7 +92,7 @@
     const { refresh, ...nutrition } = entry.nutrition || {};
     nutrition.at = decidedAt(entry);
     nutrition.from = nutrition.from || { id: entry.id, date: entry.date };
-    if (nutrition.grams > 0) nutrition.grams = round(nutrition.grams * k, 3);
+    if (nutrition.grams > 0) nutrition.grams = tidy(nutrition.grams * k);
     return { macros: scale(entry.macros, k), nutrition };
   }
 
@@ -137,7 +138,7 @@
     const plan = before ? editPlan(before, after) : { kind: "lookup" };
     if (plan.kind === "scale") {
       macros = scale(macros, plan.ratio);
-      if (n.grams > 0) n.grams = round(n.grams * plan.ratio, 3);
+      if (n.grams > 0) n.grams = tidy(n.grams * plan.ratio);
     } else if (plan.kind === "lookup") {
       const own = pick(macros, mineIds(macros));
       const found = findRemembered(entries, after.food, after);
@@ -165,7 +166,7 @@
     const typedIds = Object.keys(typed);
     const per = (basis && ratio(after, basis, n.grams)) || 1; // how many times the entry the basis is
     for (const id of typedIds) {
-      const total = round(typed[id] / per, 3);
+      const total = tidy(typed[id] / per);
       macros[id] = { low: total, high: total, mine: true };
     }
     for (const id of cleared) delete macros[id];
@@ -220,7 +221,7 @@
     for (const id of IDS) {
       const m = Macros.getMacro(answer, id);
       if (!m || isMine(before, id) || (has(before, id) && !n.refresh)) continue;
-      macros[id] = { low: round(m.low * k, 3), high: round(m.high * k, 3) };
+      macros[id] = { low: tidy(m.low * k), high: tidy(m.high * k) };
     }
 
     if (n.refresh) {
