@@ -555,6 +555,23 @@ test("a workout that is open keeps what is typed when another is opened", async 
   assert.deepEqual([app.el("workout-what").value, !!app.el("workout-minutes").validity], ["Bike", true], "not while it is wrong");
 });
 
+test("an error does not outlive its workout: it would block Save from a hidden field", async () => {
+  const app = await bootApp({ server: serverWith() });
+  const errors = () => ["what", "minutes", "kcal"].filter((f) => app.el(`workout-${f}`).validity);
+  openDay(app);
+  addIn(app, { what: "Bike", minutes: "lots" });
+  saveForm(app);
+  assert.deepEqual(errors(), ["minutes"]);
+  app.fire("workout-remove", "click");
+  assert.deepEqual(errors(), []);
+  addIn(app, { what: "", minutes: "lots" });
+  saveForm(app);
+  assert.deepEqual(errors(), ["what", "minutes"]);
+  app.fire("day-cancel", "click");
+  openDay(app);
+  assert.deepEqual(errors(), []);
+});
+
 test("removing one counts from Save on", async () => {
   const server = serverWith({ workouts: [row(1, "Bike"), row(2, "Run")] });
   const app = await bootApp({ server });

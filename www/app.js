@@ -1201,15 +1201,17 @@ function renderDayForm() {
     <button type="button" class="btn-icon delete" onclick="dropWorkout(${w.id})" title="Remove">&#10005;</button></div>`).join("");
   document.getElementById("workout-editor").classList.toggle("hidden", open === null);
   if (open !== null) renderOpenWorkout(lbs);
+  else workoutErrors({}); // one in a hidden field would keep the form from being saved
 }
 
 const WORKOUT_FIELDS = ["what", "minutes", "kcal"];
 const workoutField = (field) => document.getElementById(`workout-${field}`);
+const workoutErrors = (errors) => WORKOUT_FIELDS.forEach((field) => workoutField(field).setCustomValidity(errors[field] || ""));
 const typedWorkout = () => Workouts.typed(Object.fromEntries(WORKOUT_FIELDS.map((field) => [field, workoutField(field).value])));
 
 function renderOpenWorkout(lbs) {
   const { open, again } = _dayForm, { values, errors } = typedWorkout();
-  const right = !Object.keys(errors).length, ai = right && values.kcal === null;
+  const ai = !Object.keys(errors).length && values.kcal === null;
   const w = ai && previewWorkout(open, { ...values, askAgain: again });
   const tag = ai && Workouts.tag(w, localDate());
   document.getElementById("workout-state").textContent = !ai ? ""
@@ -1229,7 +1231,7 @@ function takeOpenWorkout() {
   const { values, errors, blank } = typedWorkout();
   if (blank && !known.has(open)) changes.delete(open);
   else {
-    for (const field of WORKOUT_FIELDS) workoutField(field).setCustomValidity(errors[field] || "");
+    workoutErrors(errors);
     const wrong = WORKOUT_FIELDS.find((field) => errors[field]);
     if (wrong) { workoutField(wrong).reportValidity(); return false; }
     if (again || !Sync.matches(values, opened)) changes.set(open, { ...values, askAgain: again });
@@ -1245,7 +1247,7 @@ window.openWorkout = function (id) {
   workoutField("what").value = w.what;
   workoutField("minutes").value = w.minutes ? String(w.minutes) : "";
   workoutField("kcal").value = w.kcal === null ? "" : String(w.kcal);
-  for (const field of WORKOUT_FIELDS) workoutField(field).setCustomValidity("");
+  workoutErrors({});
   renderDayForm();
   workoutField("what").focus();
 };
@@ -1264,7 +1266,7 @@ function workoutTyped(field) {
     const past = Workouts.suggestions(loadWorkouts()).find((s) => Workouts.sameWorkout(s.what, workoutField("what").value));
     _dayForm.filled = minutes.value = past && past.minutes ? String(past.minutes) : "";
   }
-  for (const f of WORKOUT_FIELDS) workoutField(f).setCustomValidity("");
+  workoutErrors({});
   renderDayForm();
 }
 
