@@ -121,8 +121,8 @@
   //   after    { food, qty, unit }
   //   form     { typed: { id: number }, cleared: [id], basis, grams, askAgain } or null;
   //            typed numbers are for `basis`, or for the entry's own amount without one
-  //   others   the other entries, to remember from
-  function resolve({ before = null, after, form = null, others = [], tracked, now }) {
+  //   entries  all of them, to remember from
+  function resolve({ before = null, after, form = null, entries = [], tracked, now }) {
     const { typed = {}, cleared = [], basis = null, grams = null, askAgain = false } = form || {};
     let macros = before ? { ...(before.macros || {}) } : {};
     let n = before ? { ...(before.nutrition || {}) } : {};
@@ -134,7 +134,7 @@
       if (n.grams > 0) n.grams = round(n.grams * plan.ratio, 3);
     } else if (plan.kind === "lookup") {
       const own = pick(macros, mineIds(macros));
-      const found = findRemembered(others, after.food, after);
+      const found = findRemembered(entries, after.food, after);
       if (found) {
         const got = reuse(found);
         macros = { ...got.macros, ...own };

@@ -651,8 +651,7 @@ function formFood() {
 
 // The numbers a new or changed entry is saved with.
 function numbersFor(before, after, form = null) {
-  const others = loadFoodEntries().filter((e) => !before || e.id !== before.id);
-  return Nutrition.resolve({ before, after, form, others, tracked: getEnabledMacros(), now: Date.now() });
+  return Nutrition.resolve({ before, after, form, entries: loadFoodEntries(), tracked: getEnabledMacros(), now: Date.now() });
 }
 
 // ---- Nutrition section of the food form ----

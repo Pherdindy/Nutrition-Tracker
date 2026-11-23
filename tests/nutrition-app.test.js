@@ -190,6 +190,15 @@ test("batch add remembers row by row", async () => {
   assert.deepEqual(server.food().filter((r) => r.food === "Sardines").map((r) => r.estimate_status), ["done", "done"]);
 });
 
+test("a batch of remembered foods needs no credit", async () => {
+  const server = serverWith(row(1, "Sardines", { qty: 1, unit: "pc" }));
+  server.usage = { pct_used: 100, plan: "free", exhausted: true };
+  const app = await bootApp({ server });
+  app.addBatch(["Sardines"]);
+  await app.settle();
+  assert.deepEqual([app.isOpen("paywall-modal"), server.food().map((r) => r.estimate_status)], [false, ["done", "done"]]);
+});
+
 test("photo entries are marked and never remembered", async () => {
   const server = serverWith();
   const app = await bootApp({ server });
@@ -287,6 +296,28 @@ test("a remembered food shows its numbers and day before saving", async () => {
   assert.equal(shown(app, "calories"), "150");
   type(app, "food-name", "Tofu");
   assert.deepEqual([shown(app, "calories"), app.el("nutrition-tag").textContent], ["", ""]);
+});
+
+test("choosing a past food with the section open fills in its amount and numbers", async () => {
+  const app = await bootApp({ server: serverWith(row(1, "Sardines")) });
+  app.fire("add-food-btn", "click");
+  app.fire("nutrition-open", "click");
+  assert.equal(app.isOpen("nutrition-basis"), false, "there is no amount yet");
+  type(app, "food-name", "Sardines", "change");
+  assert.deepEqual([shown(app, "calories"), app.el("nutrition-basis-qty").value, app.isOpen("nutrition-basis")], ["100", "4", true]);
+});
+
+test("numbers can be given for another unit of the same food", async () => {
+  const server = serverWith(row(1, "Sardines", { nutrition: { at: 5, grams: 48 } }));
+  const app = await bootApp({ server });
+  openEdit(app, "Sardines");
+  type(app, "nutrition-basis-unit", "g", "change");
+  assert.deepEqual([app.el("nutrition-basis-qty").value, shown(app, "calories")], ["48", "100"]);
+  type(app, "nutrition-basis-qty", "56");
+  type(app, "nf-protein", "11");
+  save(app);
+  await app.settle();
+  assert.deepEqual([on(server, "Sardines").macros.protein, on(server, "Sardines").nutrition.basis], [mine(9.429), { qty: 56, unit: "g" }]);
 });
 
 test("renaming to a remembered food shows its numbers before saving", async () => {
@@ -389,6 +420,16 @@ test("ask AI again is refused while a number is invalid", async () => {
   save(app);
   await app.settle();
   assert.deepEqual([server.aiCalls, on(server, "Sardines").estimate_status], [[], "done"], "an ordinary save asks nobody");
+});
+
+test("ask AI again is refused while the form is incomplete", async () => {
+  const server = serverWith(row(1, "Sardines"));
+  const app = await bootApp({ server });
+  openEdit(app, "Sardines");
+  app.el("food-form").reportValidity = () => false; // as with an empty quantity
+  app.fire("nutrition-ask", "click");
+  await app.settle();
+  assert.deepEqual([app.isOpen("food-modal"), server.aiCalls], [true, []]);
 });
 
 test("ask AI again without credit opens the paywall and changes nothing", async () => {

@@ -326,7 +326,7 @@ test("food names match regardless of case and spacing", () => {
 - `reuse({ entry, ratio }) -> { macros, nutrition }`
 - `latestLog(entries, food) -> entry | null`
 - `editPlan(before, after) -> { kind: "keep" | "lookup" } | { kind: "scale", ratio }`
-- `resolve({ before, after, form, others, tracked, now }) -> { macros, nutrition, estimateStatus }`; `form` is `createForm(...).result()` (Task 4) or null
+- `resolve({ before, after, form, entries, tracked, now }) -> { macros, nutrition, estimateStatus }`; `form` is `createForm(...).result()` (Task 4) or null
 - `statusFor(macros, tracked, nutrition) -> "pending" | "manual" | "done"`
 - `needsAnswer(entry, tracked) -> boolean`, `known(entry) -> { id: total } | undefined`
 - `applyAnswer(entry, answer, { tracked, now }) -> { macros, nutrition, estimateStatus }`; `answer` is the proxy's response or null
@@ -412,21 +412,21 @@ test("the latest log of a food is by date, time, then id, whatever the order", (
 
 // ---- saving --------------------------------------------------------------------
 
-const add = (over = {}) => N.resolve({ after: { food: "Sardines", qty: 4, unit: "pcs" }, others: [], tracked: TRACKED, now: NOW, ...over });
+const add = (over = {}) => N.resolve({ after: { food: "Sardines", qty: 4, unit: "pcs" }, tracked: TRACKED, now: NOW, ...over });
 
 test("adding an unknown food waits for the AI", () => {
   assert.deepEqual(add(), { macros: {}, nutrition: undefined, estimateStatus: "pending" });
 });
 
 test("adding a remembered food needs no AI", () => {
-  const got = add({ after: { food: "Sardines", qty: 2, unit: "pcs" }, others: [entry({ nutrition: { at: 500 } })] });
+  const got = add({ after: { food: "Sardines", qty: 2, unit: "pcs" }, entries: [entry({ nutrition: { at: 500 } })] });
   assert.equal(got.estimateStatus, "done");
   assert.deepEqual(got.macros.calories, { low: 50, high: 50 });
   assert.deepEqual(got.nutrition, { at: 500, from: { id: 1, date: "2026-11-20" } });
 });
 
 test("a remembered food with gaps in what is tracked waits for the AI to fill them", () => {
-  const got = add({ others: [entry({ macros: { protein: mine(22) } })] });
+  const got = add({ entries: [entry({ macros: { protein: mine(22) } })] });
   assert.equal(got.estimateStatus, "pending");
   assert.deepEqual(got.macros, { protein: mine(22) });
 });
@@ -437,7 +437,7 @@ test("typing every tracked number needs no AI", () => {
 });
 
 test("typing some numbers leaves the rest to the remembered entry, and is decided now", () => {
-  const got = add({ others: [entry({ nutrition: { at: 500 } })], form: { typed: { protein: 25 } } });
+  const got = add({ entries: [entry({ nutrition: { at: 500 } })], form: { typed: { protein: 25 } } });
   assert.deepEqual(got.macros.protein, mine(25));
   assert.deepEqual(got.macros.calories, { low: 100, high: 100 });
   assert.deepEqual(got.nutrition, { at: NOW });
@@ -451,7 +451,7 @@ test("a label's numbers are scaled to what was eaten", () => {
   assert.equal(got.estimateStatus, "pending");
 });
 
-const edit = (before, after, form) => N.resolve({ before, after: { food: before.food, qty: before.qty, unit: before.unit, ...after }, form, others: [], tracked: TRACKED, now: NOW });
+const edit = (before, after, form) => N.resolve({ before, after: { food: before.food, qty: before.qty, unit: before.unit, ...after }, form, entries: [before], tracked: TRACKED, now: NOW });
 
 test("changing only the date or time changes nothing about the numbers", () => {
   for (const e of [entry({ nutrition: { at: 500, from: { id: 9, date: "2026-11-01" } } }), entry({ estimateStatus: "error", macros: {} }), entry({ estimateStatus: null, macros: three(5) })]) {
@@ -498,7 +498,7 @@ test("a new name or unit forgets the weight of what it was before", () => {
 
 test("a new name that is remembered takes those numbers, but never over a typed one", () => {
   const tuna = entry({ id: 5, food: "Tuna", macros: full(300), nutrition: { at: 700 } });
-  const got = N.resolve({ before: entry({ macros: full(100, { protein: mine(22) }) }), after: { food: "Tuna", qty: 4, unit: "pcs" }, others: [tuna], tracked: TRACKED, now: NOW });
+  const got = N.resolve({ before: entry({ macros: full(100, { protein: mine(22) }) }), after: { food: "Tuna", qty: 4, unit: "pcs" }, entries: [tuna], tracked: TRACKED, now: NOW });
   assert.deepEqual([got.macros.calories.low, got.macros.protein, got.estimateStatus], [300, mine(22), "done"]);
   assert.deepEqual(got.nutrition, { at: 700, from: { id: 5, date: "2026-11-20" } });
 });
@@ -513,6 +513,12 @@ test("typing a number makes it mine and the entry the one to remember", () => {
   assert.deepEqual(got.macros.protein, mine(22));
   assert.deepEqual(got.nutrition, { at: NOW });
   assert.equal(got.estimateStatus, "done");
+});
+
+test("typing on a failed entry asks for the rest, or for nothing if that was all", () => {
+  const failed = entry({ macros: {}, estimateStatus: "error" });
+  assert.equal(edit(failed, {}, { typed: { protein: 22 } }).estimateStatus, "pending");
+  assert.equal(edit(failed, {}, { typed: { calories: 1, protein: 22, carbs: 0 } }).estimateStatus, "manual");
 });
 
 test("typing numbers for the entry's own amount drops an older label amount", () => {
@@ -619,6 +625,10 @@ test("an entry in grams stores no assumed weight", () => {
   assert.equal(apply(entry({ qty: 80, unit: "g", macros: {} }), answer(100)).nutrition.grams, undefined);
 });
 
+test("at most two estimates are kept", () => {
+  assert.equal(apply(entry({ macros: {} }), answer(5, { basis: [{ ref: "a" }, { ref: "b" }, { ref: "c" }] })).nutrition.why.length, 2);
+});
+
 test("small weights keep a decimal", () => {
   const a = answer(5, { basis: [{ grams: 1.2 }, { grams: 1.3 }] });
   assert.equal(apply(entry({ macros: {} }), a).nutrition.grams, 1.3);
@@ -704,8 +714,8 @@ test("numbers are stored without floating-point noise", () => {
   //   after    { food, qty, unit }
   //   form     { typed: { id: number }, cleared: [id], basis, grams, askAgain } or null;
   //            typed numbers are for `basis`, or for the entry's own amount without one
-  //   others   the other entries, to remember from
-  function resolve({ before = null, after, form = null, others = [], tracked, now }) {
+  //   entries  all of them, to remember from
+  function resolve({ before = null, after, form = null, entries = [], tracked, now }) {
     const { typed = {}, cleared = [], basis = null, grams = null, askAgain = false } = form || {};
     let macros = before ? { ...(before.macros || {}) } : {};
     let n = before ? { ...(before.nutrition || {}) } : {};
@@ -717,7 +727,7 @@ test("numbers are stored without floating-point noise", () => {
       if (n.grams > 0) n.grams = round(n.grams * plan.ratio, 3);
     } else if (plan.kind === "lookup") {
       const own = pick(macros, mineIds(macros));
-      const found = findRemembered(others, after.food, after);
+      const found = findRemembered(entries, after.food, after);
       if (found) {
         const got = reuse(found);
         macros = { ...got.macros, ...own };
@@ -1595,6 +1605,15 @@ test("batch add remembers row by row", async () => {
   assert.deepEqual(server.food().filter((r) => r.food === "Sardines").map((r) => r.estimate_status), ["done", "done"]);
 });
 
+test("a batch of remembered foods needs no credit", async () => {
+  const server = serverWith(row(1, "Sardines", { qty: 1, unit: "pc" }));
+  server.usage = { pct_used: 100, plan: "free", exhausted: true };
+  const app = await bootApp({ server });
+  app.addBatch(["Sardines"]);
+  await app.settle();
+  assert.deepEqual([app.isOpen("paywall-modal"), server.food().map((r) => r.estimate_status)], [false, ["done", "done"]]);
+});
+
 test("photo entries are marked and never remembered", async () => {
   const server = serverWith();
   const app = await bootApp({ server });
@@ -1651,8 +1670,7 @@ function formFood() {
 
 // The numbers a new or changed entry is saved with.
 function numbersFor(before, after, form = null) {
-  const others = loadFoodEntries().filter((e) => !before || e.id !== before.id);
-  return Nutrition.resolve({ before, after, form, others, tracked: getEnabledMacros(), now: Date.now() });
+  return Nutrition.resolve({ before, after, form, entries: loadFoodEntries(), tracked: getEnabledMacros(), now: Date.now() });
 }
 
 ```
@@ -1925,6 +1943,28 @@ test("a remembered food shows its numbers and day before saving", async () => {
   assert.deepEqual([shown(app, "calories"), app.el("nutrition-tag").textContent], ["", ""]);
 });
 
+test("choosing a past food with the section open fills in its amount and numbers", async () => {
+  const app = await bootApp({ server: serverWith(row(1, "Sardines")) });
+  app.fire("add-food-btn", "click");
+  app.fire("nutrition-open", "click");
+  assert.equal(app.isOpen("nutrition-basis"), false, "there is no amount yet");
+  type(app, "food-name", "Sardines", "change");
+  assert.deepEqual([shown(app, "calories"), app.el("nutrition-basis-qty").value, app.isOpen("nutrition-basis")], ["100", "4", true]);
+});
+
+test("numbers can be given for another unit of the same food", async () => {
+  const server = serverWith(row(1, "Sardines", { nutrition: { at: 5, grams: 48 } }));
+  const app = await bootApp({ server });
+  openEdit(app, "Sardines");
+  type(app, "nutrition-basis-unit", "g", "change");
+  assert.deepEqual([app.el("nutrition-basis-qty").value, shown(app, "calories")], ["48", "100"]);
+  type(app, "nutrition-basis-qty", "56");
+  type(app, "nf-protein", "11");
+  save(app);
+  await app.settle();
+  assert.deepEqual([on(server, "Sardines").macros.protein, on(server, "Sardines").nutrition.basis], [mine(9.429), { qty: 56, unit: "g" }]);
+});
+
 test("renaming to a remembered food shows its numbers before saving", async () => {
   const server = serverWith(row(1, "Sardines", { macros: eight(100, { protein: mine(22) }) }), row(2, "Tuna", { macros: eight(300) }));
   const app = await bootApp({ server, now: NOON });
@@ -2025,6 +2065,16 @@ test("ask AI again is refused while a number is invalid", async () => {
   save(app);
   await app.settle();
   assert.deepEqual([server.aiCalls, on(server, "Sardines").estimate_status], [[], "done"], "an ordinary save asks nobody");
+});
+
+test("ask AI again is refused while the form is incomplete", async () => {
+  const server = serverWith(row(1, "Sardines"));
+  const app = await bootApp({ server });
+  openEdit(app, "Sardines");
+  app.el("food-form").reportValidity = () => false; // as with an empty quantity
+  app.fire("nutrition-ask", "click");
+  await app.settle();
+  assert.deepEqual([app.isOpen("food-modal"), server.aiCalls], [true, []]);
 });
 
 test("ask AI again without credit opens the paywall and changes nothing", async () => {
