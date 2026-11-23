@@ -695,7 +695,7 @@ test("one that failed and was only opened: what is typed elsewhere stays, and th
   await a.windowEvent("storage", { key, newValue: device.storage.getItem(key) });
   saveForm(a);
   await a.settle();
-  assert.deepEqual([stored(server), server.aiCalls], [[["Swim", 30, 400]], []], "another tab");
+  assert.deepEqual([stored(server), server.aiCalls, server.writes.filter((x) => x.op === "update")], [[["Swim", 30, 400]], [], []], "another tab");
 
   const server2 = serverWith({ workouts: [failed] });
   const c = await bootApp({ server: server2 }), d = await bootApp({ server: server2, device: createDevice() });
@@ -739,7 +739,7 @@ test("one that was not touched and is deleted elsewhere is simply gone", async (
 });
 
 test("one that comes while the form is open can be removed, and is asked about like the others", async () => {
-  const server = serverWith();
+  const server = serverWith({ workouts: [row(1, "Yoga", { kcal: 100 })] });
   const app = await bootApp({ server });
   openDay(app);
   put(app, js(50, "Bike"), js(51, "Run"));
@@ -751,7 +751,7 @@ test("one that comes while the form is open can be removed, and is asked about l
   app.run("removeWorkout(51)"); // elsewhere
   saveForm(app);
   await app.settle();
-  assert.deepEqual([app.confirms.length, stored(server)], [1, [["Run", 90, 250]]]);
+  assert.deepEqual([app.confirms.length, stored(server)], [1, [["Yoga", 90, 100], ["Run", 90, 250]]]);
 });
 
 test("the form does not close before everything is stored", async () => {
@@ -774,6 +774,36 @@ test("nothing in the form asks the AI before Save", async () => {
   const app = await bootApp({ server });
   openDay(app);
   assert.ok(listed(app).includes("not estimated") && !listed(app).includes("retryWorkout"));
+});
+
+test("what was typed about one stays when it is looked at again, and can still be asked about", async () => {
+  for (const ask of [false, true]) {
+    const server = serverWith({ workouts: [row(1, "Bike"), row(2, "Run")] }), bodies = [];
+    server.ai = (body) => { bodies.push(body.payload); return answer(); };
+    const app = await bootApp({ server });
+    openDay(app);
+    app.run("openWorkout(1)");
+    typeIn(app, { minutes: 30 });
+    app.run("openWorkout(2)");
+    app.run("openWorkout(1)");
+    if (ask) app.fire("workout-ask", "click");
+    app.run("openWorkout(2)");
+    saveForm(app);
+    await app.settle();
+    assert.deepEqual([stored(server), JSON.parse(JSON.stringify(bodies))], [[["Bike", 30, null], ["Run", 90, null]], ask ? [{ what: "Bike", minutes: 30 }] : []]);
+  }
+});
+
+test("typing and asking again at once", async () => {
+  const server = serverWith({ workouts: [row(1, "Bike")] });
+  const app = await bootApp({ server });
+  openDay(app);
+  app.run("openWorkout(1)");
+  typeIn(app, { minutes: 30 });
+  app.fire("workout-ask", "click");
+  saveForm(app);
+  await app.settle();
+  assert.deepEqual([stored(server), server.aiCalls, on(server, "Bike").effort.met], [[["Bike", 30, null]], ["Bike"], { low: 5, high: 6 }]);
 });
 
 test("removing one counts from Save on", async () => {
@@ -939,6 +969,11 @@ test("a day that has workouts and, from elsewhere, a choice with one", async () 
   assert.deepEqual([offered(app), app.el("day-activity").value, app.isOpen("day-activity-note")], [[SAT, LIGHT], SAT, true]);
   app.run("dropWorkout(1)");
   assert.deepEqual([offered(app).length, app.el("day-activity").value], [8, GYM]);
+  app.fire("day-cancel", "click");
+  openDay(app);
+  saveForm(app);
+  await app.settle();
+  assert.equal(server.days()[0].activity, SAT, "saved as it is shown");
 });
 
 test("an empty workout left open changes nothing about the day", async () => {
@@ -1086,6 +1121,8 @@ test("earlier workouts are suggested, and bring their minutes", async () => {
   typeIn(app, { minutes: 45 });
   leave("Bike, heart rate 130");
   assert.equal(app.el("workout-minutes").value, "45", "typed minutes are left alone, also if they are the same");
+  leave("Bike intervals");
+  assert.equal(app.el("workout-minutes").value, "45", "and if others are known");
 });
 
 test("the other fields of the day are saved as before, with and without workouts", async () => {

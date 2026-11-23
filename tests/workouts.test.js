@@ -205,7 +205,7 @@ test("not reused: typed calories, no answer, one that is being asked again, itse
 test("minutes are part of what is reused only if they were the AI's", () => {
   const judged = w({ id: 7, minutes: 0, effort: { ...w().effort, minutes: 52 } });
   assert.deepEqual(save(null, { minutes: 0 }, { workouts: [judged] }).effort.minutes, 52);
-  assert.equal(save(null, { minutes: 0 }, { workouts: [w({ id: 8 })] }).estimateStatus, "pending", "nobody knows how long");
+  assert.deepEqual(save(null, { minutes: 0 }, { workouts: [w({ id: 8 })] }), { effort: {}, estimateStatus: "pending" }, "nobody knows how long");
   const got = save(null, { minutes: 20 }, { workouts: [judged] });
   assert.deepEqual([got.estimateStatus, got.effort.minutes], ["done", undefined], "typed ones need none");
 });
