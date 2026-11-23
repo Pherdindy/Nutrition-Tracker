@@ -3260,4 +3260,13 @@ Nothing above touches production. `main` is the folder the user runs, so the cli
 - [ ] **Step 3: Proxy v12.** Deploy, download, compare byte for byte with the repo. Smoke on the owner's account (a few cents): a plain estimate, one with `known`, on both providers; check `basis`, `how`, the ledger rows, and the log for refusals.
 - [ ] **Step 4: Watch** the API log for an hour of real use: no 400 on `food_entries`; a real new entry goes `POST 201` → `PATCH 204` and its row is `done` with eight nutrients.
 
+### After the plan
+
+Tasks 1–9 were applied as written above (checked: the blocks, applied in order to
+`ea44b1c`, gave the code of `937cb20`). An independent review of that code then found 16
+defects; the fixes are the commits after it, and the spec's "Amendments" list what they
+changed. The blocks above are therefore the first version, not the final code.
+
+---
+
 **Rollback.** Proxy: redeploy `supabase/functions` from `829279f` (v11). Client: `git revert` the merge. Column: leave it; older builds ignore it.

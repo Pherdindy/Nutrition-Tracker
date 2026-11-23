@@ -71,18 +71,23 @@ Every field is optional; entries from before this feature have none.
   why: [{ ref, note, grams, kcal }],  // one per AI estimate, at most two
   how: "average",           // or "both" (they disagreed) or "one"
   photo: true,              // from a photo: never reused
-  refresh: true,            // "Ask AI again" is waiting for its answer
+  refresh: true,            // an answer is due that replaces every number not mine
+  stale: true,              // they are for what the entry was before (renamed, or an
+                            // amount that does not convert): shown until then
+  of: { food, qty, unit },  // in the column only: what all this is about
 }
 ```
 
 `grams` is the mean of the weights in `why`, to a whole gram, or to one decimal below
-10 g. `ref` is cut to 120 characters and `note` to 200. `foodRowToJs` and
-`foodJsToRow` carry the object, so it takes part in the sync signature.
+10 g; an entry measured by weight has none. `ref` is cut to 120 characters and `note` to
+200. Numbers are stored to six significant digits. `foodRowToJs` and `foodJsToRow` carry
+the object, so it takes part in the sync signature.
 
 A build without this feature leaves the column alone (PostgREST only writes the columns
 it is sent) and keeps `mine` when it passes `macros` through. But if someone changes an
-amount there, it asks the AI and drops the numbers, as it does today. All devices
-should be updated.
+amount there, it asks the AI and drops the numbers, as it does today, and its answers
+do not know about typed numbers. The column is ignored when the entry is no longer what
+it is `of`. All devices should be updated before numbers are typed.
 
 ## Units
 
@@ -115,20 +120,24 @@ known. Otherwise it cannot, and nothing is guessed.
 **A past entry can be reused when all of these hold:**
 
 - its name matches, its quantity is above zero, and its amount converts to the new one
-- its status is `done` or `manual`
+- its numbers are its own, not `stale`
 - it is not from a photo (a photo describes one plate)
 - it has all eight nutrients, **or** at least one number typed by the user
 
-The third line means an entry saved before this feature is not reused: each food costs
-one more AI call, and is complete and explained from then on.
+The last line means an entry saved before this feature is not reused: each food costs
+one more AI call, and is complete and explained from then on. The status does not
+matter: an entry asked about again keeps its numbers for others meanwhile, and if the
+question fails.
 
 **Which one:** the most recently decided. That is `nutrition.at`, or the entry's own
-date and time if it has none; on a tie, the larger id.
+date and time if it has none; on a tie, one with all eight nutrients before one with
+gaps, then one that is not a copy, then the larger id. Filling gaps does not make an
+entry newer.
 
 **The new entry gets:**
 
 - every number, `grams` included, times the ratio of the amounts, with `mine` kept
-- the source's `nutrition`, except `refresh`; `from` is the source's own `from` if it
+- the source's `nutrition`, except `refresh` and `stale`; `from` is the source's own `from` if it
   has one (so a copy of a copy names the original), else the source; `at` is copied
 - status `manual` if every tracked nutrient is `mine`, `done` if every tracked nutrient
   has a number, else `pending`, so that the AI fills the blanks
@@ -137,8 +146,8 @@ date and time if it has none; on a tie, the larger id.
 not looked up; they are marked `photo`.
 
 **Autofill:** when adding, choosing a past food name fills in the quantity and unit of
-the latest log of it (by date, time, then id). Today it uses the oldest after a reload,
-and also changes the amount of an entry that is only being renamed.
+the latest log of it (by date, time, then id), unless an amount was typed. Today it uses
+the oldest after a reload, and also changes the amount of an entry being renamed.
 
 ## Adding
 
@@ -156,19 +165,22 @@ nutrient typed → `manual`, and no AI call. Otherwise the status follows the ru
 
 The Nutrition section is open. On save, in this order:
 
-1. **Amount changed and it converts:** scale every number and `grams`.
+1. **Amount changed and it converts**, whatever the name: scale every number and
+   `grams`.
 2. **Name changed, or the amount changed and does not convert:** numbers marked `mine`
-   stay as they are, as totals. The others come from a remembered entry if there is
-   one, else the AI is asked (`refresh`), the old ones staying until it answers.
-   Before saving, the form says so: "AI will estimate the other numbers again."
-   The weight is forgotten: it was of what the entry was before. So is `basis`, if the
-   user had typed a number: it is a total now.
+   stay as they are, as totals. A remembered entry replaces all the others, its gaps
+   included. Without one the AI is asked (`refresh`, `stale`), the old ones staying until
+   it answers. Before saving, the form says so: "AI will estimate the other numbers
+   again." If every tracked nutrient is typed nobody is asked, and the old ones are
+   dropped. The weight is forgotten: it was of what the entry was before. So is `basis`,
+   if the user had typed a number: it is a total now.
 3. **Weight corrected:** numbers not marked `mine` are multiplied by new ÷ old weight;
    `grams` is the new one, `gramsMine` is set. Typed numbers **rest on the weight** when
    `basis` is a weight and the entry's unit is not (11 g per 56 g, for 4 pcs): then they
-   are multiplied too, and an answer of the AI is brought to the weight they rest on.
-4. **A number typed:** it becomes `mine`. **A number cleared:** it is no longer `mine`
-   and is blank; if it is tracked, the AI fills it.
+   are multiplied too. A weight that is corrected or rested on stands when the AI is
+   asked again, and the AI is told it.
+4. **A number typed:** it becomes `mine`, also if it is the number shown. **A number
+   cleared:** it is no longer `mine` and is blank; if it is tracked, the AI fills it.
 5. Only the date or time changed: nothing else happens.
 
 Steps 3 and 4 set `at` to now and drop `from`: this entry is now the one to remember.
@@ -183,11 +195,13 @@ A button in the Nutrition header, shown when the entry has a number that is not 
 or failed. It saves the form, sets `refresh` and `pending`, and closes. The card keeps
 its numbers with the "…" badge.
 
-- **Answer:** every number not `mine` is replaced, `from`, `photo` and `refresh` are
-  dropped, `at` is now, status `done`.
+- **Answer:** every number not `mine` is replaced (one it does not mention is blank),
+  `from`, `photo`, `refresh` and `stale` are dropped, `at` is now, status `done`.
 - **No answer:** status `error`, numbers kept, `refresh` kept. The "!" badge retries.
-- **Out of credit:** the paywall opens and nothing changes.
-- It skips remembered foods.
+- **Out of credit**, known before or learned from the call: the paywall opens and
+  nothing changes. (After a rename the entry keeps waiting, as "!".)
+- It skips remembered foods, under a new name too.
+- Tapped while a gap is being filled, it asks again after that.
 
 ## The estimate queue
 
@@ -197,13 +211,22 @@ its numbers with the "…" badge.
   Ask AI again would do nothing.
 - **Written on an answer:** with `refresh`, all eight except those `mine`; otherwise
   the blank ones of all eight. Never a `mine`.
-- **Sent along as `known`:** the numbers that will not be replaced, as totals.
+- **Sent along as `known`:** the numbers that will not be replaced, as totals; and as
+  `grams` the weight, if it stands.
 - **Status `done`** when every tracked nutrient has a number, else `error`.
 - **Applied only if** the entry is still `pending` with the same food, quantity, unit
   **and macros** as when it was asked. The last is new: someone may have typed a number
   meanwhile, here or on another device. It is checked locally and in the conditional
   update sent to the server (`macros=eq.<json>`, value equality on jsonb), which also
-  carries `nutrition`. `Sync.matches` compares objects by value for this.
+  carries `nutrition`. `Sync.matches` compares objects by value for this. Locally,
+  whether it was asked again meanwhile counts too.
+- **Retrying** ("!") is a conditional update as well, of a row that still failed with
+  the same food, amount and numbers.
+- **When such an update finds no such row,** this device's copy is behind: it takes over
+  the server's row, unless the entry was changed here since. Otherwise the refused
+  numbers would go up with the next edit. If the row cannot be read now, the update
+  stays in the outbox and this is done later.
+- Two such updates to one row (a retry, then its answer) are sent one after the other.
 
 ## Explanation
 
@@ -236,7 +259,8 @@ All of it is text from the AI or the user, so it is escaped.
   adds: "These totals for this quantity are already known. Treat them as facts and make
   the other values consistent with them: protein 15.7 g."
 - **Request:** optional `known: { <macro id>: number }`. Unknown ids, and values that
-  are not finite or are negative, are ignored.
+  are not finite or are negative, are ignored. Optional `grams`, a positive number:
+  "Quantity: 4 pcs (weighs 96 g in total)".
 - **Response:** gains `basis: [{ ref, note, grams, kcal }]`, one per model that
   answered, and `how`. `kcal` is the middle of that model's range, `grams` a positive
   number or null. `how` is `one` when one model answered, `both` when `mergeEstimates`
@@ -277,7 +301,8 @@ Nutrition · from Nov 20                    [Ask AI again]
 ```
 
 - One field per tracked nutrient; the others under **More nutrients**. An AI range is
-  shown as its middle and is kept as a range unless the field differs at saving.
+  shown as its middle and is kept as a range unless something is typed into the field.
+  Numbers below 100 are shown to three digits, others to one decimal.
 - **These numbers are for:** follows the entry's own amount until the user changes it.
   - A number typed in this form stays as typed: it is for the amount shown, whatever
     that becomes. So a label can be typed as printed, before or after setting its amount.
@@ -288,7 +313,10 @@ Nutrition · from Nov 20                    [Ask AI again]
   - Choosing another unit keeps the amount: 4 pcs becomes 48 g.
   - Its unit list offers only what converts to the entry's amount. If the entry's amount
     is then changed to one it does not convert to, saving is refused beside the field; it
-    is never read as something else.
+    is never read as something else. Choosing a unit that fits then means the entry's own
+    amount.
+- **A typed weight** is for the food and amount it was typed for: it is dropped when they
+  change.
 - **Invalid number** (not a number, below 0, above 99,999): message beside the field,
   nothing saved, everything typed stays.
 - **Waiting:** "Estimating… You can type your own numbers meanwhile."
@@ -314,10 +342,11 @@ has a saved choice and is not affected.
 |---|---|
 | Offline | Reuse, scaling and typed numbers work and sync later. A needed estimate ends in "!" as today. |
 | Out of credit, some numbers typed | The entry is saved with them; the paywall opens only if a tracked nutrient is still blank. |
-| Two devices change the same entry | Last write wins, as for any entry. An AI answer never wins over a person (R2). |
+| Two devices change the same entry | Last write wins, as for any entry. An AI answer or a retry never wins over a person (R2), and the device that was refused takes over the other's numbers. |
 | A remembered number is wrong | Fix it once. That entry is now the latest decided and is used from then on. |
 | The source entry is deleted | Entries that reused it keep their numbers and tag. The next log uses the next latest. |
-| Quantity 0 or blank | Not a reuse source; the form requires a quantity, as today. |
+| Quantity 0 or blank | Not a reuse source; the form requires a quantity above 0. |
+| 4 pcs → 48 g → 4 pcs | The way back does not convert (the weight of a piece is no longer known), so the AI is asked. |
 | The AI omits `total_grams` or `reference` | Those lines do not appear. Nothing else changes. |
 | Change on a weight of 0 or not a number | Message beside the field, nothing saved. |
 
@@ -382,3 +411,10 @@ minerals; the finance app.
 - Numbers typed per weight for something counted move with its weight. Otherwise a
   corrected weight would have left them wrong, and explained them wrongly.
 - The blank-fields message, and when three of the explanation's lines appear.
+
+2026-11-23, after an independent review (each finding reproduced, then fixed with a
+test; also worked into the text above): retrying and refused answers (a stale device
+could undo typed numbers), `stale`, `of`, what is remembered and in which order, scaling
+before a lookup, typed always means the user's, what happens to a typed weight, the
+weight told to the AI instead of its answer being rescaled, autofill over a typed amount,
+402, and the display of small numbers.
