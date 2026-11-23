@@ -210,7 +210,7 @@ const WORKOUT_SYNC = {
   keyOf: (w) => String(w.id), toRow: workoutJsToRow, fromRow: workoutRowToJs,
   signature: (w) => JSON.stringify(workoutJsToRow(w)),
   load: () => loadWorkouts(), save: (workouts) => saveWorkouts(workouts),
-  show: () => { renderCalorieTracker(); },
+  show: () => { renderCalorieTracker(); renderDayForm(); },
   asked: ({ what, minutes }) => ({ what, minutes }),
   again: (w) => !!w.effort.refresh,
   answered: ["effort", "estimate_status"],
@@ -712,6 +712,7 @@ function renderCalorieTracker() {
       <td class="num ${surplusClass(-proSurpLow)}">${renderNum(proSurpLow, 1)}</td>
       <td class="num ${surplusClass(-proSurpHigh)}">${renderNum(proSurpHigh, 1)}</td>
       <td><div class="actions">
+        <button class="btn-icon" onclick="addWorkout('${escapeHtml(day.date)}')" title="Add a workout">+</button>
         <button class="btn-icon" onclick="editDay(${day.id})" title="Edit">&#9998;</button>
         <button class="btn-icon delete" onclick="deleteDay(${day.id})" title="Delete">&#10005;</button>
       </div></td>
@@ -732,10 +733,9 @@ function activityHtml(day, workouts) {
   const { rest } = Workouts.total(0, day, workouts);
   return escapeHtml(Workouts.nameOf(rest)) + workouts.map((w) => `<div class="workout-line">${workoutHtml(w, day.weight)}</div>`).join("");
 }
-function workoutHtml(w, lbs) {
+function workoutHtml(w, lbs, waiting = "estimating…") {
   const { what, minutes, kcal } = Workouts.line(w, lbs);
-  const waiting = w.estimateStatus === "pending" ? "estimating…" : "";
-  const text = [escapeHtml(what), minutes, kcal, waiting].filter(Boolean).join(" · ");
+  const text = [escapeHtml(what), minutes, kcal, w.estimateStatus === "pending" && waiting].filter(Boolean).join(" · ");
   const tag = w.kcal != null ? "yours" : Workouts.tag(w, localDate());
   const retry = w.estimateStatus === "error" ? ` <button type="button" class="link-btn" onclick="retryWorkout(${w.id})" title="Ask the AI again">${kcal ? "try again" : "not estimated"}</button>` : "";
   return text + (tag ? ` <span class="from-tag">${tag}</span>` : "") + retry;
@@ -970,13 +970,15 @@ function closeFoodModal() {
   document.getElementById("food-modal").classList.add("hidden");
 }
 
+// A day as it starts: the last weight, and never yesterday's workout.
+function newDay(date) {
+  const days = loadDayEntries(), sorted = [...days].sort((a, b) => (a.date < b.date ? 1 : -1));
+  return { id: newId(), date, weight: sorted.length ? sorted[0].weight : 168, activity: Workouts.lastRest(days, date) };
+}
 function ensureDayExists(date) {
   const days = loadDayEntries();
   if (days.some((d) => d.date === date)) return;
-  const sorted = [...days].sort((a, b) => (a.date < b.date ? 1 : -1));
-  const prev = sorted[0];
-  days.push({ id: newId(), date, weight: prev ? prev.weight : 168, activity: Workouts.lastRest(days, date) });
-  saveDayEntries(days, { autoCreated: [date] });
+  saveDayEntries([...days, newDay(date)], { autoCreated: [date] });
 }
 
 
@@ -1136,27 +1138,139 @@ window.deleteFood = function (id) {
 // DAY CRUD
 // ============================================================
 
-function populateActivitySelect() {
-  const select = document.getElementById("day-activity");
-  select.innerHTML = Workouts.ACTIVITIES.map(
-    (a) => `<option value="${escapeHtml(a.label)}">${a.label}</option>`
-  ).join("");
-}
+// The day form. What is typed about its workouts is kept here until Save:
+//   known    the day's workouts when it was opened
+//   changes  id -> { what, minutes, kcal, askAgain }, or null = removed
+//   open     the id of the workout whose fields are shown, and what they said at first
+//   chosen   the day's activity; rest: what the user chose instead, for a day with workouts
+let _dayForm = null;
 
-function openDayModal(entry) {
-  const modal = document.getElementById("day-modal");
-  document.getElementById("day-modal-title").textContent = "Edit Day";
-  populateActivitySelect();
-  document.getElementById("day-id").value = entry.id;
+function openDayModal(entry, { add = false } = {}) {
+  _dayForm = { date: entry.date, chosen: entry.activity, rest: null, some: null, known: new Set(workoutsOn(entry.date).map((w) => w.id)), changes: new Map(), open: null, opened: null, again: false, filled: "" };
+  document.getElementById("day-modal-title").textContent = add ? "Add Workout" : "Edit Day";
   document.getElementById("day-date").value = entry.date;
   document.getElementById("day-weight").value = entry.weight;
-  document.getElementById("day-activity").value = entry.activity;
   document.getElementById("day-incomplete").checked = entry.incomplete === true;
-  modal.classList.remove("hidden");
+  document.getElementById("workout-suggestions").innerHTML = Workouts.suggestions(loadWorkouts()).map(({ what }) => `<option value="${escapeHtml(what)}"></option>`).join("");
+  document.getElementById("day-modal").classList.remove("hidden");
+  renderDayForm();
+  if (add) openWorkout(newId());
 }
 
 function closeDayModal() {
+  _dayForm = null;
   document.getElementById("day-modal").classList.add("hidden");
+}
+
+// A workout of the form as it would be saved.
+function previewWorkout(id, { askAgain, ...after }) {
+  const workouts = loadWorkouts(), before = workouts.find((w) => w.id === id);
+  return { id, date: _dayForm.date, ...after, ...Workouts.resolve({ before, after, askAgain, workouts }) };
+}
+
+// The day's workouts as they would be saved, without the open one.
+function formWorkouts() {
+  const { date, changes, open } = _dayForm;
+  const typed = [...changes].filter(([, after]) => after).map(([id, after]) => previewWorkout(id, after));
+  return [...workoutsOn(date).filter((w) => !changes.has(w.id)), ...typed].filter((w) => w.id !== open).sort((a, b) => a.id - b.id);
+}
+
+const formWeight = () => parseFloat(document.getElementById("day-weight").value);
+
+function renderDayForm() {
+  if (!_dayForm) return;
+  const { date, chosen, rest, changes, open } = _dayForm, workouts = formWorkouts(), lbs = formWeight();
+  // With workouts the list is about the rest of the day: a choice that includes one
+  // would count it twice.
+  const some = workouts.length > 0 || open !== null, instead = some && !Workouts.isRest(chosen);
+  if (_dayForm.some !== some) { // only then, so that an open list stays open
+    _dayForm.some = some;
+    const labels = Workouts.ACTIVITIES.map((a) => a.label).filter((label) => !some || Workouts.isRest(label));
+    if (!some && !labels.includes(chosen)) labels.push(chosen); // from another build: not lost
+    const select = document.getElementById("day-activity");
+    select.innerHTML = labels.map((label) => `<option value="${escapeHtml(label)}">${escapeHtml(label)}</option>`).join("");
+    select.value = instead ? rest || Workouts.lastRest(loadDayEntries(), date) : chosen;
+  }
+  document.getElementById("day-activity-label").textContent = some ? "Rest of the day" : "Activity Type";
+  const note = document.getElementById("day-activity-note");
+  note.classList.toggle("hidden", !instead);
+  note.textContent = instead ? `“${Workouts.nameOf(chosen)}” already includes a workout, so this is now the rest of the day, without the workouts below.` : "";
+
+  document.getElementById("workout-list").innerHTML = workouts.map((w) => `<div class="workout-row"><span>${workoutHtml(w, lbs, changes.has(w.id) ? "the AI will estimate" : undefined)}</span>
+    <button type="button" class="btn-icon" onclick="openWorkout(${w.id})" title="Edit">&#9998;</button>
+    <button type="button" class="btn-icon delete" onclick="dropWorkout(${w.id})" title="Remove">&#10005;</button></div>`).join("");
+  document.getElementById("workout-editor").classList.toggle("hidden", open === null);
+  if (open !== null) renderOpenWorkout(lbs);
+}
+
+const WORKOUT_FIELDS = ["what", "minutes", "kcal"];
+const workoutField = (field) => document.getElementById(`workout-${field}`);
+const typedWorkout = () => Workouts.typed(Object.fromEntries(WORKOUT_FIELDS.map((field) => [field, workoutField(field).value])));
+
+function renderOpenWorkout(lbs) {
+  const { open, again } = _dayForm, { values, errors } = typedWorkout();
+  const right = !Object.keys(errors).length, ai = right && values.kcal === null;
+  const w = ai && previewWorkout(open, { ...values, askAgain: again });
+  const tag = ai && Workouts.tag(w, localDate());
+  document.getElementById("workout-state").textContent = !ai ? ""
+    : w.estimateStatus === "pending" ? `The AI will estimate the calories${w.effort.met ? " again" : ""}.`
+    : Workouts.line(w, lbs).kcal + (tag ? `, ${tag}` : "");
+  document.getElementById("workout-ask").classList.toggle("hidden", !ai || w.estimateStatus === "pending");
+  const lines = ai ? Workouts.explain(w, lbs, localDate()) : [];
+  document.getElementById("workout-why").classList.toggle("hidden", !lines.length);
+  document.getElementById("workout-why-lines").innerHTML = lines.map((line) => `<li>${escapeHtml(line)}</li>`).join("");
+}
+
+// What is typed about the open workout becomes one of the form's changes. False if it
+// cannot be meant.
+function takeOpenWorkout() {
+  const { open, opened, again, known, changes } = _dayForm;
+  if (open === null) return true;
+  const { values, errors, blank } = typedWorkout();
+  if (blank && !known.has(open)) changes.delete(open);
+  else {
+    for (const field of WORKOUT_FIELDS) workoutField(field).setCustomValidity(errors[field] || "");
+    const wrong = WORKOUT_FIELDS.find((field) => errors[field]);
+    if (wrong) { workoutField(wrong).reportValidity(); return false; }
+    if (again || !Sync.matches(values, opened)) changes.set(open, { ...values, askAgain: again });
+  }
+  _dayForm.open = null;
+  return true;
+}
+
+window.openWorkout = function (id) {
+  if (!takeOpenWorkout()) return;
+  const w = _dayForm.changes.get(id) || loadWorkouts().find((x) => x.id === id) || { what: "", minutes: 0, kcal: null };
+  Object.assign(_dayForm, { open: id, opened: { what: w.what.trim(), minutes: w.minutes, kcal: w.kcal }, again: !!w.askAgain, filled: "" });
+  workoutField("what").value = w.what;
+  workoutField("minutes").value = w.minutes ? String(w.minutes) : "";
+  workoutField("kcal").value = w.kcal === null ? "" : String(w.kcal);
+  for (const field of WORKOUT_FIELDS) workoutField(field).setCustomValidity("");
+  renderDayForm();
+  workoutField("what").focus();
+};
+
+window.dropWorkout = function (id) {
+  const { known, changes } = _dayForm;
+  if (_dayForm.open === id) _dayForm.open = null;
+  if (known.has(id)) changes.set(id, null); else changes.delete(id);
+  renderDayForm();
+};
+
+function workoutTyped(field) {
+  if (!_dayForm) return;
+  const minutes = workoutField("minutes");
+  if (field === "what" && minutes.value === _dayForm.filled) { // nothing typed: those of the last time
+    const past = Workouts.suggestions(loadWorkouts()).find((s) => Workouts.sameWorkout(s.what, workoutField("what").value));
+    _dayForm.filled = minutes.value = past && past.minutes ? String(past.minutes) : "";
+  }
+  for (const f of WORKOUT_FIELDS) workoutField(f).setCustomValidity("");
+  renderDayForm();
+}
+
+function chooseActivity() {
+  const { value } = document.getElementById("day-activity");
+  if (_dayForm.some && !Workouts.isRest(_dayForm.chosen)) _dayForm.rest = value; else _dayForm.chosen = value;
 }
 
 // Stores workouts as the user typed them: [{ id, what, minutes, kcal, askAgain }]. The
@@ -1175,13 +1289,20 @@ function storeWorkouts(date, typed) {
 
 function saveDay(e) {
   e.preventDefault();
-  const entries = loadDayEntries();
-  const id = document.getElementById("day-id").value;
-  const idx = entries.findIndex((x) => x.id === parseInt(id));
-  if (idx === -1) { console.warn("saveDay: day not found", id); return; }
-  entries[idx] = { ...entries[idx], weight: parseFloat(document.getElementById("day-weight").value), activity: document.getElementById("day-activity").value, incomplete: document.getElementById("day-incomplete").checked };
+  if (!takeOpenWorkout()) return;
+  const { date, known, changes } = _dayForm, typed = [];
+  for (const [id, after] of changes) {
+    if (!after) { removeWorkout(id); continue; }
+    const gone = known.has(id) && !loadWorkouts().some((w) => w.id === id);
+    if (!gone) typed.push({ id, ...after });
+    else if (confirm("This workout was deleted on another device or tab. Save it as a new one?")) typed.push({ id: newId(), ...after });
+  }
+  ensureDayExists(date);
+  const entries = loadDayEntries(), idx = entries.findIndex((d) => d.date === date);
+  entries[idx] = { ...entries[idx], weight: formWeight(), activity: document.getElementById("day-activity").value, incomplete: document.getElementById("day-incomplete").checked };
   saveDayEntries(entries);
   closeDayModal();
+  if (typed.length) storeWorkouts(date, typed);
   renderCalorieTracker();
 }
 
@@ -1191,10 +1312,17 @@ window.editDay = function (id) {
   if (entry) openDayModal(entry);
 };
 
+window.addWorkout = function (date) {
+  openDayModal(loadDayEntries().find((d) => d.date === date) || newDay(date), { add: true });
+};
+
 window.deleteDay = function (id) {
-  if (!confirm("Delete this day entry?")) return;
   const day = loadDayEntries().find((d) => d.id === id);
-  if (day) removeDayEntry(day.date);
+  if (!day) return;
+  const workouts = workoutsOn(day.date), n = workouts.length;
+  if (!confirm(n ? `Delete this day entry and its ${n} workout${n === 1 ? "" : "s"}?` : "Delete this day entry?")) return;
+  workouts.forEach((w) => removeWorkout(w.id));
+  removeDayEntry(day.date);
   renderCalorieTracker();
 };
 
@@ -2996,6 +3124,13 @@ async function startApp() {
   document.getElementById("day-cancel").addEventListener("click", closeDayModal);
   document.querySelector("#day-modal .modal-overlay").addEventListener("click", closeDayModal);
   document.getElementById("day-form").addEventListener("submit", saveDay);
+  document.getElementById("day-activity").addEventListener("change", chooseActivity);
+  document.getElementById("day-weight").addEventListener("input", renderDayForm);
+  document.getElementById("add-workout-btn").addEventListener("click", () => addWorkout(localDate()));
+  document.getElementById("workout-add").addEventListener("click", () => openWorkout(newId()));
+  document.getElementById("workout-remove").addEventListener("click", () => dropWorkout(_dayForm.open));
+  document.getElementById("workout-ask").addEventListener("click", () => { _dayForm.again = true; renderDayForm(); });
+  WORKOUT_FIELDS.forEach((field) => workoutField(field).addEventListener("input", () => workoutTyped(field)));
   onBreakpointChange(renderCalorieTracker);
 
   // Food filter

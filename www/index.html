@@ -52,6 +52,9 @@
 
     <!-- CALORIE TRACKER TAB -->
     <section id="calorie-tracker" class="tab-content">
+      <div class="toolbar">
+        <button id="add-workout-btn" class="btn btn-primary">+ Add Workout</button>
+      </div>
       <div class="table-wrapper">
         <table id="calorie-tracker-table">
           <thead>
@@ -272,7 +275,6 @@
       <div class="modal-content">
         <h2 id="day-modal-title">Edit Day</h2>
         <form id="day-form">
-          <input type="hidden" id="day-id">
           <div class="form-row">
             <label for="day-date">Date</label>
             <input type="date" id="day-date" required readonly>
@@ -282,9 +284,42 @@
             <input type="number" id="day-weight" step="any" required>
           </div>
           <div class="form-row">
-            <label for="day-activity">Activity Type</label>
+            <label for="day-activity" id="day-activity-label">Activity Type</label>
             <select id="day-activity" required></select>
+            <p id="day-activity-note" class="workout-hint hidden" role="status"></p>
           </div>
+          <section class="workouts" aria-labelledby="workouts-title">
+            <h3 id="workouts-title">Workouts</h3>
+            <div id="workout-list"></div>
+            <div id="workout-editor" class="workout-editor hidden">
+              <div class="form-row">
+                <label for="workout-what">What did you do?</label>
+                <input type="text" id="workout-what" list="workout-suggestions" maxlength="200" autocomplete="off" placeholder="e.g. Stationary bike, zone 2, heart rate 130">
+                <datalist id="workout-suggestions"></datalist>
+              </div>
+              <div class="form-row-flow">
+                <div class="form-row">
+                  <label for="workout-minutes">Minutes</label>
+                  <input type="text" id="workout-minutes" inputmode="decimal" autocomplete="off" placeholder="90 or 1:30">
+                </div>
+                <div class="form-row">
+                  <label for="workout-kcal">Calories (optional)</label>
+                  <input type="text" id="workout-kcal" inputmode="decimal" autocomplete="off">
+                </div>
+              </div>
+              <p class="workout-hint">Leave the calories empty and the AI works them out, or type what your watch or machine shows.</p>
+              <p id="workout-state" class="workout-state" role="status"></p>
+              <details id="workout-why" class="workout-why hidden">
+                <summary>How was this worked out?</summary>
+                <ul id="workout-why-lines"></ul>
+              </details>
+              <div class="workout-actions">
+                <button type="button" id="workout-ask" class="btn btn-secondary btn-sm hidden">Ask AI again</button>
+                <button type="button" id="workout-remove" class="btn btn-secondary btn-sm">Remove</button>
+              </div>
+            </div>
+            <button type="button" id="workout-add" class="btn btn-secondary btn-sm">+ Add workout</button>
+          </section>
           <div class="form-row form-check">
             <input type="checkbox" id="day-incomplete">
             <label for="day-incomplete">Incomplete log — I didn't record everything this day

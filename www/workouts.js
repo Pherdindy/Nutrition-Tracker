@@ -80,6 +80,32 @@
     return [nameOf(total(0, day, workouts).rest), ...said].join(" + ");
   }
 
+  // ---- Typing ------------------------------------------------------------------------
+
+  // "90", "1:30", "1h30", "1.5 h", "1 hour 30 minutes", "45 min"; 0 if empty, null if it
+  // cannot be meant. No commas: 1,5 would be a guess.
+  function minutesFrom(text) {
+    const t = String(text).trim().toLowerCase();
+    if (!t) return 0;
+    const plain = /^(\d+(?:\.\d+)?)\s*(?:m|mins?|minutes?)?$/.exec(t), clock = /^(\d{1,2}):([0-5]\d)$/.exec(t);
+    const hours = /^(\d+(?:\.\d+)?)\s*(?:h|hrs?|hours?)\s*(?:(\d+)\s*(?:m|mins?|minutes?)?)?$/.exec(t);
+    const n = plain ? Number(plain[1]) : clock ? clock[1] * 60 + Number(clock[2]) : hours ? hours[1] * 60 + Number(hours[2] || 0) : NaN;
+    return n > 0 && n <= 1440 ? n : null;
+  }
+  function kcalFrom(text) {
+    const t = String(text).trim();
+    return /^\d+(\.\d+)?$/.test(t) && Number(t) <= 9999 ? Number(t) : null;
+  }
+
+  // What is typed about a workout: its values, and what is wrong by field.
+  function typed({ what, minutes, kcal }) {
+    const values = { what: what.trim(), minutes: minutesFrom(minutes), kcal: kcalFrom(kcal) }, errors = {};
+    if (!values.what) errors.what = "Say what you did";
+    if (values.minutes === null) errors.minutes = "Enter minutes from 1 to 1,440, like 90 or 1:30";
+    if (kcal.trim() && values.kcal === null) errors.kcal = "Enter calories from 0 to 9,999";
+    return { values, errors, blank: !(what + minutes + kcal).trim() };
+  }
+
   // ---- Saving ------------------------------------------------------------------------
 
   const words = (s) => String(s == null ? "" : s).trim().toLowerCase().replace(/\s+/g, " ");
@@ -169,7 +195,7 @@
   return {
     ACTIVITIES, isRest, multiplierOf, lastRest, nameOf,
     minutesOf, burn, total, line, dayText,
-    sameWorkout, needsAnswer, findRemembered, resolve, applyAnswer,
+    typed, sameWorkout, needsAnswer, findRemembered, resolve, applyAnswer,
     tag, explain, suggestions,
   };
 });

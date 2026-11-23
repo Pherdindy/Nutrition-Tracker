@@ -1942,6 +1942,27 @@ tr.day-summary.day-incomplete td:first-child { opacity: 1; }
   .nutrition .btn, .nutrition .link-btn, #nutrition-open { min-height: 44px; }
 }
 
+/* Workouts: in the day form, and as lines under a day's activity */
+.workouts { border-top: 1px solid var(--border); margin: 14px 0; padding-top: 14px; }
+.workouts h3 { font-size: 0.98rem; margin: 0 0 8px; }
+.workout-row { display: flex; align-items: center; gap: 6px; padding: 4px 0; font-size: 0.9rem; }
+.workout-row > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.workout-editor { border: 1px solid var(--border); border-radius: var(--radius); padding: 12px; margin: 8px 0 10px; }
+.workout-editor .form-row { margin-bottom: 10px; }
+.workout-hint { color: var(--text-dim); font-size: 0.82rem; margin: 4px 0 8px; }
+.workout-state { font-size: 0.9rem; font-weight: 500; margin: 0 0 8px; }
+.workout-state:empty { display: none; }
+.workout-why summary { cursor: pointer; font-size: 0.88rem; padding: 4px 0; }
+.workout-why ul { margin: 4px 0 8px; padding-left: 1.2rem; color: var(--text-dim); font-size: 0.85rem; }
+.workout-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.workout-line { color: var(--text-dim); font-size: 0.82rem; white-space: normal; min-width: 14rem; max-width: 22rem; overflow-wrap: anywhere; }
+.workout-line::before { content: "+ "; }
+@media (max-width: 720px) {
+  .workouts input { min-height: 44px; font-size: 16px; }
+  .workouts .btn, .workouts .btn-icon { min-height: 44px; min-width: 44px; }
+  .workout-line { min-width: 0; max-width: none; }
+}
+
 /* A number's header sits over its numbers. Last, so that it wins over the tables' own
    header rules, which are as specific. */
 th.num {

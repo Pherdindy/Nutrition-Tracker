@@ -5,7 +5,7 @@
 //                          Macros, Nutrition
 //  renderDayCards:         loadDayEntries, loadProfile, loadFoodEntries, workoutsByDate,
 //                          dayEnergy, activityHtml, Targets, getDailyFoodTotals, formatDate,
-//                          escapeHtml, renderNum, isMobile, editDay, deleteDay
+//                          escapeHtml, renderNum, isMobile, addWorkout, editDay, deleteDay
 //  renderAssessmentScorecard: window.AssessmentView, renderActionPlan, escapeHtml
 
 function renderFoodCards() {
@@ -107,6 +107,7 @@ function renderDayCards() {
         <div class="food-card-row"><span>Cal +/-</span><b class="tone-${calDisp.tone}">${calDisp.text ? escapeHtml(calDisp.text) : `${renderNum(overLow,0)} … ${renderNum(overHigh,0)}`}</b></div>
         <div class="food-card-row"><span>Protein</span><b class="tone-${proDisp.tone}">${proDisp.text ? escapeHtml((proDisp.icon + " " + proDisp.text).trim()) : `${renderNum(t.proLow,0)}–${renderNum(t.proHigh,0)} g (target ${profile.proteinLow}–${profile.proteinHigh})`}</b></div>
         <div class="day-card-actions">
+          <button class="btn btn-secondary btn-sm" data-workout="${escapeHtml(day.date)}">+ Workout</button>
           <button class="btn btn-secondary btn-sm" data-edit="${day.id}">Edit</button>
           <button class="btn btn-secondary btn-sm" data-del="${day.id}">Delete</button>
         </div>
@@ -119,6 +120,8 @@ function renderDayCards() {
   host.querySelectorAll(".day-card-head").forEach((h) => {
     h.addEventListener("click", () => h.parentElement.classList.toggle("expanded"));
   });
+  host.querySelectorAll("[data-workout]").forEach((b) =>
+    b.addEventListener("click", () => addWorkout(b.dataset.workout)));
   host.querySelectorAll("[data-edit]").forEach((b) =>
     b.addEventListener("click", () => editDay(Number(b.dataset.edit))));
   host.querySelectorAll("[data-del]").forEach((b) =>
