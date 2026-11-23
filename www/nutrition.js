@@ -95,7 +95,7 @@
   }
 
   function reuse({ entry, ratio: k }) {
-    const { refresh, stale, was, ...nutrition } = entry.nutrition || {};
+    const { refresh, stale, ...nutrition } = entry.nutrition || {};
     nutrition.at = decidedAt(entry);
     nutrition.from = nutrition.from || { id: entry.id, date: entry.date };
     if (nutrition.grams > 0) nutrition.grams = tidy(nutrition.grams * k);
@@ -197,9 +197,9 @@
       n.refresh = true;
       if (!newStatus && before.estimateStatus !== "pending") n.was = before.estimateStatus; // should there be no credit
       newStatus = true;
-    } else if (form && tracked.every((id) => isMine(macros, id))) { // nobody will be asked
+    } else if (form && newStatus && tracked.every((id) => isMine(macros, id))) { // nobody will be asked
       if (n.stale) macros = pick(macros, mineIds(macros));
-      for (const field of n.stale ? ANSWERED : ["refresh", "was"]) delete n[field];
+      for (const field of n.stale ? ANSWERED : ["refresh"]) delete n[field];
     }
 
     return { macros, nutrition: orNone(n), estimateStatus: newStatus ? statusFor(macros, tracked, n) : before.estimateStatus };

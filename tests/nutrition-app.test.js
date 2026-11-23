@@ -46,6 +46,16 @@ test("all eight nutrients are saved, not only the tracked ones", async () => {
   assert.ok(on(server, "Tofu").nutrition.at > 0);
 });
 
+test("an answer that reached the server is not read back", async () => {
+  const server = serverWith();
+  const app = await bootApp({ server });
+  let reads = 0;
+  server.afterSelect = async () => { reads++; };
+  app.addFood("Tofu");
+  await app.settle();
+  assert.deepEqual([on(server, "Tofu").estimate_status, reads], ["done", 0]);
+});
+
 test("what the AI based its answer on is kept", async () => {
   const server = serverWith();
   const basis = [{ ref: "firm tofu", note: "USDA.", grams: 100, kcal: 200 }];
@@ -250,6 +260,20 @@ test("what the user changes while the answer itself is on its way stands", async
   await app.runTimers();
   assert.deepEqual([app.entry("Tofu").qty, app.entry("Tofu").macros.protein], [3, mine(33)]);
   assert.deepEqual([on(server, "Tofu").qty, on(server, "Tofu").macros.protein], [3, mine(33)]);
+  assert.ok(!app.errors.some((e) => /sync failed/.test(e)), app.errors.join());
+});
+
+test("nor is a row taken over for an account that has left", async () => {
+  const server = serverWith();
+  const phone = await bootApp({ server });
+  const release = holdAi(server);
+  phone.addFood("Tofu");
+  await phone.settle();
+  await typeElsewhere(server, "Tofu");
+  server.afterSelect = async () => { server.afterSelect = null; phone.run("_authUser = null"); };
+  release();
+  await phone.settle();
+  assert.equal(phone.run("_cache.food.find((e) => e.food === 'Tofu').estimateStatus"), "done");
 });
 
 test("an answer that waited behind its retry is not undone here", async () => {
@@ -296,10 +320,23 @@ test("a tab ignores storage events that are nothing to it", async () => {
   const app = await bootApp({ server });
   const prefix = app.run("outboxPrefix(currentUid())");
   const before = JSON.stringify(app.food());
+  server.rowOf("food_entries", "Tofu").time = "23:00";
+  let reads = 0;
+  server.afterSelect = async () => { reads++; };
   for (const event of [{ key: null, newValue: null }, { key: "nt_theme", newValue: null }, { key: `${prefix}days:2026-11-23`, newValue: null }, { key: `${prefix}food_entries:1`, newValue: "{}" }, { key: `${prefix}food_entries:999`, newValue: null }]) {
     await app.windowEvent("storage", event);
   }
-  assert.deepEqual([JSON.stringify(app.food()), app.errors], [before, []]);
+  assert.deepEqual([JSON.stringify(app.food()), app.errors, reads], [before, [], 1], "only the last one is an entry's, and that is not here");
+});
+
+test("a tab that hears of another's change keeps what its user does while it looks", async () => {
+  const server = serverWith(row(1, "Tofu"));
+  const app = await bootApp({ server });
+  const prefix = app.run("outboxPrefix(currentUid())");
+  server.afterSelect = async () => { server.afterSelect = null; app.editFood("Tofu", { qty: 9 }); await app.settle(); };
+  await app.windowEvent("storage", { key: `${prefix}food_entries:1`, newValue: null });
+  await app.settle();
+  assert.deepEqual([app.entry("Tofu").qty, on(server, "Tofu").qty], [9, 9]);
 });
 
 test("retrying offline does not save anything over the server's row either", async () => {
@@ -750,6 +787,10 @@ test("a quantity must be above 0, unless it was like that and is left so", async
     assert.match(app.el("food-qty").validity, /above 0/);
     type(app, "food-qty", "5");
     assert.equal(app.el("food-qty").validity, "", "it no longer holds the form back");
+    app.editFood("Sardines", { qty: bad });
+    app.fire("food-cancel", "click");
+    openEdit(app, "Sardines");
+    assert.equal(app.el("food-qty").validity, "", "nor the next one");
     app.fire("food-cancel", "click");
   }
   app.editFood("Old", { time: "19:30" });

@@ -298,6 +298,8 @@ test("a rename where everything tracked is typed asks nobody, and leaves nothing
   assert.deepEqual([now.macros, now.estimateStatus, now.nutrition], [typed, "manual", { at: NOW }]);
   const explained = edit(entry({ nutrition: { at: 5, why: [{ ref: "sardines" }], how: "one", asked: amount(4, "pcs"), from: { id: 9, date: "2026-11-01" }, photo: true } }), { food: "Tuna" }, { typed: { calories: 1, protein: 2, carbs: 3 } });
   assert.deepEqual(explained.nutrition, { at: NOW });
+  const kept = edit(entry({ nutrition: { at: 5, why: [{ ref: "sardines" }], how: "one", asked: amount(4, "pcs") } }), {}, { typed: { calories: 1, protein: 2, carbs: 3 } });
+  assert.deepEqual(kept.nutrition, { at: NOW, why: [{ ref: "sardines" }], how: "one", asked: amount(4, "pcs") }, "of its other numbers");
   const same = edit(entry(), {}, { typed: { calories: 1, protein: 2, carbs: 3 } });
   assert.deepEqual(same.macros.sodium, { low: 200, high: 300 }, "its own other numbers stay");
 });
@@ -322,6 +324,15 @@ test("typing on a failed entry asks for the rest, or for nothing if that was all
   const failed = entry({ macros: {}, estimateStatus: "error" });
   assert.equal(edit(failed, {}, { typed: { protein: 22 } }).estimateStatus, "pending");
   assert.equal(edit(failed, {}, { typed: { calories: 1, protein: 22, carbs: 0 } }).estimateStatus, "manual");
+});
+
+test("an amount that is the entry's own is nothing to keep", () => {
+  assert.deepEqual(edit(entry(), {}, { typed: { protein: 22 }, basis: amount(4, "pieces") }).macros.protein, mine(22));
+});
+
+test("a change of the time does not take back a question, even if all that is tracked is typed", () => {
+  const asked = entry({ estimateStatus: "pending", macros: full(100, { calories: mine(1), protein: mine(2), carbs: mine(3) }), nutrition: { refresh: true, was: "manual" } });
+  assert.deepEqual(edit(asked, {}, { typed: {}, cleared: [] }), { macros: asked.macros, nutrition: asked.nutrition, estimateStatus: "pending" });
 });
 
 test("each typed number keeps what it was typed per", () => {
@@ -438,7 +449,7 @@ test("filling gaps changes no number that is there", () => {
 });
 
 test("ask again replaces every number that is not typed", () => {
-  const got = apply(entry({ macros: full(100, { protein: mine(22) }), nutrition: { at: 5, refresh: true, from: { id: 9, date: "2026-11-01" }, why: [{ ref: "old" }], grams: 10 } }), answer(102));
+  const got = apply(entry({ macros: full(100, { protein: mine(22) }), nutrition: { at: 5, refresh: true, was: "done", from: { id: 9, date: "2026-11-01" }, why: [{ ref: "old" }], grams: 10 } }), answer(102));
   assert.deepEqual([got.macros.calories, got.macros.protein], [{ low: 102, high: 102 }, mine(22)]);
   assert.deepEqual(got.nutrition, { why: answer(1).basis, how: "average", asked: amount(4, "pcs"), grams: 48, at: NOW });
 });
