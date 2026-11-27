@@ -39,6 +39,9 @@ Update it at the end of each working session.
   and minutes are never changed by an AI answer
 - "Today" is `localDate()`, never `toISOString().slice(0, 10)` (that is the UTC
   date, a different day for part of every day)
+- A new day field must be added to `Targets.migrateDay` (`www/targets.js`): it is a
+  whitelist applied to every day loaded from the server or the local cache, and
+  drops anything else silently
 - Every AI call goes through `callAi(feature, payload)` to the `ai-proxy` Edge
   Function (`supabase/functions/`), which picks the models by plan and meters the cost
   in `ai_usage` (config: the `ai_config` row). No provider key is ever on the client;

@@ -16,9 +16,10 @@ checked read-only the same day (see "Supabase production state").
 - **A browser or device with no local copy yet:** if the first load fails, the app shows
   onboarding to the existing account. Don't fill it in, reload: submitting it overwrites
   the cloud profile (noticed, not fixed).
-- **Metering checks never done live** (plan Tasks 8 and 9, open since the 2026-11-17
-  merge): running out of credit for real, and the emulator kill/relaunch + airplane-mode
-  pass. See "AI proxy + metering + plans".
+- **Metering paths not recorded as seen live** (plan Tasks 8 and 9): a real 402 (out of
+  credit → paywall) and an AI estimate asked while offline. Offline starts and
+  kill/relaunch were seen with the sync fix (2026-11-23). See "AI proxy + metering +
+  plans".
 - **Not seen yet:** a workout logged by the owner (`workouts` had 0 rows on 2026-11-27).
 - **Next spec:** nutrition-label photo (with upload/paste too: the owner logs from desktop
   Chrome, where camera capture is unavailable). Then charts, then Phase C (see "After
@@ -275,7 +276,7 @@ Function `ai-proxy` (`supabase/functions/ai-proxy/index.ts`, shared code in
 bring-your-own keys (`nt_key_*`) at startup. Each call asks one Claude and one GPT model,
 picked by the account's plan, and logs its cost in `ai_usage` (budget check through the
 `ai_usage_total` RPC, failing closed). The plan is in `entitlements` (a new account gets
-`free` on its first call; the owner's is `owner`, never capped). Config is the single
+`free` on its first call; the owner's is `owner`: never capped, runs the t10 models). Config is the single
 `ai_config` row, which clients cannot read: kill switch `enabled`, `rate_per_min` 10,
 plans, prices. The credit bar shows percent used only (`ai_usage_summary` RPC); a 402 from
 the proxy opens the paywall.
@@ -298,7 +299,10 @@ $0.85 in all.
 
 **Open (none recorded as done since the merge):**
 - Plan Task 8: run out of credit for real (`+test2` on a tiny allowance → 402 → paywall,
-  then restore the config), and Task 9: emulator kill/relaunch + airplane mode.
+  then restore the config).
+- Plan Task 9's offline step: an estimate asked while offline (the plan expects
+  pending/failed). Starting offline and kill/relaunch were seen on the emulator
+  2026-11-23 (sync section).
 - The second assessment round (both models answer and disagree) is only unit-tested.
 - Year assessments: gpt-5.6-sol hits the 90 s per-provider timeout and Claude's answer
   carries it; consider a longer assessment timeout.
@@ -381,12 +385,11 @@ Known limitation: stale-cache second device re-sends
 
 ## `transactions` table (NOT part of this app)
 
-402 rows of the user's **separate personal finance app** sharing this Supabase
-project (staying until nutrition launch revenue). It is now **owner-scoped**:
-`owner_only` policy (`auth.uid() = 092efd1b…`), grants to `authenticated`
-only, nothing for `anon`. The finance app is cut off until it signs in as the
-owner — user agreed; wiring sign-in into it is a pending task (user will point
-the agent at its code).
+The user's **separate personal finance app** (`finance/` in this repo) keeps its
+transactions in this Supabase project (staying until nutrition launch revenue): 619
+rows on 2026-11-27. The table is **owner-scoped**: `owner_only` policy
+(`auth.uid() = 092efd1b…`), grants to `authenticated` only, nothing for `anon`. The
+finance app signs in as the owner (built and recovered 2026-07-29, item 3 below).
 
 ## Immediate next steps (user chose "do all of these")
 
