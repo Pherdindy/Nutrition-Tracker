@@ -15,7 +15,7 @@ Update it at the end of each working session.
 
 ## Commands
 
-- `npm test` — Node `--test` unit suite over `tests/` (644 tests)
+- `npm test` — Node `--test` unit suite over `tests/` (666 tests)
 - `npx http-server www -p 8080 -c-1` — browser preview (mobile layout ≤720px)
 - After editing anything in `www/`: `npx cap sync android`
 - Debug install: `cd android; .\gradlew.bat installDebug` (see `BUILD.md` for

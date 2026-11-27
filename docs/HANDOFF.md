@@ -6,9 +6,20 @@ that wrote it: anything the other machine needs goes in this file.
 
 ## Open items (checked 2026-11-27)
 
-Everything was pushed (`main` = `origin/main`) and 644 tests passed; production was
-checked read-only the same day (see "Supabase production state").
+Everything is pushed (`main` = `origin/main`) and 666 tests pass. Production was checked
+read-only the same day (see "Supabase production state"); the finance tables were then
+damaged and repaired (first bullet below).
 
+- **⚠️ Finance app: on the home PC, `git pull` BEFORE opening it.** On 2026-11-27 the
+  laptop's old saved copy was uploaded over the server (finance item 7 below). The
+  data was **repaired the same day from a Supabase backup and verified identical to
+  it**. The fix (a device uploads only its own unsent work) is on `main`, pushed
+  2026-11-27, and the laptop's first real load with it wrote nothing. The home PC
+  still has the old code and has not opened the app since: until it has pulled,
+  opening the app there uploads whatever differs in its saved copy. After pulling,
+  open the app and check the API log for that load (reads only expected). Also
+  pending: the user deletes the backup copy project **"Backup-nutrition"
+  (`cfrhplydrveuexocvmnw`)**, never the live one (`wcbpvvyhswaricoadqbb`).
 - **Every machine and device, before use:** pull, `npm install`, `npx cap sync android`,
   reload open tabs, reinstall on the phone/emulator. Older builds drop typed numbers and
   ignore workouts; an older finance app rewrites, on the server, the transactions of a
@@ -479,6 +490,83 @@ finance app signs in as the owner (built and recovered 2026-07-29, item 3 below)
    transactions of any category missing from that list to "Uncategorized"
    **on the server**. Travel itself is protected once a machine runs this
    code, so pull before opening the finance app on the other machine.
+7. **Finance app 2026-11-27 — a stale browser overwrote the server (data REPAIRED and
+   verified the same day; fix committed and pushed).** The app was opened from
+   `finance\index.html` in Chrome (`file://`) on the laptop. That profile was signed
+   in, but its saved copy predated the work done on the home PC on 2026-11-20. Seen in
+   the Supabase API log, 06:33:20–06:33:25 UTC, all from that one page load:
+   - **8 rows inserted**: rows of the saved copy whose ids were no longer on the
+     server (deleted on the other machine). They came back as ids 644–651.
+   - **7 rows overwritten** with the laptop's older version (ids 177, 180, 197, 335,
+     371, 372, 388): amounts, dates and one category.
+   - **`ft_categories` replaced** by the laptop's older list, which lacked two
+     categories made on the home PC.
+   - **4 rows written as "Uncategorized"** by reconcile (ids 641, 554, 407, 408),
+     because their categories were no longer in the list.
+   Root cause: `resyncOfflineData` (`finance/app.js`) ran on every start and
+   `FinanceSync.planResync` treated every difference between the saved copy and the
+   server as an offline edit where local wins. It could not tell an old copy from
+   unsynced work. It was written for the one-off 2026-07-29 recovery.
+   **Repair:** this project's backups are physical (Postgres 15.8.1.079 and newer; this
+   one is 17.6) and cannot be downloaded, so the user restored the daily backup with
+   Database → Backups → **"Restore to a New Project"** (never the plain "Restore",
+   which rolls back the live project for all three apps): project "Backup-nutrition"
+   (`cfrhplydrveuexocvmnw`), created 08:40 UTC, 619 transactions, none of 644–651.
+   Compared by hash (id, date, type, category, subcategory, description, amount,
+   notes) the other 608 rows were identical, so the damage was exactly the 11 rows,
+   the 8 added rows and the list. With the user's yes ("apply all of it") one guarded
+   `do $$ … $$` block on the live project put the 11 rows and the list back to the
+   copy's values and deleted 644–651 (each statement checked its row count and the
+   old value). Verified afterwards: all 13 id-buckets, the row count (619, newest id
+   643) and the md5 of `ft_categories` are identical on live and on the copy. The
+   values themselves are deliberately not written here: this repository is public.
+   **First real load of the fixed code, laptop, 08:56 UTC:** the API log shows three
+   reads (transactions, `ft_categories`, transactions) and no write; buckets, count
+   and list still identical to the copy afterwards.
+   Still to do: (1) the user closes any Finance tab opened BEFORE the repair (it holds
+   the old list in memory, and a category edit in it would upload that list as the
+   user's own change); (2) the user deletes the copy project (it is billed while it
+   exists); (3) on the home PC: pull first, open the app, then check the API log for
+   that load (reads only).
+   **Fix, built and pushed 2026-11-27 (`finance/app.js`, `finance/sync.js`, tests):**
+   a device now uploads only what it knows the server never received.
+   - New rows: only while they still have their client-made id
+     (`FinanceSync.isClientId`, ids from `Date.now()`). A local row with a
+     server-assigned id that the server no longer has was deleted elsewhere: it is not
+     inserted again and is dropped from the saved copy (`mergeById`).
+   - Edited rows: `ft_unsent_rows` (localStorage) lists the ids with an edit the server
+     has not confirmed; written before the request (`beginRowWrite`), removed on
+     confirmation (`endRowWrite`), handed over from the temporary to the server id when
+     an insert lands (`moveRowWrites`). Only those rows are pushed at startup, and they
+     keep the local version until the push is confirmed.
+   - Categories: `ft_unsent_categories` works the same way; without it the server's list
+     stands. Category saves now go one at a time (two in flight landed out of order on
+     2026-11-27, which is why the server list had no "Uncategorized").
+   - A load that could not read BOTH the transactions and the category list from the
+     server (`initFromSupabase` now returns that) skips `addNewDefaultCategories` and
+     reconcile. Before, one failed read, or an offline start, let them tidy an old saved
+     copy and upload the result.
+   - The two startup tidy-ups are not recorded as unsent work (`userMade = false` in
+     `saveCategories` / `persistTransactions`): they are worked out again on every
+     load, and one that never arrived would otherwise be uploaded later over another
+     device's newer data. `addNewDefaultCategories` remembers an addition only once
+     the server has confirmed it.
+   - A saved copy written by the old code has no such records, so the new code treats
+     all of it as old, except rows still on a client-made id.
+   Tests: 21 new in `tests/finance-app.test.js` (the three incident cases, a change that
+   landed and was then changed elsewhere, a load with one failed read, an offline
+   start, unconfirmed startup tidy-ups, offline edits/new rows/category changes still
+   reaching the server and not sent twice, save order), `tests/finance-sync.test.js`
+   restated to the new rule.
+   Checked in the test harness only, never against production.
+   Left alone, still open: (1) a delete that fails to reach the server comes back on
+   the next load; (2) on a load that read everything, reconcile still rewrites, on the
+   server, a transaction whose category is not in the list; (3) the transactions read is not paged: if the API row
+   cap is the usual 1000 (not checked in the project's API settings) rows past it would
+   not be shown. 627 rows now.
+   Later: ids 413/421 and 414/422 are identical pairs created a day apart (2026-07-29
+   and 07-30); the same mechanism may have duplicated rows before, so a check for
+   duplicates is still worth doing.
 
 Known minor (accepted): offline onboarding has no retry; `AuthView.route()`
 is exported but unused (documentation value only). The dev machine still has
