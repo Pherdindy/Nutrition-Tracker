@@ -83,6 +83,51 @@ async function serverTxnId(id) {
   return resolveTxnId(id);
 }
 
+// ---- Changes the server has not confirmed ----
+// This browser's saved copy goes stale whenever another device changes
+// something: it then differs from the server without holding anything new.
+// So the next load uploads only what is recorded here, plus new rows still on
+// their temporary id (see resyncOfflineData). A record is written before the
+// request goes out and removed when the server confirms it.
+
+const UNSENT_ROWS_KEY = 'ft_unsent_rows';             // ids of edited rows
+const UNSENT_CATEGORIES_KEY = 'ft_unsent_categories'; // present while a category change is unconfirmed
+
+const _rowWrites = new Map(); // row id -> the latest write issued for that row
+let _rowWriteCount = 0;
+
+function unsentRowIds() {
+  return JSON.parse(localStorage.getItem(UNSENT_ROWS_KEY) || '[]');
+}
+
+function setUnsentRowIds(ids) {
+  localStorage.setItem(UNSENT_ROWS_KEY, JSON.stringify([...new Set(ids)]));
+}
+
+// Call before a row's update is sent, with the id the row has now; hand the
+// result to endRowWrite once the server has confirmed the update.
+function beginRowWrite(id) {
+  setUnsentRowIds([...unsentRowIds(), id]);
+  _rowWrites.set(id, ++_rowWriteCount);
+  return _rowWriteCount;
+}
+
+// The row stays recorded if a later edit to it is still on its way.
+function endRowWrite(id, write) {
+  if (_rowWrites.get(id) !== write) return;
+  _rowWrites.delete(id);
+  setUnsentRowIds(unsentRowIds().filter(x => x !== id));
+}
+
+// The server stored a new row and gave it its id.
+function moveRowWrites(tempId, serverId) {
+  if (_rowWrites.has(tempId)) {
+    _rowWrites.set(serverId, _rowWrites.get(tempId));
+    _rowWrites.delete(tempId);
+  }
+  setUnsentRowIds(unsentRowIds().map(x => (x === tempId ? serverId : x)));
+}
+
 // ---- Category functions ----
 
 function loadCategories() {
@@ -91,25 +136,45 @@ function loadCategories() {
   return saved ? JSON.parse(saved) : JSON.parse(JSON.stringify(DEFAULT_CATEGORIES));
 }
 
-function saveCategories(cats) {
-  _cache.categories = JSON.parse(JSON.stringify(cats));
-  localStorage.setItem('ft_categories', JSON.stringify(cats));
-  bgWrite(async () => {
-    const { error } = await sb.from('settings').upsert({ key: 'ft_categories', value: JSON.stringify(cats) });
+// Sent one at a time: two saves in flight together can land in either order,
+// and the server would keep whichever arrived last.
+let _categorySaves = Promise.resolve();
+
+// userMade is false for the tidy-ups the app does by itself at startup (here
+// and in persistTransactions). Those are worked out again on every load from
+// what the server has, so one that fails to arrive is simply dropped: recorded
+// as unsent, it would be uploaded later over another device's newer data.
+// Resolves to whether the server confirmed this save.
+function saveCategories(cats, userMade = true) {
+  const value = JSON.stringify(cats);
+  _cache.categories = JSON.parse(value);
+  localStorage.setItem('ft_categories', value);
+  if (userMade) localStorage.setItem(UNSENT_CATEGORIES_KEY, '1');
+  let confirmed = false;
+  _categorySaves = _categorySaves.then(() => bgWrite(async () => {
+    const { error } = await sb.from('settings').upsert({ key: 'ft_categories', value });
     if (error) throw error;
-  });
+    confirmed = true;
+    // Unless a later change is still waiting its turn, the server is up to date.
+    if (localStorage.getItem('ft_categories') === value) localStorage.removeItem(UNSENT_CATEGORIES_KEY);
+  }));
+  return _categorySaves.then(() => confirmed);
 }
 
-function persistTransactions(list, changedRows = []) {
+function persistTransactions(list, changedRows = [], userMade = true) {
   _cache.transactions = list;
   localStorage.setItem('ft_transactions', JSON.stringify(list));
   if (!changedRows.length) return;
+  // Every row is recorded before the first request: a failure part-way stops
+  // the loop, and the rows after it are then still unsent.
+  const writes = userMade ? changedRows.map(txn => beginRowWrite(resolveTxnId(txn.id))) : null;
   bgWrite(async () => {
-    for (const txn of changedRows) {
+    for (const [i, txn] of changedRows.entries()) {
       const id = await serverTxnId(txn.id);
       const { created_at, ...row } = { ...txn, id };
       const { error } = await sb.from('transactions').update(row).eq('id', id);
       if (error) throw error;
+      if (writes) endRowWrite(id, writes[i]);
     }
   });
 }
@@ -147,8 +212,11 @@ function addNewDefaultCategories() {
     ensureCategoryExists(cats, type, name);
     changed = true;
   }
-  if (changed) saveCategories(cats);
-  localStorage.setItem(ADDED_DEFAULTS_KEY, JSON.stringify(done));
+  const remember = () => localStorage.setItem(ADDED_DEFAULTS_KEY, JSON.stringify(done));
+  // Remembered only once the server has the list: an addition that never
+  // arrived is made again on the next load.
+  if (changed) saveCategories(cats, false).then(confirmed => { if (confirmed) remember(); });
+  else remember();
 }
 
 function getDeletedCategoryFallback(cats, type, removedName) {
@@ -208,6 +276,7 @@ function saveTransaction(txn) {
     if (error) throw error;
     if (data && data[0]) {
       _serverIds.set(tempId, data[0].id);
+      moveRowWrites(tempId, data[0].id);
       // Take the server's id but keep the local fields: the row may have been
       // edited while the insert was in flight.
       _cache.transactions = _cache.transactions.map(t => t.id === tempId ? { ...data[0], ...t, id: data[0].id } : t);
@@ -224,11 +293,13 @@ function updateTransaction(txn) {
   list[idx] = { ...txn, id };
   _cache.transactions = list;
   localStorage.setItem('ft_transactions', JSON.stringify(list));
+  const write = beginRowWrite(id);
   bgWrite(async () => {
     const serverId = await serverTxnId(id);
     const { created_at, ...row } = { ...txn, id: serverId };
     const { error } = await sb.from('transactions').update(row).eq('id', serverId);
     if (error) throw error;
+    endRowWrite(serverId, write);
   });
 }
 
@@ -276,19 +347,31 @@ function reconcileTransactionsWithCategories() {
     }
     return txn;
   });
-  if (categoriesChanged) saveCategories(cats);
-  if (changedRows.length) persistTransactions(next, changedRows);
+  if (categoriesChanged) saveCategories(cats, false);
+  if (changedRows.length) persistTransactions(next, changedRows, false);
 }
 
 // ---- Init ----
 
+// What this device shows: the server's rows, except that a row with an edit
+// the server has not confirmed keeps this device's version, plus the new rows
+// the server has not stored yet. Any other local row the server lacks was
+// deleted on another device and is dropped.
 function mergeById(supaData, localData) {
   const supaIds = new Set(supaData.map(t => t.id));
-  return [...supaData, ...localData.filter(t => !supaIds.has(t.id))];
+  const unsent = new Set(unsentRowIds());
+  const localById = new Map(localData.map(t => [t.id, t]));
+  return [
+    ...supaData.map(t => (unsent.has(t.id) && localById.has(t.id) ? localById.get(t.id) : t)),
+    ...localData.filter(t => !supaIds.has(t.id) && FinanceSync.isClientId(t.id)),
+  ];
 }
 
+// Returns true when the transactions and the category list were both read from
+// the server on this load, false when either had to come from the saved copy.
 async function initFromSupabase() {
   // Each table loads independently — one failure doesn't block others
+  let current = true;
 
   // Transactions
   try {
@@ -298,15 +381,18 @@ async function initFromSupabase() {
       _cache.transactions = mergeById(data, local);
     } else {
       _cache.transactions = local;
+      current = false;
     }
   } catch (e) {
     _cache.transactions = JSON.parse(localStorage.getItem('ft_transactions') || '[]');
+    current = false;
   }
   localStorage.setItem('ft_transactions', JSON.stringify(_cache.transactions));
 
   // Categories from settings
   try {
-    const { data: catData } = await sb.from('settings').select('value').eq('key', 'ft_categories').maybeSingle();
+    const { data: catData, error } = await sb.from('settings').select('value').eq('key', 'ft_categories').maybeSingle();
+    if (error) throw error;
     if (catData && catData.value) {
       _cache.categories = JSON.parse(catData.value);
       localStorage.setItem('ft_categories', JSON.stringify(_cache.categories));
@@ -315,10 +401,12 @@ async function initFromSupabase() {
     }
   } catch (e) {
     _cache.categories = loadCategories();
+    current = false;
   }
 
   _cache.ready = true;
   console.log(`[Supabase] Loaded ${_cache.transactions.length} txns`);
+  return current;
 }
 
 function initFromLocalStorage() {
@@ -328,19 +416,22 @@ function initFromLocalStorage() {
 }
 
 // ---- Offline resync ----
-// initFromSupabase overwrites localStorage with server-preferred data, so the
-// pre-init snapshot (captured in startApp BEFORE init runs) is the only record
-// of rows created/edited while writes were failing. Push those up.
+// Pushes up what this device made and the server never received: new rows
+// still on their temporary id, and the edits recorded as unsent. The snapshot
+// is taken in startApp BEFORE init runs, because init rewrites localStorage.
+// A difference that is not recorded as unsent is an old saved copy, not an
+// offline edit, and the server's data stays as it is.
 
-async function resyncTable(table, lsKey, fields, snapshotJson, getList, setList) {
+// Returns the ids of the edited rows that are still unsent afterwards.
+async function resyncTable(table, lsKey, fields, snapshotJson, unsentIds, getList, setList) {
   const { data: server, error } = await sb.from(table).select('*');
-  if (error || !server) { console.warn(`[resync] cannot read ${table}: ${error ? error.message : 'no data'}`); return; }
+  if (error || !server) { console.warn(`[resync] cannot read ${table}: ${error ? error.message : 'no data'}`); return unsentIds; }
   const local = JSON.parse(snapshotJson || '[]');
-  const plan = FinanceSync.planResync(server, local, fields);
+  const plan = FinanceSync.planResync(server, local, fields, unsentIds);
   if (plan.serverOnlyIds.length) {
     console.warn(`[resync] ${table}: ${plan.serverOnlyIds.length} rows exist only on the server (possible offline deletes) — left untouched`);
   }
-  if (!plan.inserts.length && !plan.updates.length) return;
+  if (!plan.inserts.length && !plan.updates.length) return [];
   console.log(`[resync] ${table}: pushing ${plan.inserts.length} new + ${plan.updates.length} edited offline rows`);
   let list = getList();
   for (const row of plan.inserts) {
@@ -349,24 +440,28 @@ async function resyncTable(table, lsKey, fields, snapshotJson, getList, setList)
     if (e) { console.error(`[resync] insert failed on ${table}: ${e.message}`); continue; }
     if (data && data[0]) list = list.map(t => t.id === row.id ? data[0] : t);
   }
+  const stillUnsent = [];
   for (const row of plan.updates) {
     const { created_at, ...payload } = row;
     const { error: e } = await sb.from(table).update(payload).eq('id', row.id);
-    if (e) { console.error(`[resync] update failed on ${table}: ${e.message}`); continue; }
-    // The cache holds the stale server version after init — restore the local edit.
-    list = list.map(t => t.id === row.id ? { ...row } : t);
+    if (e) { console.error(`[resync] update failed on ${table}: ${e.message}`); stillUnsent.push(row.id); }
   }
   setList(list);
   localStorage.setItem(lsKey, JSON.stringify(list));
+  return stillUnsent;
 }
 
 async function resyncOfflineData(snapshot) {
-  await resyncTable('transactions', 'ft_transactions',
+  const stillUnsent = await resyncTable('transactions', 'ft_transactions',
     ['date', 'type', 'category', 'subcategory', 'description', 'amount', 'notes'],
-    snapshot.transactions, () => _cache.transactions, l => { _cache.transactions = l; });
-  // Categories: the local snapshot is the user's latest state on this device;
-  // if it differs from what the server had, the local version wins.
-  if (snapshot.categories) {
+    snapshot.transactions, snapshot.unsentRows, () => _cache.transactions, l => { _cache.transactions = l; });
+  // Forget the edits that are now settled; keep any recorded since this load began.
+  const settled = snapshot.unsentRows.filter(id => !stillUnsent.includes(id));
+  setUnsentRowIds(unsentRowIds().filter(id => !settled.includes(id)));
+
+  // Categories: init has already taken the server's list. This device's list
+  // replaces it only when a change made here was never confirmed.
+  if (snapshot.categories && snapshot.unsentCategories) {
     try {
       const { data } = await sb.from('settings').select('value').eq('key', 'ft_categories').maybeSingle();
       const serverValue = data && data.value;
@@ -375,8 +470,9 @@ async function resyncOfflineData(snapshot) {
         _cache.categories = JSON.parse(snapshot.categories);
         localStorage.setItem('ft_categories', snapshot.categories);
         const { error } = await sb.from('settings').upsert({ key: 'ft_categories', value: snapshot.categories });
-        if (error) console.error(`[resync] categories upsert failed: ${error.message}`);
+        if (error) { console.error(`[resync] categories upsert failed: ${error.message}`); return; }
       }
+      if (localStorage.getItem('ft_categories') === snapshot.categories) localStorage.removeItem(UNSENT_CATEGORIES_KEY);
     } catch (e) { console.error('[resync] categories failed:', e); }
   }
 }
@@ -1329,14 +1425,21 @@ async function startApp() {
   const snapshot = {
     transactions: localStorage.getItem('ft_transactions'),
     categories: localStorage.getItem('ft_categories'),
+    unsentRows: unsentRowIds(),
+    unsentCategories: localStorage.getItem(UNSENT_CATEGORIES_KEY) !== null,
   };
   populateCategories();
-  await initFromSupabase();
+  const current = await initFromSupabase();
   await resyncOfflineData(snapshot);
-  // Before reconcile, which moves transactions of an unlisted category to Uncategorized.
-  addNewDefaultCategories();
-  // Reconcile AFTER resync: its bgWrite updates need real server ids to exist.
-  reconcileTransactionsWithCategories();
+  // Both of these tidy the data and upload the result, so they run only on data
+  // read from the server on this load. On a saved copy that may be old they
+  // would undo another device's work.
+  if (current) {
+    // Before reconcile, which moves transactions of an unlisted category to Uncategorized.
+    addNewDefaultCategories();
+    // Reconcile AFTER resync: its bgWrite updates need real server ids to exist.
+    reconcileTransactionsWithCategories();
+  }
   render();
 }
 

@@ -1,9 +1,15 @@
 // Offline-resync planner for the Finance app. Pure logic, no I/O.
-// After the owner signs in, rows created/edited while Supabase writes were
-// failing (offline, or the 2026-07 owner-lock window) exist only in
-// localStorage. planResync diffs a pre-init localStorage snapshot against the
-// server's rows and says what to push up. Server-only rows are REPORTED, not
-// deleted — absence locally can't be distinguished from a lost cache.
+// Rows created or edited while Supabase writes were failing exist only in
+// localStorage. planResync compares a pre-init localStorage snapshot with the
+// server's rows and says what to push up.
+//
+// It uploads only what this device knows the server never received. A saved
+// copy that merely differs from the server is usually just old (another device
+// has changed things since), and uploading it destroys the newer data: that
+// happened on 2026-11-27, when every difference was still treated as an
+// offline edit.
+// Server-only rows are REPORTED, not deleted — absence locally can't be
+// distinguished from a lost cache.
 // UMD: usable as a browser global (window.FinanceSync) and a Node module.
 (function (root, factory) {
   const api = factory();
@@ -24,23 +30,38 @@
     return fields.some((f) => norm(a[f]) !== norm(b[f]));
   }
 
+  // A new row is shown under a client-made id (Date.now()) until the server
+  // stores it and assigns its own small sequential id. An id this large
+  // therefore means the server never stored the row; a smaller id the server
+  // no longer has means the row was deleted on another device.
+  const FIRST_CLIENT_ID = 1e12;
+  function isClientId(id) {
+    return typeof id === "number" && id >= FIRST_CLIENT_ID;
+  }
+
   // serverRows/localRows: arrays of row objects with an `id`.
   // fields: which columns participate in the comparison (id/created_at never do).
+  // unsentIds: ids of the rows edited on this device whose edit the server has
+  // not confirmed.
   // Returns { inserts, updates, serverOnlyIds } — inserts/updates carry the
-  // LOCAL version of the row (local is the user's latest state on this device).
-  function planResync(serverRows, localRows, fields) {
+  // LOCAL version of the row.
+  function planResync(serverRows, localRows, fields, unsentIds) {
     const serverById = new Map(serverRows.map((r) => [r.id, r]));
     const localIds = new Set(localRows.map((r) => r.id));
+    const unsent = new Set(unsentIds || []);
     const inserts = [];
     const updates = [];
     for (const row of localRows) {
       const serverRow = serverById.get(row.id);
-      if (!serverRow) inserts.push(row);
-      else if (rowsDiffer(serverRow, row, fields)) updates.push(row);
+      if (!serverRow) {
+        if (isClientId(row.id)) inserts.push(row);
+      } else if (unsent.has(row.id) && rowsDiffer(serverRow, row, fields)) {
+        updates.push(row);
+      }
     }
     const serverOnlyIds = serverRows.filter((r) => !localIds.has(r.id)).map((r) => r.id);
     return { inserts, updates, serverOnlyIds };
   }
 
-  return { planResync };
+  return { planResync, isClientId };
 });

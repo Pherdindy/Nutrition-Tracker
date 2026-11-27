@@ -225,6 +225,423 @@ test("categories: Travel transactions keep their category on a device whose save
   assert.deepEqual(app.transactions().map((r) => r.category), ["Travel"]);
 });
 
+// ---- A device whose saved copy is old ---------------------------------------
+// Every browser keeps its own copy of the transactions and the category list.
+// Opening the app on a device last used before another device's changes must
+// leave the server as that other device left it. On 2026-11-27 it did not: the
+// old copy was uploaded over the newer data.
+
+const RICE = {
+  id: 1, date: "2026-01-05", type: "expense", category: "Groceries", subcategory: null,
+  description: "Rice", amount: 500, notes: null, created_at: "2026-01-05T00:00:00+00:00",
+};
+const SAVED_LIST = JSON.stringify(SAVED_CATEGORIES);
+// The app's clock, for the tests that press a button on the January row.
+const JANUARY = "2026-01-10T04:00:00Z";
+
+test("old saved copy: a row deleted on another device is not put back", async () => {
+  const beans = { ...RICE, id: 2, description: "Beans", amount: 80 };
+  const server = createFakeServer({ transactions: [RICE], settings: { ft_categories: SAVED_LIST } });
+  const storage = createStorage({ ft_transactions: JSON.stringify([RICE, beans]), ft_categories: SAVED_LIST });
+
+  const app = await bootFinanceApp({ server, storage });
+
+  assert.deepEqual(server.rows().map((r) => [r.id, r.description]), [[1, "Rice"]]);
+  assert.deepEqual(app.transactions().map((r) => r.description), ["Rice"]);
+  assert.deepEqual(JSON.parse(storage.getItem("ft_transactions")).map((r) => r.description), ["Rice"]);
+});
+
+test("old saved copy: a row edited on another device keeps that edit", async () => {
+  const edited = { ...RICE, description: "Rice 10kg", amount: 650, category: "Dining Out" };
+  const server = createFakeServer({ transactions: [edited], settings: { ft_categories: SAVED_LIST } });
+  const storage = createStorage({ ft_transactions: JSON.stringify([RICE]), ft_categories: SAVED_LIST });
+
+  const app = await bootFinanceApp({ server, storage });
+
+  assert.deepEqual(server.rows().map((r) => [r.description, r.amount, r.category]), [["Rice 10kg", 650, "Dining Out"]]);
+  assert.deepEqual(app.transactions().map((r) => [r.description, r.amount, r.category]), [["Rice 10kg", 650, "Dining Out"]]);
+});
+
+test("old saved copy: a category made on another device, and the transaction filed under it, are kept", async () => {
+  const listWithCoffee = JSON.stringify({
+    expense: { Groceries: [], "Dining Out": [], Transport: [], Coffee: [] },
+    income: { Salary: [], Other: [] },
+  });
+  const coffeeBeans = { ...RICE, id: 2, description: "Coffee beans", amount: 900, category: "Coffee" };
+  const server = createFakeServer({ transactions: [RICE, coffeeBeans], settings: { ft_categories: listWithCoffee } });
+  const storage = createStorage({ ft_transactions: JSON.stringify([RICE]), ft_categories: SAVED_LIST });
+
+  const app = await bootFinanceApp({ server, storage });
+
+  const kept = ["Groceries", "Dining Out", "Transport", "Coffee", "Travel"];
+  assert.deepEqual(expenseNames(JSON.parse(server.setting("ft_categories"))), kept);
+  assert.deepEqual(expenseNames(app.categories()), kept);
+  assert.deepEqual(server.rows().map((r) => [r.description, r.category]), [["Rice", "Groceries"], ["Coffee beans", "Coffee"]]);
+  assert.deepEqual(app.transactions().map((r) => [r.description, r.category]), [["Rice", "Groceries"], ["Coffee beans", "Coffee"]]);
+});
+
+test("an edit that reached the server is not sent again once another device has changed the row", async () => {
+  const server = startingServer();
+  const storage = createStorage();
+  const app = await bootFinanceApp({ server, storage, now: JANUARY });
+  app.press(app.rowButton("Rice", "openEditModal"));
+  app.el("txn-amount").value = "650";
+  app.click("txn-save");
+  await app.settle();
+  assert.deepEqual(server.rows().map((r) => r.amount), [650], "the edit reached the server");
+
+  await server.client.from("transactions").update({ amount: 700 }).eq("id", 1); // another device
+  const reloaded = await bootFinanceApp({ server, storage, now: JANUARY });
+
+  assert.deepEqual(server.rows().map((r) => r.amount), [700]);
+  assert.deepEqual(reloaded.transactions().map((r) => r.amount), [700]);
+});
+
+test("a category change that reached the server is not sent again once another device has changed the list", async () => {
+  const server = startingServer();
+  const storage = createStorage();
+  const app = await bootFinanceApp({ server, storage });
+  app.categoryAction({ action: "add-cat", type: "expense" });
+  app.saveCategoryName("Pets");
+  await app.settle();
+  assert.deepEqual(expenseNames(JSON.parse(server.setting("ft_categories"))),
+    ["Groceries", "Dining Out", "Transport", "Travel", "Pets"], "the change reached the server");
+
+  // Another device adds Coffee.
+  await server.client.from("settings").upsert({
+    key: "ft_categories",
+    value: JSON.stringify({
+      expense: { Groceries: [], "Dining Out": [], Transport: [], Travel: [], Pets: [], Coffee: [] },
+      income: { Salary: [], Other: [] },
+    }),
+  });
+  const reloaded = await bootFinanceApp({ server, storage });
+
+  const kept = ["Groceries", "Dining Out", "Transport", "Travel", "Pets", "Coffee"];
+  assert.deepEqual(expenseNames(JSON.parse(server.setting("ft_categories"))), kept);
+  assert.deepEqual(expenseNames(reloaded.categories()), kept);
+});
+
+// A load that could not read everything has nothing current to compare with, so
+// it must not tidy up the server from what it has saved.
+
+test("old saved copy: a load that cannot read the category list leaves the server's list and rows alone", async () => {
+  const listWithCoffee = JSON.stringify({
+    expense: { Groceries: [], "Dining Out": [], Transport: [], Coffee: [], Travel: [] },
+    income: { Salary: [], Other: [] },
+  });
+  const coffeeBeans = { ...RICE, id: 2, description: "Coffee beans", amount: 900, category: "Coffee" };
+  const server = createFakeServer({ transactions: [RICE, coffeeBeans], settings: { ft_categories: listWithCoffee } });
+  const storage = createStorage({ ft_transactions: JSON.stringify([RICE]), ft_categories: SAVED_LIST });
+  server.setReadsFailing("settings");
+
+  await bootFinanceApp({ server, storage });
+
+  assert.equal(server.setting("ft_categories"), listWithCoffee);
+  assert.deepEqual(server.rows().map((r) => [r.description, r.category]), [["Rice", "Groceries"], ["Coffee beans", "Coffee"]]);
+});
+
+test("old saved copy: a load that cannot read the transactions leaves the server's rows alone", async () => {
+  // Another device renamed Groceries to Food and edited the row; this one still holds the old row.
+  const listWithFood = JSON.stringify({
+    expense: { Food: [], "Dining Out": [], Transport: [], Travel: [] },
+    income: { Salary: [], Other: [] },
+  });
+  const renamed = { ...RICE, category: "Food", amount: 650 };
+  const server = createFakeServer({ transactions: [renamed], settings: { ft_categories: listWithFood } });
+  const storage = createStorage({ ft_transactions: JSON.stringify([RICE]), ft_categories: SAVED_LIST });
+  server.setReadsFailing("transactions");
+
+  await bootFinanceApp({ server, storage });
+
+  assert.deepEqual(server.rows().map((r) => [r.description, r.category, r.amount]), [["Rice", "Food", 650]]);
+  assert.equal(server.setting("ft_categories"), listWithFood);
+});
+
+test("an offline start does not turn an old saved category list into a change to upload", async () => {
+  // Another device made Coffee. This one starts offline with its older list,
+  // then starts again online.
+  const listWithCoffee = JSON.stringify({
+    expense: { Groceries: [], "Dining Out": [], Transport: [], Coffee: [], Travel: [] },
+    income: { Salary: [], Other: [] },
+  });
+  const server = createFakeServer({ transactions: [RICE], settings: { ft_categories: listWithCoffee } });
+  const storage = createStorage({ ft_transactions: JSON.stringify([RICE]), ft_categories: SAVED_LIST });
+  server.setOnline(false);
+  await bootFinanceApp({ server, storage });
+
+  server.setOnline(true);
+  const reloaded = await bootFinanceApp({ server, storage });
+
+  assert.equal(server.setting("ft_categories"), listWithCoffee);
+  assert.deepEqual(expenseNames(reloaded.categories()), ["Groceries", "Dining Out", "Transport", "Coffee", "Travel"]);
+});
+
+// At startup the app also tidies up by itself: it adds a new built-in category,
+// and it files a transaction whose category is not in the list under
+// Uncategorized. That is worked out afresh on every load, so one that did not
+// reach the server is not this device's unsent work.
+
+test("startup tidy-up: a recategorisation that did not reach the server is not sent later over another device's fix", async () => {
+  // The row's category is missing from the list, so this load files it under Uncategorized.
+  const coffeeBeans = { ...RICE, id: 2, description: "Coffee beans", amount: 900, category: "Coffee" };
+  const server = createFakeServer({ transactions: [RICE, coffeeBeans], settings: { ft_categories: SAVED_LIST } });
+  const storage = createStorage();
+  server.setUpdatesFailing(true);
+  await bootFinanceApp({ server, storage });
+  assert.deepEqual(server.rows().map((r) => r.category), ["Groceries", "Coffee"], "the recategorisation did not reach the server");
+
+  // Another device puts Coffee back in the list.
+  server.setUpdatesFailing(false);
+  await server.client.from("settings").upsert({
+    key: "ft_categories",
+    value: JSON.stringify({
+      expense: { Groceries: [], "Dining Out": [], Transport: [], Travel: [], Uncategorized: [], Coffee: [] },
+      income: { Salary: [], Other: [] },
+    }),
+  });
+  const reloaded = await bootFinanceApp({ server, storage });
+
+  assert.deepEqual(server.rows().map((r) => [r.description, r.category]), [["Rice", "Groceries"], ["Coffee beans", "Coffee"]]);
+  assert.deepEqual(reloaded.transactions().map((r) => [r.description, r.category]), [["Rice", "Groceries"], ["Coffee beans", "Coffee"]]);
+});
+
+test("startup tidy-up: a built-in category that did not reach the server is not sent later over another device's list", async () => {
+  const server = startingServer();
+  const storage = createStorage();
+  server.setUpsertsFailing(true);
+  await bootFinanceApp({ server, storage });
+  assert.equal(server.setting("ft_categories"), SAVED_LIST, "Travel did not reach the server");
+
+  // Another device adds Coffee.
+  server.setUpsertsFailing(false);
+  await server.client.from("settings").upsert({
+    key: "ft_categories",
+    value: JSON.stringify({
+      expense: { Groceries: [], "Dining Out": [], Transport: [], Coffee: [] },
+      income: { Salary: [], Other: [] },
+    }),
+  });
+  const reloaded = await bootFinanceApp({ server, storage });
+
+  // Coffee is kept, and Travel is added again because it never arrived.
+  const expected = ["Groceries", "Dining Out", "Transport", "Coffee", "Travel"];
+  assert.deepEqual(expenseNames(JSON.parse(server.setting("ft_categories"))), expected);
+  assert.deepEqual(expenseNames(reloaded.categories()), expected);
+});
+
+// ---- Changes the server never received ---------------------------------------
+// What this device typed and could not send is still uploaded on the next load.
+
+test("offline: an edit to an existing row reaches the server on the next load", async () => {
+  const server = startingServer();
+  const storage = createStorage();
+  const app = await bootFinanceApp({ server, storage, now: JANUARY });
+  server.setOnline(false);
+  app.press(app.rowButton("Rice", "openEditModal"));
+  app.el("txn-amount").value = "650";
+  app.click("txn-save");
+  await app.settle();
+  assert.deepEqual(server.rows().map((r) => r.amount), [500], "the edit did not reach the server");
+
+  server.setOnline(true);
+  const reloaded = await bootFinanceApp({ server, storage, now: JANUARY });
+
+  assert.deepEqual(server.rows().map((r) => [r.id, r.amount]), [[1, 650]]);
+  assert.deepEqual(reloaded.transactions().map((r) => [r.id, r.amount]), [[1, 650]]);
+});
+
+test("offline: an edit is kept through a load that fails to send it", async () => {
+  const server = startingServer();
+  const storage = createStorage();
+  const app = await bootFinanceApp({ server, storage, now: JANUARY });
+  server.setUpdatesFailing(true);
+  app.press(app.rowButton("Rice", "openEditModal"));
+  app.el("txn-amount").value = "650";
+  app.click("txn-save");
+  await app.settle();
+
+  const stillFailing = await bootFinanceApp({ server, storage, now: JANUARY });
+  assert.deepEqual(stillFailing.transactions().map((r) => r.amount), [650], "the edit is still on screen");
+  assert.deepEqual(server.rows().map((r) => r.amount), [500]);
+
+  server.setUpdatesFailing(false);
+  await bootFinanceApp({ server, storage, now: JANUARY });
+
+  assert.deepEqual(server.rows().map((r) => [r.id, r.amount]), [[1, 650]]);
+});
+
+test("offline: an edit made while the row's insert was in flight reaches the server on the next load", async () => {
+  const server = startingServer();
+  const storage = createStorage();
+  const app = await bootFinanceApp({ server, storage });
+  const releaseInsert = server.holdInserts();
+  app.addTransaction({ description: "Coffee", amount: 120 });
+  app.press(app.rowButton("Coffee", "openEditModal"));
+  app.el("txn-amount").value = "150";
+  app.click("txn-save");
+  server.setUpdatesFailing(true);
+  releaseInsert();
+  await app.settle();
+  assert.deepEqual(coffee(server.rows()).map((r) => [r.id, r.amount]), [[1000, 120]], "the row arrived, the edit did not");
+
+  server.setUpdatesFailing(false);
+  const reloaded = await bootFinanceApp({ server, storage });
+
+  assert.deepEqual(coffee(server.rows()).map((r) => [r.id, r.amount]), [[1000, 150]]);
+  assert.deepEqual(coffee(reloaded.transactions()).map((r) => [r.id, r.amount]), [[1000, 150]]);
+});
+
+test("offline: a new transaction reaches the server on the next load", async () => {
+  const server = startingServer();
+  const storage = createStorage();
+  const app = await bootFinanceApp({ server, storage });
+  server.setOnline(false);
+  app.addTransaction({ description: "Coffee", amount: 120 });
+  await app.settle();
+
+  server.setOnline(true);
+  const reloaded = await bootFinanceApp({ server, storage });
+
+  assert.deepEqual(server.rows().map((r) => [r.id, r.description, r.amount]), [[1, "Rice", 500], [1000, "Coffee", 120]]);
+  assert.deepEqual(coffee(reloaded.transactions()).map((r) => [r.id, r.amount]), [[1000, 120]]);
+});
+
+test("offline: a category change reaches the server on the next load", async () => {
+  const server = startingServer();
+  const storage = createStorage();
+  const app = await bootFinanceApp({ server, storage });
+  server.setOnline(false);
+  app.categoryAction({ action: "add-cat", type: "expense" });
+  app.saveCategoryName("Pets");
+  await app.settle();
+
+  server.setOnline(true);
+  const reloaded = await bootFinanceApp({ server, storage });
+
+  const expected = ["Groceries", "Dining Out", "Transport", "Travel", "Pets"];
+  assert.deepEqual(expenseNames(JSON.parse(server.setting("ft_categories"))), expected);
+  assert.deepEqual(expenseNames(reloaded.categories()), expected);
+});
+
+test("offline: a category rename reaches the server on the next load, with every transaction it moved", async () => {
+  const beans = { ...RICE, id: 2, description: "Beans", amount: 80 };
+  const server = createFakeServer({ transactions: [RICE, beans], settings: { ft_categories: SAVED_LIST } });
+  const storage = createStorage();
+  const app = await bootFinanceApp({ server, storage });
+  server.setOnline(false);
+  app.categoryAction({ action: "edit-cat", type: "expense", cat: "Groceries" });
+  app.saveCategoryName("Food");
+  await app.settle();
+
+  server.setOnline(true);
+  const reloaded = await bootFinanceApp({ server, storage });
+
+  assert.deepEqual(expenseNames(JSON.parse(server.setting("ft_categories"))), ["Food", "Dining Out", "Transport", "Travel"]);
+  assert.deepEqual(server.rows().map((r) => [r.description, r.category]), [["Rice", "Food"], ["Beans", "Food"]]);
+  assert.deepEqual(reloaded.transactions().map((r) => [r.description, r.category]), [["Rice", "Food"], ["Beans", "Food"]]);
+});
+
+test("offline: an edit survives a reload made while still offline", async () => {
+  const server = startingServer();
+  const storage = createStorage();
+  const app = await bootFinanceApp({ server, storage, now: JANUARY });
+  server.setOnline(false);
+  app.press(app.rowButton("Rice", "openEditModal"));
+  app.el("txn-amount").value = "650";
+  app.click("txn-save");
+  await app.settle();
+
+  const offlineAgain = await bootFinanceApp({ server, storage, now: JANUARY });
+  assert.deepEqual(offlineAgain.transactions().map((r) => r.amount), [650], "the edit is still on screen");
+  server.setOnline(true);
+  await bootFinanceApp({ server, storage, now: JANUARY });
+
+  assert.deepEqual(server.rows().map((r) => [r.id, r.amount]), [[1, 650]]);
+});
+
+test("offline: a category change survives a reload made while still offline", async () => {
+  const server = startingServer();
+  const storage = createStorage();
+  const app = await bootFinanceApp({ server, storage });
+  server.setOnline(false);
+  app.categoryAction({ action: "add-cat", type: "expense" });
+  app.saveCategoryName("Pets");
+  await app.settle();
+
+  const offlineAgain = await bootFinanceApp({ server, storage });
+  assert.ok(expenseNames(offlineAgain.categories()).includes("Pets"), "the change is still on screen");
+  server.setOnline(true);
+  await bootFinanceApp({ server, storage });
+
+  assert.deepEqual(expenseNames(JSON.parse(server.setting("ft_categories"))),
+    ["Groceries", "Dining Out", "Transport", "Travel", "Pets"]);
+});
+
+test("offline: an edit sent by a later load is not sent again once another device has changed the row", async () => {
+  const server = startingServer();
+  const storage = createStorage();
+  const app = await bootFinanceApp({ server, storage, now: JANUARY });
+  server.setOnline(false);
+  app.press(app.rowButton("Rice", "openEditModal"));
+  app.el("txn-amount").value = "650";
+  app.click("txn-save");
+  await app.settle();
+  server.setOnline(true);
+  await bootFinanceApp({ server, storage, now: JANUARY });
+  assert.deepEqual(server.rows().map((r) => r.amount), [650], "the later load sent the edit");
+
+  await server.client.from("transactions").update({ amount: 700 }).eq("id", 1); // another device
+  const reloaded = await bootFinanceApp({ server, storage, now: JANUARY });
+
+  assert.deepEqual(server.rows().map((r) => r.amount), [700]);
+  assert.deepEqual(reloaded.transactions().map((r) => r.amount), [700]);
+});
+
+test("offline: a category change sent by a later load is not sent again once another device has changed the list", async () => {
+  const server = startingServer();
+  const storage = createStorage();
+  const app = await bootFinanceApp({ server, storage });
+  server.setOnline(false);
+  app.categoryAction({ action: "add-cat", type: "expense" });
+  app.saveCategoryName("Pets");
+  await app.settle();
+  server.setOnline(true);
+  await bootFinanceApp({ server, storage });
+  assert.deepEqual(expenseNames(JSON.parse(server.setting("ft_categories"))),
+    ["Groceries", "Dining Out", "Transport", "Travel", "Pets"], "the later load sent the change");
+
+  // Another device adds Coffee.
+  await server.client.from("settings").upsert({
+    key: "ft_categories",
+    value: JSON.stringify({
+      expense: { Groceries: [], "Dining Out": [], Transport: [], Travel: [], Pets: [], Coffee: [] },
+      income: { Salary: [], Other: [] },
+    }),
+  });
+  const reloaded = await bootFinanceApp({ server, storage });
+
+  const kept = ["Groceries", "Dining Out", "Transport", "Travel", "Pets", "Coffee"];
+  assert.deepEqual(expenseNames(JSON.parse(server.setting("ft_categories"))), kept);
+  assert.deepEqual(expenseNames(reloaded.categories()), kept);
+});
+
+test("categories: two changes in a row reach the server in the order they were made", async () => {
+  const server = startingServer();
+  const app = await bootFinanceApp({ server });
+  const releaseFirst = server.holdNextUpsert();
+  app.categoryAction({ action: "add-cat", type: "expense" });
+  app.saveCategoryName("Pets");
+  app.categoryAction({ action: "add-cat", type: "expense" });
+  app.saveCategoryName("Fish");
+  await app.settle();
+  releaseFirst();
+  await app.settle();
+
+  assert.deepEqual(expenseNames(JSON.parse(server.setting("ft_categories"))),
+    ["Groceries", "Dining Out", "Transport", "Travel", "Pets", "Fish"]);
+});
+
 // ---- Dates --------------------------------------------------------------------
 
 // "Today" is the calendar date where the user is, not the UTC date.

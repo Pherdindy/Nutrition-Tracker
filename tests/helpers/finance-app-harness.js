@@ -22,12 +22,18 @@ function createFakeServer({ transactions = [], settings = {}, nextId = 1000 } = 
   const db = { transactions: clone(transactions), settings: { ...settings } };
   let running = 0;
   let insertGate = null;
+  let upsertGate = null;
   let online = true;
+  let updatesFail = false;
+  let upsertsFail = false;
+  let failingReads = null;
 
   const matches = (row, filters) => filters.every(([col, val]) => row[col] === val);
 
   function execute(q) {
-    if (!online) return { data: null, error: { message: "Failed to fetch" } };
+    const fails = !online || (updatesFail && q.op === "update") || (upsertsFail && q.op === "upsert")
+      || (q.op === "select" && q.table === failingReads);
+    if (fails) return { data: null, error: { message: "Failed to fetch" } };
     if (q.table === "settings") {
       if (q.op === "select") {
         const key = (q.filters.find(([col]) => col === "key") || [])[1];
@@ -61,6 +67,11 @@ function createFakeServer({ transactions = [], settings = {}, nextId = 1000 } = 
   async function run(q) {
     // A held insert models a slow request: the test acts while it is in flight.
     if (q.op === "insert" && insertGate) await insertGate.promise;
+    if (q.op === "upsert" && upsertGate) {
+      const gate = upsertGate;
+      upsertGate = null; // only the next upsert is held; later ones overtake it
+      await gate.promise;
+    }
     running++;
     try {
       await tick();
@@ -103,12 +114,27 @@ function createFakeServer({ transactions = [], settings = {}, nextId = 1000 } = 
     setting: (key) => db.settings[key],
     isIdle: () => running === 0,
     setOnline(value) { online = value; },
+    // Reads and inserts keep working while every update fails as it would offline.
+    setUpdatesFailing(value) { updatesFail = value; },
+    // The same for saves of the category list.
+    setUpsertsFailing(value) { upsertsFail = value; },
+    // Reads of this one table ("transactions" or "settings") fail; everything
+    // else, writes included, goes through. null: all reads work again.
+    setReadsFailing(table) { failingReads = table; },
     // Inserts wait until the returned function is called.
     holdInserts() {
       let release;
       const promise = new Promise((resolve) => { release = resolve; });
       insertGate = { promise };
       return () => { insertGate = null; release(); };
+    },
+    // The next upsert is slow: it reaches the server only when the returned
+    // function is called, after any upsert issued later than it.
+    holdNextUpsert() {
+      let release;
+      const promise = new Promise((resolve) => { release = resolve; });
+      upsertGate = { promise };
+      return release;
     },
   };
 }
