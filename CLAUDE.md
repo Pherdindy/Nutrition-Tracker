@@ -3,7 +3,7 @@
 Single-page web app in `www/` (`index.html`, `app.js`, `styles.css`, UMD helper
 modules), wrapped as the Android app **"Lazy Macros"** (`com.lazymacros.app`)
 with Capacitor 8 (`android/`, `webDir: www`). Backend is **Supabase**
-(project `wcbpvvyhswaricoadqbb`): Supabase Auth (email OTP + Google planned),
+(project `wcbpvvyhswaricoadqbb`): Supabase Auth (email OTP + Google OAuth),
 per-user RLS on all app tables, localStorage as the offline cache
 (per-user namespaced keys via `AuthView.nsKey`).
 
@@ -39,10 +39,18 @@ Update it at the end of each working session.
   and minutes are never changed by an AI answer
 - "Today" is `localDate()`, never `toISOString().slice(0, 10)` (that is the UTC
   date, a different day for part of every day)
-- AI provider API keys (`nt_key_openai`, `nt_key_anthropic`) live in
-  localStorage ONLY — never sent to Supabase (server-side proxy is Phase B)
-- Theme + API keys are device-global; the six data keys (`food`, `days`,
-  `workouts`, `profile`, `assessments`, `version`) are per-user namespaced
+- Every AI call goes through `callAi(feature, payload)` to the `ai-proxy` Edge
+  Function (`supabase/functions/`), which picks the models by plan and meters the cost
+  in `ai_usage` (config: the `ai_config` row). No provider key is ever on the client;
+  the old bring-your-own keys (`nt_key_*`) are deleted at startup. Deploying the proxy
+  needs the user's yes each time (recipe in `docs/HANDOFF.md`)
+- The six data keys (`CACHE_BASES`: `food`, `days`, `workouts`, `profile`,
+  `assessments`, `version`) and the sync outbox are per-user namespaced. Settings
+  (`theme`, `macros_enabled`, `value_format`) sync per user to `settings` but are
+  cached under device-wide `nt_<key>`; `nt_tutorial_seen` is device-only
+- Other apps share this Supabase project: `transactions`, `stock_trades` and the
+  `ft_categories` row of `settings` belong to the finance app (`finance/`),
+  `workout_records` to the separate Workout Tracker app
 - Supabase email OTP codes are 8 digits for this project (client accepts 6–10);
   both the "Confirm signup" AND "Magic Link" templates must contain
   `{{ .Token }}` — first-time addresses get the *Confirm signup* template

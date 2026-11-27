@@ -1,7 +1,30 @@
-# Project Handoff — state as of 2026-11-23
+# Project Handoff — state as of 2026-11-27
 
 Cross-machine session state. **Agent: read this before doing anything; update
-it at the end of each working session.**
+it at the end of each working session.** Claude's own memory stays on the machine
+that wrote it: anything the other machine needs goes in this file.
+
+## Open items (checked 2026-11-27)
+
+Everything was pushed (`main` = `origin/main`) and 644 tests passed; production was
+checked read-only the same day (see "Supabase production state").
+
+- **Every machine and device, before use:** pull, `npm install`, `npx cap sync android`,
+  reload open tabs, reinstall on the phone/emulator. Older builds drop typed numbers and
+  ignore workouts; an older finance app rewrites, on the server, the transactions of a
+  category it doesn't know (e.g. Travel) to "Uncategorized".
+- **A browser or device with no local copy yet:** if the first load fails, the app shows
+  onboarding to the existing account. Don't fill it in, reload: submitting it overwrites
+  the cloud profile (noticed, not fixed).
+- **Metering checks never done live** (plan Tasks 8 and 9, open since the 2026-11-17
+  merge): running out of credit for real, and the emulator kill/relaunch + airplane-mode
+  pass. See "AI proxy + metering + plans".
+- **Not seen yet:** a workout logged by the owner (`workouts` had 0 rows on 2026-11-27).
+- **Next spec:** nutrition-label photo (with upload/paste too: the owner logs from desktop
+  Chrome, where camera capture is unavailable). Then charts, then Phase C (see "After
+  that").
+- **Before launch:** Google OAuth consent screen Testing → Production; hard budget alerts
+  at OpenAI and Anthropic; Phase C.
 
 ## Food/day sync data-loss bugs — FIXED 2026-11-23 (on `main`)
 
@@ -64,8 +87,8 @@ by-date upsert SQL ran against production under RLS (rolled back). On the
 emulator with the owner's session: 5 no-op changes queued in airplane mode, app
 killed, relaunched offline, delivered when back online, all rows byte-identical
 before and after; the update filters matched exactly one row for all 99 distinct
-food names. **Not yet seen:** a real new entry from the owner (expect POST 201
-then PATCH 204 in the edge log, and no 400).
+food names. **Seen 2026-11-24:** the owner's first real entries after the fix (POST 201
+or 200, PATCH 204, no 4xx; see "Nutrition details").
 
 **Known limits:** two devices editing the *same row* is last-write-wins; profile,
 settings and assessments are still fire-and-forget (an offline change to those is
@@ -231,11 +254,64 @@ on the final code without a failure (two tabs and a second device, lost and late
 kills), for workouts and again for food; 18 scenarios in headless Chrome with real clicks,
 keys and two real tabs, plus the 22 of food and the 13 of sync; layout at 320–1280 px, 125%
 and 150%, large text, both themes; the proxy handler against v13 (20 scenarios identical, 18
-for workouts). **Not seen yet:** a workout of the owner's own.
+for workouts). **Not seen yet:** a workout of the owner's own (none on 2026-11-27: `workouts`
+had 0 rows).
 
 **Known limits:** two devices changing the same workout or day is last-write-wins; a day's
 row is not followed between tabs (food entries and workouts are); typed calories are not
 remembered for the next time; `calcBMR` is the male formula for everyone (noticed, not new).
+
+## AI proxy + metering + plans (Spec B) — LIVE since 2026-11-17
+
+Merged into `main` 2026-11-17 (`ce82312`). Spec
+`docs/superpowers/specs/2026-07-30-ai-metering-plans-design.md`, plan
+`docs/superpowers/plans/2026-07-30-ai-metering-plans.md` (both amended during the work;
+the amendments are canon).
+
+**How it works:** every AI call is `callAi(feature, payload)` in `www/app.js` → Edge
+Function `ai-proxy` (`supabase/functions/ai-proxy/index.ts`, shared code in
+`supabase/functions/_shared/`). No provider key reaches the client: the proxy has
+`OPENAI_API_KEY`/`ANTHROPIC_API_KEY` as secrets, and the app deletes the old
+bring-your-own keys (`nt_key_*`) at startup. Each call asks one Claude and one GPT model,
+picked by the account's plan, and logs its cost in `ai_usage` (budget check through the
+`ai_usage_total` RPC, failing closed). The plan is in `entitlements` (a new account gets
+`free` on its first call; the owner's is `owner`, never capped). Config is the single
+`ai_config` row, which clients cannot read: kill switch `enabled`, `rate_per_min` 10,
+plans, prices. The credit bar shows percent used only (`ai_usage_summary` RPC); a 402 from
+the proxy opens the paywall.
+
+Live config on 2026-11-27, the same as `docs/sql/2026-07-30-metering-02-seed.sql`
+(paid allowances are per calendar month, UTC):
+
+| Plan | Allowance | Estimate + photo | Assessment |
+|---|---|---|---|
+| free | $1.00 lifetime | claude-haiku-4-5 + gpt-5.6-luna | same |
+| t3 | $1.20 | claude-sonnet-5-5 + gpt-5.6-terra | same |
+| t5 | $2.25 | claude-sonnet-5-5 + gpt-5.6-terra | claude-opus-5-5 + gpt-5.6-sol |
+| t10 | $5.00 | claude-opus-5-5 + gpt-5.6-sol | same |
+
+⚠️ Re-applying that seed file RESETS live config edits (warning in the file).
+
+**Verified live 2026-07-31** (owner, emulator, both providers): estimate, photo, month and
+year assessments, credit bar, paywall, failure metering, removal of the old keys; about
+$0.85 in all.
+
+**Open (none recorded as done since the merge):**
+- Plan Task 8: run out of credit for real (`+test2` on a tiny allowance → 402 → paywall,
+  then restore the config), and Task 9: emulator kill/relaunch + airplane mode.
+- The second assessment round (both models answer and disagree) is only unit-tested.
+- Year assessments: gpt-5.6-sol hits the 90 s per-provider timeout and Claude's answer
+  carries it; consider a longer assessment timeout.
+- Hard budget alerts at OpenAI and Anthropic.
+
+**Deploying `ai-proxy`** (the user's explicit yes every time): from the tree that holds
+the code to go live (a 400 "unknown feature" means the wrong tree), `supabase functions
+deploy ai-proxy --project-ref wcbpvvyhswaricoadqbb --use-api`; `verify_jwt` stays on.
+Check: MCP `get_edge_function`, compare each `files[].content` with the file on disk
+(names there lack the `supabase/` prefix). Smoke: in the running app,
+`callAi("estimate", { food, qty, unit })` returns an answer and saves nothing
+($0.02–0.045 on the owner's plan, logged in `ai_usage`). A deploy leaves
+`supabase/.temp/`, which is not git-ignored: don't commit it. Live: **v14** (2026-11-27).
 
 ## Where things stand
 
@@ -250,8 +326,8 @@ airplane-mode relaunch serves the namespaced offline cache; sign-out
 double-wipes (theme/API keys kept); fresh `+test2` account → onboarding →
 empty app, sees 0 owner rows (client RLS probe + server ledger both checked).
 
-**Incomplete-log day tag — DONE + emulator-verified 2026-11-17** on branch
-`feat/incomplete-days` (cut from `feat/metering`; **merge after metering**).
+**Incomplete-log day tag — LIVE since 2026-11-17** (merged into `main` as `3e663b6`,
+right after metering; emulator-verified).
 Spec `docs/superpowers/specs/2026-11-17-incomplete-days-design.md`, plan
 `docs/superpowers/plans/2026-11-17-incomplete-days.md`. Edit Day modal checkbox
 → `days.incomplete`; "Incomplete" pill on tracker row / day card; tagged days
@@ -268,17 +344,34 @@ Known limitation: stale-cache second device re-sends
 ## Supabase production state (project `wcbpvvyhswaricoadqbb`)
 
 - Owner: `robertmessi123456@gmail.com` = UID
-  `092efd1b-aa72-4e09-b680-bc4b4d41d19f` — owns 126 food_entries / 11 days /
-  1 profile. Test account `robertmessi123456+test2@gmail.com` (UID `f9da59c4…`,
-  1 day + 1 profile) may be deleted once no longer useful.
-- Migrations applied (tracked in Supabase migration history):
+  `092efd1b-aa72-4e09-b680-bc4b4d41d19f`, plan `owner`. On 2026-11-27: 192
+  food_entries (latest dated 2026-11-27) / 21 days / 0 workouts / 5 assessments /
+  1 profile / 6 settings, and 101 `ai_usage` rows. Test account
+  `robertmessi123456+test2@gmail.com` (UID `f9da59c4…`, 1 day + 1 profile) still
+  exists; keep it for plan Task 8, delete it after. No other accounts.
+- Edge Functions: only `ai-proxy`, **v14** ACTIVE on 2026-11-27, `verify_jwt` on.
+- Tables (public, all with RLS): this app's `food_entries`, `days`, `workouts`,
+  `profile`, `assessments`, `settings`; metering's `ai_usage`, `entitlements`,
+  `ai_config`. Not this app: `transactions` + `stock_trades` (the finance app, below)
+  and `workout_records` (the separate Workout Tracker app, see "Dev environment notes").
+  The owner's 6 `settings` rows: `theme`, `macros_enabled`, the finance app's
+  `ft_categories`, and three that nothing reads any more (`anthropic_mode`,
+  `anthropic_primary`, `openai_mode`, from the bring-your-own-key days).
+- Migrations applied (Supabase migration history on 2026-11-27; the SQL is in
+  `docs/sql/` except for the three `transactions`/`stock_trades` ones):
   - `accounts_01_add_user_id` — nullable `user_id uuid` on the 5 app tables
   - `accounts_02_finalize` — backfill to owner, `default auth.uid()` +
     not-null, PKs `(user_id, id)` / settings `(user_id, key)` / profile
     `(user_id)`, **`days` date-unique is per-user `(user_id, date)`** (was a
     global unique — plan gap found live), `per_user_all` RLS on all 5 tables
   - `lock_transactions_table` then `reopen_transactions_owner_only` — see below
-- Security advisors: clean (only the intentional notes).
+  - `create_stock_trades_owner_only` (finance app)
+  - `metering_01_tables`, `metering_02_seed_and_hardening`, `metering_03_usage_total_rpc`
+  - `incomplete_days_01`, `food_nullable_macros_01`, `food_nutrition_01`, `workouts_01`
+- Security advisors on 2026-11-27: only the three expected notes. `ai_config` has no
+  policies (only the proxy reads it); `ai_usage_summary()` is security definer for
+  signed-in users (the credit bar; it returns only the caller's own percentage);
+  leaked-password protection is off (there are no passwords: OTP and Google only).
 - Email auth: Supabase issues **8-digit** OTP codes here; BOTH templates
   ("Confirm signup" — used for first-time addresses — AND "Magic Link")
   contain `{{ .Token }}`. Do not revert either.
@@ -333,8 +426,8 @@ the agent at its code).
    Resend-delivered code; 126 entries re-downloaded through per-user RLS).
 5. **Finance app 2026-07-30 — Stock Journal REMOVED, Monthly Breakdown +
    CSV export ADDED** (committed on `feat/metering` AND cherry-picked to
-   `main` as `2a0a2ec`, both pushed — main got only the finance work, the
-   metering changes stay on the branch pending verification). The
+   `main` as `2a0a2ec`, both pushed; metering itself reached `main` with the
+   2026-11-17 merge). The
    Stock Journal tab/modal and all `stock_trades` client code are gone from
    `finance/` (the owner-scoped `stock_trades` table + any `ft_stock_trades`
    localStorage were left untouched — data preserved, just no UI). New
@@ -391,16 +484,34 @@ residue, fresh installs won't have them.
 
 ## After that (approved roadmap)
 
-Metering/plans spec next, then charts. Pricing decided: $1 lifetime free cap;
-$3/$5/$10 tiers. Then Phase B (server-side AI proxy Edge Function so API keys
-never ship in the app) and Phase C (Play Billing, privacy policy, account
-deletion, store listing).
+Done: accounts (A); AI proxy + metering + plans (B, 2026-11-17); then the
+incomplete-day tag, the sync rewrite, nutrition details and workouts. Queue: the
+nutrition-label photo spec (from the 2026-11-23 request), then charts (approved
+2026-07-07; wishlist: protein per day with the target line, weight per day, calories
+per day vs target), then Phase C: Play Billing subscriptions + entitlements, privacy
+policy, in-app account deletion, Play Data Safety, store listing. Pricing decided:
+$1 lifetime free cap; $3/$5/$10 tiers. Also before launch: check the domain/socials
+and the trademark (USPTO/IPOPHL) for "Lazy Macros".
 
 ## Dev environment notes (machine-specific bits may differ on the laptop)
 
 - **Supabase MCP:** `.mcp.json` is committed at repo root. Run `/mcp` →
   supabase → Authenticate (browser OAuth) to enable `execute_sql` /
   `apply_migration` / `get_advisors` against production.
+- **Not in git (copy by hand when needed):** the release keystore
+  `lazy-macros-release.keystore` + `android/key.properties`, only for signed release
+  builds (see `BUILD.md`). `android/local.properties` is per machine (Android Studio
+  writes it).
+- **Supabase CLI** (for `ai-proxy` deploys): `~/bin/supabase.exe` on the desktop, logged in
+  as the user; on another machine install it and run `supabase login` first.
+- **Opening the app:** on the desktop, the Desktop shortcut `Open Nutrition Tracker`
+  starts `http-server www -p 8080` if needed and opens http://localhost:8080; elsewhere
+  run `npx http-server www -p 8080 -c-1`.
+- **Other apps in the same Supabase project:** the finance app (`finance/` in this repo;
+  `transactions`, `stock_trades`) and the Workout Tracker (`Desktop\Workout Tracker` on
+  the desktop, its own folder and Claude sessions; `workout_records`). Its "Train" tab,
+  "Discard workout", Routines and Coach are not this app: bug reports about them belong
+  there.
 - **Emulator recipes (verified on the desktop):** cold-boot with
   `emulator.exe -avd Pixel_7 -no-snapshot-load` (quickboot snapshot corruption
   history); drive the live WebView via CDP: `adb forward tcp:9222
